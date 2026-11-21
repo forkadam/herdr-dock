@@ -2,7 +2,7 @@
 // plus alert and polling-cadence rules (no Node built-ins: bundled into Herdr mods).
 
 // Worst first. A stage / pipeline takes the status with the lowest index.
-const RANK = ["failed", "running", "pending", "canceled", "passed", "skipped"];
+const RANK = ["failed", "running", "pending", "unknown", "canceled", "passed", "skipped"];
 const rank = (s) => {
   const i = RANK.indexOf(s);
   return i < 0 ? RANK.indexOf("pending") : i;
@@ -21,8 +21,8 @@ const GITHUB_DONE = {
 
 export function normalizeStatus(provider, raw) {
   const r = raw ?? {};
-  if (provider === "gitlab") return GITLAB[r.status] ?? "pending";
-  if (r.status === "completed") return GITHUB_DONE[r.conclusion] ?? "failed";
+  if (provider === "gitlab") return GITLAB[r.status] ?? "unknown";
+  if (r.status === "completed") return GITHUB_DONE[r.conclusion] ?? "unknown";
   return r.status === "in_progress" ? "running" : "pending";
 }
 

@@ -105,3 +105,21 @@ test("ciInterval and gitInterval", () => {
   assert.equal(gitInterval({ open: true }), 15000);
   assert.equal(gitInterval({ open: false }), 60000);
 });
+
+test("unknown statuses stay unknown and never alert", () => {
+  assert.equal(normalizeStatus("gitlab", { status: "canceling" }), "unknown");
+  for (const c of ["stale", null, undefined]) {
+    assert.equal(normalizeStatus("github", { status: "completed", conclusion: c }), "unknown", String(c));
+  }
+  const runs = { workflow_runs: [
+    { id: 1, name: "CI", head_branch: "main", head_sha: "s1", status: "completed", conclusion: "stale", html_url: "u1", created_at: "2026-11-22T09:00:00Z" },
+    { id: 2, name: "Lint", head_branch: "main", head_sha: "s1", status: "completed", conclusion: null, html_url: "u2", created_at: "2026-11-22T09:00:01Z" },
+  ] };
+  const jobs = { 1: { jobs: [{ id: 9, name: "j", status: "completed", conclusion: "stale", html_url: "ju" }] } };
+  const p = githubLatest(runs, jobs);
+  assert.equal(p.status, "unknown");
+  assert.deepEqual(p.failedJobs, []);
+  assert.equal(alertFor({ prev: { id: "s1", status: "running" }, cur: p, alerted: null, startedAt: 0, ...who }), null);
+  const g = gitlabPipeline({ id: 1, status: "running" }, [{ name: "a", stage: "s", status: "canceling" }]);
+  assert.deepEqual(g.failedJobs, []);
+});
