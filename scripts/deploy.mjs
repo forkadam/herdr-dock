@@ -27,7 +27,10 @@ const layout = buildLayout(mergeForHost(parsed.config, hostname()));
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");
-const keysText = existsSync(keysPath) ? readFileSync(keysPath, "utf8").replace(/^﻿/, "") : "{}";
+// No keys.json yet: Herdr writes it (with its default shortcuts) on its first start. Creating
+// it here would replace those defaults, so the binding waits for the next deploy.
+const hasKeys = existsSync(keysPath);
+const keysText = hasKeys ? readFileSync(keysPath, "utf8").replace(/^\uFEFF/, "") : "{}";
 let keys;
 try { keys = JSON.parse(keysText); } catch (e) { fail(`keys.json is not valid JSON: ${e.message}`); }
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -58,7 +61,9 @@ if (!dry) {
 }
 
 const section = keys[SECTION] ?? {};
-if (section[KEY] !== undefined && section[KEY] !== ACTION) {
+if (!hasKeys) {
+  console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B");
+} else if (section[KEY] !== undefined && section[KEY] !== ACTION) {
   console.log(`keys.json: ${KEY} in ${SECTION} is already bound to "${section[KEY]}"; skipping`);
 } else {
   say(`merge keys.json ${SECTION} ${KEY} -> ${ACTION}`);
@@ -66,7 +71,6 @@ if (section[KEY] !== undefined && section[KEY] !== ACTION) {
     keys[SECTION] = { ...section, [KEY]: ACTION };
     // Keep the file's existing style (compact one-liner vs pretty).
     const tmp = `${keysPath}.tmp-${process.pid}`;
-    mkdirSync(appHome, { recursive: true });
     writeFileSync(tmp, keysText.includes("\n") ? JSON.stringify(keys, null, 2) + "\n" : JSON.stringify(keys));
     renameSync(tmp, keysPath);
   }

@@ -77,12 +77,14 @@ test("BOM-prefixed keys.json deploys and gets the binding", () => {
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
-test("missing keys.json is created with the binding", () => {
+test("missing keys.json is left alone: deploy succeeds and says to start Herdr once", () => {
   const tmp = tmpHome();
   try {
     const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.equal(JSON.parse(readFileSync(join(tmp, "keys.json"), "utf8"))["layout:herdr-dock"]["ctrl-alt-b"], "dock-core.cycle");
+    assert.equal(existsSync(join(tmp, "keys.json")), false);
+    assert.match(r.stdout, /keys\.json not found .* start Herdr once, then re-run deploy to add Ctrl\+Alt\+B/);
+    assert.ok(existsSync(join(tmp, "layouts/herdr-dock.json")));
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
