@@ -58,7 +58,7 @@ test("tree is aligned like Herdr's main layout", () => {
   assert.equal(work.type, "column");
   assert.deepEqual(work.children.map((c) => c.id), ["dock-top", "dock-body", "dock-bottom"]);
   const body = work.children[1];
-  assert.deepEqual(body.children.map((c) => c.id), ["dock-main", "dock-right"]);
+  assert.deepEqual(body.children.map((c) => c.id), ["dock-main", "dock-right", "panel"]);
   assert.equal(body.padding, 8);
   assert.equal(body.gap, 8);
   assert.equal(find(t, "dock-main").padding, undefined);
@@ -88,4 +88,25 @@ test("default left panel ends with dock-footer (Settings, Add machine) on one 40
   const footer = left.children.at(-1);
   assert.equal(footer.content.mod, "dock-footer");
   assert.deepEqual(footer.size, { px: 40 });
+});
+
+// Herdr's tabs mod drives Files/Changes with layout.select {stack:"panel-body"} and
+// layout.show/hide {id:"panel"}: the layout must carry the same panel as Herdr's main layout.
+test("buildLayout includes Herdr's Files/Changes panel after the right region", () => {
+  const m = mergeForHost(parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config, "nohost");
+  const t = buildLayout(m);
+  const panel = find(t, "panel");
+  assert.equal(panel.type, "column");
+  assert.equal(panel.hidden, true);
+  assert.deepEqual(panel.size, { px: 368 });
+  assert.equal(panel.min, 280);
+  assert.equal(panel.max, 900);
+  const stack = find(panel, "panel-body");
+  assert.equal(stack.type, "stack");
+  assert.equal(stack.active, "files");
+  assert.deepEqual(stack.children.map((c) => [c.id, c.content.mod]), [["files", "files"], ["changes", "changes"]]);
+  const body = find(t, "dock-body");
+  assert.equal(body.children.at(-1).id, "panel");
+  const ids = allIds(t);
+  assert.equal(new Set(ids).size, ids.length);
 });

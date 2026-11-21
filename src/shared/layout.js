@@ -43,6 +43,22 @@ function regionNode(merged, region, type, extra) {
   return node;
 }
 
+// Herdr's Files/Changes panel, as in its main layout. The shipped tabs mod's Files and Changes
+// buttons run layout.select {stack: "panel-body"} and layout.show/hide {id: "panel"}, so these
+// ids must exist or the buttons error.
+function herdrPanel() {
+  return {
+    id: "panel", type: "column", hidden: true, size: { px: 368 }, min: 280, max: 900,
+    children: [{
+      id: "panel-body", type: "stack", active: "files",
+      children: [
+        { id: "files", type: "block", content: { mod: "files" } },
+        { id: "changes", type: "block", content: { mod: "changes" } },
+      ],
+    }],
+  };
+}
+
 export function buildLayout(merged) {
   const { regions } = merged;
   const top = regionNode(merged, "top", "row", { node: { window_drag: true }, hidden: regions.top.hidden });
@@ -59,7 +75,7 @@ export function buildLayout(merged) {
     type: "row",
     padding: 8,
     gap: 8,
-    children: [main, right].filter(Boolean),
+    children: [main, right, herdrPanel()].filter(Boolean),
   };
   const work = {
     id: "dock-work",
