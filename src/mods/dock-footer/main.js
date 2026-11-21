@@ -1,6 +1,6 @@
 // Based on Herdr's shipped workspace-chrome mod (installed.json main.js hash 2209012f93fc170c):
-// its footer (props.footer) with Settings and Add machine. Faces follow the left panel mode:
-// full rows, icon-only rows on the 48 px rail, and one compact row in a 32 px collapsed slot.
+// its footer (props.footer) with Settings and Add machine, on one line. Faces follow the left panel mode:
+// one row with labels, the Settings icon on the 48 px rail, and icons only in a 32 px collapsed slot.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, shared, updates } from "herdr";
@@ -26,9 +26,10 @@ export default class DockFooter extends View {
       .on_click(item.action).child(svg(`mods/dock-footer/${item.icon}.svg`).size(14))
       .when(item.id === "settings" && ready, el => el.child(dot().absolute().top(5).right(6)));
 
+    // The 48 px rail fits one icon in the 40 px row: Settings. Add machine is in the expanded panel.
     if (face === "icon") {
-      return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).pt(4).pb(8).items_center()
-        .children(ITEMS.map(iconButton));
+      return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).items_center().justify_center()
+        .child(iconButton(ITEMS[0]));
     }
     if (face === "collapsed") {
       return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).gap(4).items_center()
@@ -38,7 +39,8 @@ export default class DockFooter extends View {
       .text_color(item.dim ? t.dim : t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
       .on_click(item.action).child(svg(`mods/dock-footer/${item.icon}.svg`).size(14)).child(item.label)
       .when(item.id === "settings" && ready, el => el.child(dot()));
-    return v_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).pt(4).pb(8).text_size(13)
+    // Both on one line, to keep the footer compact.
+    return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).gap(4).items_center().text_size(13)
       .children(ITEMS.map(row));
   }
 }

@@ -82,10 +82,10 @@ test("default left panel starts with dock-header (Herdr's header without its col
   assert.equal(left.children[1].window_drag, undefined);
 });
 
-test("default left panel ends with dock-footer (Settings, Add machine) at 69 px", () => {
+test("default left panel ends with dock-footer (Settings, Add machine) on one 40 px row", () => {
   const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "nohost");
   const left = find(buildLayout(m), "dock-left");
   const footer = left.children.at(-1);
   assert.equal(footer.content.mod, "dock-footer");
-  assert.deepEqual(footer.size, { px: 69 });
+  assert.deepEqual(footer.size, { px: 40 });
 });
