@@ -1,5 +1,5 @@
 // Placement rules and draft edits for the config UI (pure; no Node built-ins).
-import { LEFT_ONLY, REGION_NAMES, mergeForHost } from "./config.js";
+import { LEFT_ONLY, REGION_NAMES, mergeForHost, parseConfig } from "./config.js";
 
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
@@ -107,4 +107,82 @@ export function applyEdit(draft, op) {
       error = `unknown edit: ${op.type}`;
   }
   return error ? { draft, error } : { draft: d, error: null };
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// The regions this host overrides: only what differs from the base (config without machines).
+export function machineSection(config, draft) {
+  const base = mergeForHost({ ...config, machines: {} }, "");
+  const section = {};
+  for (const name of REGION_NAMES) {
+    const b = base.regions[name];
+    const d = draft.regions[name];
+    const diff = {};
+    if (d.size !== b.size && d.size !== undefined) diff.size = d.size;
+    if (name === "left") {
+      if (d.mode !== b.mode) diff.mode = d.mode;
+      // A raw base left.hidden: true would keep forcing the hidden mode through the merge.
+      if (config.regions?.left?.hidden === true && d.mode !== "hidden") diff.hidden = false;
+    } else if (d.hidden !== b.hidden) {
+      diff.hidden = d.hidden;
+    }
+    if (!same(d.features, b.features)) diff.features = d.features;
+    if (Object.keys(diff).length) section[name] = diff;
+  }
+  return Object.keys(section).length ? section : null;
+}
+
+const isEmpty = (v) => (Array.isArray(v) ? !v.length : !Object.keys(v).length);
+const isNested = (v) => v !== null && typeof v === "object";
+
+function inline(v) {
+  if (!isNested(v) || isEmpty(v)) return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(inline).join(", ")}]`;
+  return `{ ${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${inline(x)}`).join(", ")} }`;
+}
+
+function pretty(v, pad, key) {
+  if (!isNested(v) || isEmpty(v)) return JSON.stringify(v);
+  const inner = pad + "  ";
+  if (Array.isArray(v)) {
+    const rows = v.map((x) => inner + (key === "features" && isNested(x) && !Array.isArray(x) ? inline(x) : pretty(x, inner)));
+    return `[\n${rows.join(",\n")}\n${pad}]`;
+  }
+  const rows = Object.entries(v).map(([k, x]) => `${inner}${JSON.stringify(k)}: ${pretty(x, inner, k)}`);
+  return `{\n${rows.join(",\n")}\n${pad}}`;
+}
+
+// JSON.stringify(obj, null, 2) layout, with each feature object on one line.
+export function formatConfig(obj) {
+  return pretty(obj, "") + "\n";
+}
+
+function rewrite(openedText, host, section) {
+  const parsed = parseConfig(openedText);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const config = parsed.config;
+  const want = String(host).toLowerCase();
+  const key = Object.keys(config.machines ?? {}).find((k) => k.toLowerCase() === want);
+  if (section) {
+    config.machines ??= {};
+    const entry = (config.machines[key ?? host] ??= {});
+    entry.regions = section;
+  } else if (key) {
+    delete config.machines[key].regions;
+    if (!Object.keys(config.machines[key]).length) delete config.machines[key];
+  }
+  const text = formatConfig(config);
+  const check = parseConfig(text);
+  return check.ok ? { ok: true, text } : { ok: false, error: check.error };
+}
+
+export function planSave(openedText, host, draft) {
+  const parsed = parseConfig(openedText);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  return rewrite(openedText, host, machineSection(parsed.config, draft));
+}
+
+export function planReset(openedText, host) {
+  return rewrite(openedText, host, null);
 }
