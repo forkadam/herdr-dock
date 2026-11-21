@@ -71,13 +71,22 @@ where. Features come in two kinds:
 Five fixed regions:
 
 ```
-┌────────────────── top bar ──────────────────┐
-│ LEFT PANEL │                   │ right panel │
-│ core       │     terminals     │ (any mods)  │
-│ features   │  (active tab's    │             │
-│            │   panes)          │             │
-├────────────┴──── bottom bar ────┴────────────┤
+┌────────────┬─[≡]─ top bar (tabs) ────────────────────┐
+│ LEFT PANEL │                       │ right panel    │
+│ core       │      terminals        │ (any mods)     │
+│ features,  │   (active tab's panes)│                │
+│ full       ├─ bottom bar (status) ─┴────────────────┤
+│ height     │                                        │
+└────────────┴────────────────────────────────────────┘
 ```
+
+Arrangement (revised 2026-11-21, decided by the user: "follow the original Herdr layout on the top and bottom bars"):
+this mirrors Herdr's shipped `main` layout. The left panel runs the full window height. The top bar,
+terminals, right panel and bottom bar sit in a work column to its right. The top bar therefore starts at
+the terminal's left edge, so the tabs line up with it. Defaults are taken from `main`:
+- the top bar is 42 px, starting with a 44 px icon-only panel toggle, then Herdr's `tabs`;
+- the terminals and right panel share a row with 8 px padding and gap;
+- the bottom bar is 28 px and shows Herdr's status bar (`workspace-status`) by default.
 
 - **Left panel:** the core features, present nearly all the time. Core features ship there and cannot
   be moved to other regions. The user can reorder, resize and collapse them.
