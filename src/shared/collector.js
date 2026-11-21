@@ -59,13 +59,17 @@ export function createCollector(io) {
   const added = new Map();
   // Pane cwds, by `${machine}|${cwd}`: { busy, done, result: { top, commonDir } | null }.
   const cwds = new Map();
-  // Per repo (by repo id): { origin: undefined (unread) | { host, path } | null, busy }.
+  // Per repo (by repo id): { origin: undefined (unread) | { host, path } | null (no origin), busy, tried }.
   const repoRecs = new Map();
   // Per worktree (by worktree id): { id, machine, path, gitAt, busy, git: parseStatus() | null, error }.
   // Task 4 adds its CI schedule (nextCiAt, pipeline, ...) to this record.
   const wtRecs = new Map();
   let published = { repos: [], updatedAt: null };
   let publishedKey = null;
+  // Ticks may overlap (a slow git status outlives the 1 s timer). Each tick takes a generation; a tick never
+  // publishes over a newer tick's view, so an old tick finishing late can't republish a stale list.
+  let tickGen = 0;
+  let publishedGen = 0;
 
   const readAdded = () => {
     const list = io.shared(REPOS_KEY);
@@ -119,8 +123,11 @@ export function createCollector(io) {
     rec.busy = true;
     try {
       const r = await run(machine, ["-C", path, "remote", "get-url", "origin"]);
-      rec.origin = r.code === 0 ? parseRemote(r.stdout) : null; // exit 2: no origin
-      if (r.code !== 0 && r.code !== 2) log(`git remote get-url failed in ${path}: ${errText(r)}`);
+      // Exit 2 is git's "no such remote": cache "no origin". Any other failure (exec rejected, machine
+      // unreachable) leaves origin unread, to retry with the repo's next status poll.
+      if (r.code === 0) rec.origin = parseRemote(r.stdout);
+      else if (r.code === 2) rec.origin = null;
+      else log(`git remote get-url failed in ${path}: ${errText(r)}`);
     } finally {
       rec.busy = false;
     }
@@ -197,7 +204,7 @@ export function createCollector(io) {
         machine: r.machine,
         provider: null, // Task 4
         host: origin?.host ?? null,
-        path: origin?.path ?? null,
+        path: origin?.path ?? null, // the origin's remote path (e.g. "grp/api"), not a folder
         added: r.added,
         error: r.error,
         worktrees: [...r.wts].map(([id, w]) => {
@@ -228,6 +235,7 @@ export function createCollector(io) {
 
   // --- public -----------------------------------------------------------------------------------
   async function tick() {
+    const gen = ++tickGen;
     const now = io.now();
     const addedList = readAdded();
     const paneList = readPanes();
@@ -258,7 +266,7 @@ export function createCollector(io) {
     const view = buildView(addedList, paneList);
     const wtIds = new Set();
     for (const r of view.values()) {
-      if (!repoRecs.has(r.id)) repoRecs.set(r.id, { origin: undefined, busy: false });
+      if (!repoRecs.has(r.id)) repoRecs.set(r.id, { origin: undefined, busy: false, tried: false });
       for (const [id, w] of r.wts) {
         wtIds.add(id);
         if (!wtRecs.has(id)) wtRecs.set(id, { id, machine: r.machine, path: w.path, gitAt: -Infinity, busy: false, git: null, error: null });
@@ -272,14 +280,24 @@ export function createCollector(io) {
     for (const r of view.values()) {
       const rec = repoRecs.get(r.id);
       const first = r.wts.values().next().value;
-      if (first && rec.origin === undefined && !rec.busy) polls.push(readOrigin(rec, r.machine, first.path));
+      let anyDue = false;
       for (const [id, w] of r.wts) {
-        const rec = wtRecs.get(id);
-        if (!rec.busy && now - rec.gitAt >= gitInterval({ open: w.open })) polls.push(pollStatus(rec, now));
+        const wt = wtRecs.get(id);
+        if (!wt.busy && now - wt.gitAt >= gitInterval({ open: w.open })) {
+          anyDue = true;
+          polls.push(pollStatus(wt, now));
+        }
+      }
+      // Read once; an unread origin (a transient failure) is retried along with a status poll.
+      if (first && rec.origin === undefined && !rec.busy && (!rec.tried || anyDue)) {
+        rec.tried = true;
+        polls.push(readOrigin(rec, r.machine, first.path));
       }
     }
     await Promise.all(polls);
 
+    if (gen < publishedGen) return; // a newer tick already published
+    publishedGen = gen;
     publish(view, now);
   }
 

@@ -281,3 +281,68 @@ test("a closed terminal drops its non-added worktree; a cwd outside any repo sho
   io.t = 2000; await c.tick();
   assert.deepEqual(c.state().repos, []);
 });
+
+test("overlapping ticks: a slow status from an older tick doesn't republish a stale list", async () => {
+  let releaseB;
+  const slowB = new Promise((r) => { releaseB = r; });
+  let panes = [{ pane: "p1", tab: "t1", cwd: "/w/a" }, { pane: "p2", tab: "t1", cwd: "/w/b" }];
+  const io = fakeIo({
+    platform: "linux",
+    spaces: [{ id: "s1", name: "x", machine: null, tabs: [{ id: "t1" }] }],
+    table: {
+      " -C /w/a rev-parse --show-toplevel --git-common-dir": ok("/w/a\n.git\n"),
+      " -C /w/b rev-parse --show-toplevel --git-common-dir": ok("/w/b\n.git\n"),
+      " -C /w/a remote get-url origin": NO_ORIGIN,
+      " -C /w/b remote get-url origin": NO_ORIGIN,
+      " -C /w/a status --porcelain=v2 --branch": status("main"),
+      " -C /w/b status --porcelain=v2 --branch": () => slowB.then(() => status("main")),
+    },
+  });
+  io.panes = () => panes;
+  const published = [];
+  const set = io.setShared;
+  io.setShared = (k, v) => { set(k, v); if (k === "dock.git.state") published.push(v.repos.map((r) => r.name).join(",")); };
+  const c = createCollector(io);
+  const first = c.tick();
+  while (!io.calls.some((x) => x.key.includes("/w/b status"))) await new Promise((r) => setTimeout(r, 1));
+  panes = [panes[0]]; // terminal b closes while b's status is still running
+  io.t = 1000;
+  await c.tick();
+  releaseB();
+  await first;
+  assert.deepEqual(published, ["a"]);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["a"]);
+});
+
+test("a transient remote get-url failure is retried; only exit 2 means no origin", async () => {
+  let fail = true;
+  const io = fakeIo({
+    repos: [{ path: "D:/local", machine: null }],
+    table: {
+      " -C D:/local rev-parse --show-toplevel --git-common-dir": ok("D:/local\n.git\n"),
+      " -C D:/local worktree list --porcelain": wtList(["D:/local", "main"]),
+      " -C D:/local status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const exec = io.exec;
+  io.exec = async (cmd, args, opts) => {
+    if (args.includes("get-url")) {
+      io.calls.push({ key: args.join(" ") });
+      if (fail) throw new Error("ssh: connection reset");
+      return ok("git@gitlab.corp:grp/local.git\n");
+    }
+    return exec(cmd, args, opts);
+  };
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(c.state().repos[0].host, null);
+  io.t = 1000; await c.tick();
+  assert.equal(callsTo(io, "get-url"), 1, "not retried every tick");
+  fail = false;
+  io.t = 60000; await c.tick();
+  assert.equal(callsTo(io, "get-url"), 2);
+  assert.equal(c.state().repos[0].host, "gitlab.corp");
+  assert.equal(c.state().repos[0].path, "grp/local");
+  io.t = 120000; await c.tick();
+  assert.equal(callsTo(io, "get-url"), 2, "a found origin is read once");
+});
