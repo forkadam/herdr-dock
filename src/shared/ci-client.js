@@ -8,6 +8,10 @@ const HTTP_LIMIT = 4; // HTTP requests (or CLI api calls) at once
 const TIMEOUT = 15000;
 const BACKOFF = [30000, 60000, 120000, 300000];
 const HOSTS_KEY = "dock.git.hosts";
+const RELOGIN = 300000; // a host with no login is checked again at the slow CI cadence
+// glab auth status output that clearly means "no login" (anything else non-zero may be the network).
+const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
+const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 
 class Timeout extends Error {}
 
@@ -20,7 +24,8 @@ const firstLine = (s) => String(s ?? "").trim().split(/\r?\n/)[0];
 
 export function createCiClient(io, log) {
   const http = limiter(HTTP_LIMIT);
-  // host -> { want, provider, login: Promise|null, token, cli, failures, blockedUntil }
+  // host -> { want, provider, login: Promise|null, loginDone, loginError, loginRetryAt, token, cli,
+  //   failures, blockedUntil, windowEnd, lastError }
   const hosts = new Map();
   const deadlines = new Set(); // in-flight requests: { deadline, reject, ctl }
   const secrets = new Set(); // every token seen, to scrub from any text that leaves this module
@@ -30,7 +35,10 @@ export function createCiClient(io, log) {
     return t;
   };
   const rec = (host) => {
-    if (!hosts.has(host)) hosts.set(host, { want: null, provider: undefined, login: null, token: null, cli: false, failures: 0, blockedUntil: 0 });
+    if (!hosts.has(host)) hosts.set(host, {
+      want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
+      cli: false, failures: 0, blockedUntil: 0, windowEnd: 0, lastError: null,
+    });
     return hosts.get(host);
   };
 
@@ -75,31 +83,55 @@ export function createCiClient(io, log) {
     return token || null;
   }
 
+  // Sets h.provider, h.token and h.loginError ("not logged in" | "cannot reach <host>" | null).
   async function login(host, h) {
+    const startedAt = io.now();
+    h.loginError = null;
     if (h.want === "none") { h.provider = null; return; }
-    let provider = h.want === "auto" ? (host === "github.com" ? "github" : null) : h.want;
+    const provider = h.want === "auto" ? (host === "github.com" ? "github" : null) : h.want;
+    let unreachable = false;
     if (!provider) {
       // Any other host: GitLab when glab is logged in to it. Without glab or a login, it is still treated as
       // GitLab (unknown + login hint); dock.git.hosts can map the host to "none".
       const st = await cli("glab", ["auth", "status", "--hostname", host]);
       h.provider = "gitlab";
-      if (st.code !== 0) return;
+      if (st.code !== 0) {
+        const out = `${st.stdout ?? ""}\n${st.stderr ?? ""}`;
+        if ((st.code === -1 && MISSING_CLI.test(out)) || NOT_LOGGED_IN.test(out)) {
+          h.loginError = "not logged in";
+          return;
+        }
+        // Probably the network (VPN not up yet, a timeout): the stored token may still be there.
+        unreachable = true;
+      }
     } else h.provider = provider;
     h.token = await readToken(host, h.provider);
+    if (h.token) return;
+    h.loginError = unreachable ? `cannot reach ${host}` : "not logged in";
+    if (unreachable) backoff(h, h.loginError, startedAt);
   }
 
-  // Provider and login for a host, once per session (re-checked after reset() when not logged in).
+  // Provider and login for a host: once, then again while there is no token (after the host's backoff when it
+  // couldn't be reached, else every RELOGIN), or after reset().
   async function resolve(host) {
     const h = rec(host);
     const ov = io.shared(HOSTS_KEY)?.[host];
     const want = ov == null ? "auto" : ov === "gitlab" || ov === "github" ? ov : "none";
-    if (h.want !== want) Object.assign(h, { want, provider: undefined, login: null, token: null });
-    if (!h.login) h.login = login(host, h);
+    if (h.want !== want) Object.assign(h, { want, provider: undefined, login: null, loginDone: false, token: null });
+    if (h.login && h.loginDone && h.provider && !h.token && io.now() >= h.loginRetryAt) h.login = null;
+    if (!h.login) {
+      h.loginDone = false;
+      h.login = login(host, h).finally(() => {
+        h.loginDone = true;
+        if (!h.token) h.loginRetryAt = h.loginError === "not logged in" ? io.now() + RELOGIN : h.blockedUntil;
+      });
+    }
     await h.login;
-    if (!h.provider) return { provider: null, error: null, hint: null };
-    return h.token
-      ? { provider: h.provider, error: null, hint: null }
-      : { provider: h.provider, error: "not logged in", hint: loginHint(h.provider, host) };
+    if (!h.provider) return { provider: null, error: null, hint: null, hostFailure: false };
+    if (h.token) return { provider: h.provider, error: null, hint: null, hostFailure: false };
+    const error = h.loginError ?? "not logged in";
+    const network = error !== "not logged in";
+    return { provider: h.provider, error, hint: network ? null : loginHint(h.provider, host), hostFailure: network };
   }
 
   const baseUrl = (host, provider) =>
@@ -111,13 +143,22 @@ export function createCiClient(io, log) {
       ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
       : { "PRIVATE-TOKEN": token };
 
-  function fail(h, error, hostFailure, extra = {}) {
-    if (hostFailure) {
-      h.failures++;
-      h.blockedUntil = io.now() + BACKOFF[Math.min(h.failures, BACKOFF.length) - 1];
-    }
+  // Counts at most one failure per outage: only a request that started after the last backoff window ended,
+  // and only while the host isn't already blocked. Requests in flight when the outage began don't add to it.
+  function backoff(h, error, startedAt) {
+    const now = io.now();
+    if (now < h.blockedUntil || startedAt < h.windowEnd) return;
+    h.failures++;
+    h.blockedUntil = h.windowEnd = now + BACKOFF[Math.min(h.failures, BACKOFF.length) - 1];
+    h.lastError = error;
+  }
+  function fail(h, error, hostFailure, startedAt, extra = {}) {
+    if (hostFailure) backoff(h, error, startedAt);
     return { ok: false, error: redact(error), hostFailure, ...extra };
   }
+  // A request for a blocked host fails fast, without a network call, with the outage's error.
+  const isBlocked = (h) => io.now() < h.blockedUntil;
+  const blockedResult = (h) => ({ ok: false, error: redact(h.lastError ?? "unavailable"), hostFailure: true });
   const good = (h, data) => {
     h.failures = 0;
     h.blockedUntil = 0;
@@ -127,17 +168,23 @@ export function createCiClient(io, log) {
   async function viaCli(host, h, method, path, wantJson) {
     const cmd = h.provider === "github" ? "gh" : "glab";
     const hostArgs = cmd === "glab" || host !== "github.com" ? ["--hostname", host] : [];
-    const r = await http(() => cli(cmd, ["api", ...hostArgs, ...(method === "POST" ? ["-X", "POST"] : []), path]));
+    let startedAt = io.now();
+    const r = await http(() => {
+      if (isBlocked(h)) return null;
+      startedAt = io.now();
+      return cli(cmd, ["api", ...hostArgs, ...(method === "POST" ? ["-X", "POST"] : []), path]);
+    });
+    if (!r) return blockedResult(h);
     if (r.code !== 0) {
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
       // An HTTP 4xx answer isn't the host failing; anything else (no CLI, network, timeout) backs off.
-      return fail(h, msg, !/\b4\d\d\b/.test(msg));
+      return fail(h, msg, !/\b4\d\d\b/.test(msg), startedAt);
     }
     if (!wantJson) return good(h, null);
     try {
       return good(h, JSON.parse(String(r.stdout ?? "")));
     } catch {
-      return fail(h, "bad response", false);
+      return fail(h, "bad response", false, startedAt);
     }
   }
 
@@ -147,11 +194,15 @@ export function createCiClient(io, log) {
     const h = rec(host);
     const wantJson = method === "GET";
     if (!h.provider || !h.token) return { ok: false, error: "not logged in", hint: loginHint(h.provider, host), hostFailure: false };
+    if (isBlocked(h)) return blockedResult(h);
     if (h.cli) return viaCli(host, h, method, path, wantJson);
+    let startedAt = io.now();
     const url = baseUrl(host, h.provider) + path;
     const once = () =>
-      http(() =>
-        timed(async (signal) => {
+      http(() => {
+        if (isBlocked(h)) return { blocked: true };
+        startedAt = io.now();
+        return timed(async (signal) => {
           const init = { method, headers: headers(h.provider, h.token) };
           if (signal) init.signal = signal;
           const r = await io.fetch(url, init);
@@ -161,23 +212,25 @@ export function createCiClient(io, log) {
           } catch {
             return { status: r.status, ok: false, data: null, bad: true };
           }
-        }),
-      );
+        });
+      });
     try {
       let r = await once();
+      if (r.blocked) return blockedResult(h);
       if (r.status === 401) {
         h.token = await readToken(host, h.provider);
         if (h.token) r = await once();
+        if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
-          h.token = null;
-          return fail(h, "not logged in", false, { hint: loginHint(h.provider, host) });
+          Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
+          return fail(h, "not logged in", false, startedAt, { hint: loginHint(h.provider, host) });
         }
       }
-      if (r.bad) return fail(h, "bad response", false);
-      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429);
+      if (r.bad) return fail(h, "bad response", false, startedAt);
+      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt);
       return good(h, r.data);
     } catch (e) {
-      if (e instanceof Timeout) return fail(h, "timeout", true);
+      if (e instanceof Timeout) return fail(h, "timeout", true, startedAt);
       // A network or TLS error (not an HTTP status): use the CLI for this host for the rest of the session.
       h.cli = true;
       log(`CI: fetch to ${host} failed (${redact(e?.cause?.code ?? e?.message ?? e)}); using ${h.provider === "github" ? "gh" : "glab"} api`);
@@ -259,7 +312,7 @@ export function createCiClient(io, log) {
     // The refresh button: clear backoff, and let hosts without a login check again.
     reset() {
       for (const h of hosts.values()) {
-        Object.assign(h, { failures: 0, blockedUntil: 0 });
+        Object.assign(h, { failures: 0, blockedUntil: 0, windowEnd: 0 });
         if (!h.token) h.login = null;
       }
     },

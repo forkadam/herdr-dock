@@ -45,6 +45,7 @@ export function gitlabPipeline(p, jobs) {
     sha: p.sha,
     webUrl: p.web_url,
     createdAt: p.created_at,
+    finishedAt: p.finished_at ?? p.updated_at ?? null,
     stages: [...byStage].map(([name, sts]) => ({ name, status: worst(sts) })),
     failedJobs,
   };
@@ -74,6 +75,11 @@ export function githubLatest(runsJson, jobsByRunId) {
     }
   });
   const failedRun = same.find((_, i) => stages[i].status === "failed");
+  // finishedAt: the newest updated_at of the commit's failed runs (a rerun that fails again moves it), so a
+  // workflow still running beside a failed one doesn't change it. With no failed run, of all its runs.
+  const failedRuns = same.filter((_, i) => stages[i].status === "failed");
+  const stamps = (failedRuns.length ? failedRuns : same).map((r) => r.updated_at).filter(Boolean);
+  const finishedAt = stamps.length ? stamps.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
   const times = same.map(time).filter(Boolean);
   const earliest = same.find((r) => time(r) === Math.min(...times)) ?? newest;
   return {
@@ -83,14 +89,24 @@ export function githubLatest(runsJson, jobsByRunId) {
     sha: newest.head_sha,
     webUrl: (failedRun ?? newest).html_url,
     createdAt: earliest.created_at,
+    finishedAt,
     stages,
     failedJobs,
   };
 }
 
+// The dock.git.alerted value for a failed pipeline: its id plus when it finished, so a Retry that fails again
+// (same GitLab pipeline id, same GitHub sha) is a new failure.
+export const alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;
+
 export function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
-  if (cur.status !== "failed" || cur.id === alerted) return null;
-  const fresh = prev ? prev.status !== "failed" || prev.id !== cur.id : Date.parse(cur.createdAt) > startedAt;
+  if (cur.status !== "failed") return null;
+  // A bare id is the old format of alerted: it still suppresses that pipeline.
+  if (alerted != null && (alerted === alertKey(cur) || String(alerted) === String(cur.id))) return null;
+  const refinished = prev?.finishedAt != null && cur.finishedAt != null && prev.finishedAt !== cur.finishedAt;
+  const fresh = prev
+    ? prev.status !== "failed" || prev.id !== cur.id || refinished
+    : Date.parse(cur.createdAt) > startedAt;
   if (!fresh) return null;
   const jobs = cur.failedJobs ?? [];
   const more = jobs.length - 1;

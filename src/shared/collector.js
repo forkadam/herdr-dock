@@ -5,7 +5,7 @@
 // compare io.now() on each tick. The HTTP/CLI route lives in ci-client.js.
 // (No Node built-ins: bundled into Herdr mods.)
 import { parseWorktrees, parseStatus, parseRevParse, parseRemote, worktreeId } from "./git.js";
-import { gitInterval, ciInterval, alertFor } from "./ci.js";
+import { gitInterval, ciInterval, alertFor, alertKey } from "./ci.js";
 import { createCiClient } from "./ci-client.js";
 import { limiter } from "./limiter.js";
 import { slashPath } from "./path.js";
@@ -165,7 +165,7 @@ export function createCollector(io) {
     });
     if (!a) return;
     // Recorded before notifying, so a crash or restart mid-alert can't alert twice.
-    io.setShared(ALERTED_KEY, { ...(alerted && typeof alerted === "object" ? alerted : {}), [wt.id]: cur.id });
+    io.setShared(ALERTED_KEY, { ...(alerted && typeof alerted === "object" ? alerted : {}), [wt.id]: alertKey(cur) });
     try {
       io.notify({ ...a, level: "error", action: { name: "dock-core.git.show", args: { worktree: wt.id } } });
       io.playSound("blocked");
@@ -181,7 +181,7 @@ export function createCollector(io) {
       const login = await client.resolve(origin.host);
       Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
       if (!login.provider) return Object.assign(ci, { error: null, hint: null, hostFailure: false, done: false });
-      if (login.error) return Object.assign(ci, { error: login.error, hint: login.hint, hostFailure: false, done: true });
+      if (login.error) return Object.assign(ci, { error: login.error, hint: login.hint, hostFailure: login.hostFailure, done: true });
       const head = headOf(wt, w);
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;

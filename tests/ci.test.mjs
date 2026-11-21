@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeStatus, gitlabPipeline, githubLatest, alertFor, ciInterval, gitInterval } from "../src/shared/ci.js";
+import { normalizeStatus, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval } from "../src/shared/ci.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 
@@ -122,4 +122,34 @@ test("unknown statuses stay unknown and never alert", () => {
   assert.equal(alertFor({ prev: { id: "s1", status: "running" }, cur: p, alerted: null, startedAt: 0, ...who }), null);
   const g = gitlabPipeline({ id: 1, status: "running" }, [{ name: "a", stage: "s", status: "canceling" }]);
   assert.deepEqual(g.failedJobs, []);
+});
+
+test("finishedAt: GitLab finished_at, else updated_at; GitHub newest updated_at of the failed runs", () => {
+  assert.equal(gitlabPipeline({ id: 1, status: "failed", finished_at: "F", updated_at: "U" }, []).finishedAt, "F");
+  assert.equal(gitlabPipeline({ id: 1, status: "running", updated_at: "U" }, []).finishedAt, "U");
+  assert.equal(gitlabPipeline({ id: 1, status: "running" }, []).finishedAt, null);
+  const runs = fx("github-runs.json");
+  const at = { 301: "2026-11-22T09:03:00Z", 302: "2026-11-22T09:09:00Z", 201: "2026-11-21T09:05:00Z" };
+  for (const r of runs.workflow_runs) r.updated_at = at[r.id];
+  // Lint (passed) finishing later doesn't move it: only the failed run counts.
+  assert.equal(githubLatest(runs, {}).finishedAt, "2026-11-22T09:03:00Z");
+  runs.workflow_runs = runs.workflow_runs.filter((r) => r.id !== 301);
+  assert.equal(githubLatest(runs, {}).finishedAt, "2026-11-22T09:09:00Z");
+});
+
+test("alertFor: the key is id + finishedAt; a retried pipeline failing again alerts; old bare ids still suppress", () => {
+  const f1 = { ...failed, finishedAt: "2026-11-22T10:05:00Z" };
+  const f2 = { ...failed, finishedAt: "2026-11-22T10:20:00Z" };
+  assert.equal(alertKey(f1), "5|2026-11-22T10:05:00Z");
+  assert.equal(alertKey({ id: 7 }), "7|null");
+  // Same key -> no alert (restart safety).
+  assert.equal(alertFor({ prev: undefined, cur: f1, alerted: alertKey(f1), startedAt: t0, ...who }), null);
+  // Retry: running then failed again with a new finishedAt.
+  assert.ok(alertFor({ prev: { ...f1, status: "running" }, cur: f2, alerted: alertKey(f1), startedAt: t0, ...who }));
+  // Failed again between two polls (never seen running).
+  assert.ok(alertFor({ prev: f1, cur: f2, alerted: alertKey(f1), startedAt: t0, ...who }));
+  assert.equal(alertFor({ prev: f2, cur: f2, alerted: alertKey(f1), startedAt: t0, ...who }), null);
+  // Old format: a bare id (number or string) suppresses that pipeline.
+  assert.equal(alertFor({ prev: { id: 5, status: "running" }, cur: f1, alerted: 5, startedAt: t0, ...who }), null);
+  assert.equal(alertFor({ prev: { id: 5, status: "running" }, cur: f1, alerted: "5", startedAt: t0, ...who }), null);
 });

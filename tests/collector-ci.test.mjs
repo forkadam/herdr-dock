@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createCollector } from "../src/shared/collector.js";
+import { createCiClient } from "../src/shared/ci-client.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 const ok = (stdout, stderr = "") => ({ code: 0, stdout, stderr });
@@ -259,7 +260,7 @@ test("(h) alerts: running -> failed alerts once; no repeat on the next tick or a
     action: { name: "dock-core.git.show", args: { worktree: WT } },
   });
   assert.deepEqual(io.sounds, ["blocked"]);
-  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: 48213 });
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: "48213|null" });
   // alerted is written before notify.
   const iAlerted = io.sets.findIndex(([k]) => k === "dock.git.alerted");
   assert.ok(iAlerted >= 0);
@@ -412,4 +413,121 @@ test("at most 4 HTTP requests at once", async () => {
   await c.tick();
   assert.equal(max, 4);
   assert.ok(c.state().repos.every((r) => r.worktrees[0].pipeline.status === "passed"));
+});
+
+test("fix: one short outage backs off 30 s, however many requests were in flight or queued", async () => {
+  let t = 0;
+  let mode = "hang";
+  let fetches = 0;
+  const io = {
+    now: () => t,
+    shared: () => ({}),
+    exec: async (cmd, args) => (args[0] === "config" ? ok(`${TOKEN}\n`) : ok("")),
+    fetch: () => { fetches++; return mode === "hang" ? new Promise(() => {}) : Promise.resolve(res(200, [])); },
+  };
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const flush = () => new Promise((r) => setTimeout(r, 5));
+  const ps = Array.from({ length: 8 }, (_, i) => c.request("gitlab.corp", "GET", `projects/x${i}`));
+  await flush();
+  t = 15000; c.sweep(t);
+  const out = await Promise.all(ps);
+  assert.deepEqual(out.map((r) => r.error), Array(8).fill("timeout"));
+  assert.equal(fetches, 4); // the 4 queued requests failed fast, no network call
+  assert.equal(c.blocked("gitlab.corp", 44999), true);
+  assert.equal(c.blocked("gitlab.corp", 45000), false);
+  // A request while blocked fails fast too.
+  assert.equal((await c.request("gitlab.corp", "GET", "projects/y")).error, "timeout");
+  assert.equal(fetches, 4);
+  // The next failure after the window: 60 s.
+  t = 45000;
+  const p = c.request("gitlab.corp", "GET", "projects/z");
+  await flush();
+  t = 60000; c.sweep(t);
+  await p;
+  assert.equal(c.blocked("gitlab.corp", 119999), true);
+  assert.equal(c.blocked("gitlab.corp", 120000), false);
+  // A success resets: the next failure is 30 s again.
+  t = 120000; mode = "ok";
+  assert.equal((await c.request("gitlab.corp", "GET", "projects/z")).ok, true);
+  mode = "hang";
+  const q = c.request("gitlab.corp", "GET", "projects/z");
+  await flush();
+  t = 135000; c.sweep(t);
+  await q;
+  assert.equal(c.blocked("gitlab.corp", 164999), true);
+  assert.equal(c.blocked("gitlab.corp", 165000), false);
+});
+
+test("fix: a login check that can't reach the host recovers on the CI cadence, without refresh()", async () => {
+  let up = false;
+  const { io } = ciIo({
+    cli: {
+      "glab auth status --hostname gitlab.corp": () => { if (!up) throw new Error("connect ETIMEDOUT"); return ok(""); },
+      "glab config get token --host gitlab.corp": () => ok(up ? `${TOKEN}\n` : "\n"),
+      "glab auth status --hostname gitlab.corp --show-token": () => { throw new Error("connect ETIMEDOUT"); },
+    },
+    routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  let w = wtOf(c);
+  assert.equal(w.pipeline.status, "unknown");
+  assert.equal(w.pipeline.error, "cannot reach gitlab.corp");
+  assert.equal(w.pipeline.hint, null);
+  up = true;
+  io.t += 29000;
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "unknown");
+  io.t += 1000; // the 30 s backoff is over
+  await c.tick();
+  w = wtOf(c);
+  assert.equal(w.pipeline.status, "passed");
+  assert.equal(w.pipeline.error, null);
+  assert.equal(io.fetches[0].init.headers["PRIVATE-TOKEN"], TOKEN);
+});
+
+test("fix: auth status failing on the network, but a token in glab config: the token is used", async () => {
+  const { io } = ciIo({
+    cli: { "glab auth status --hostname gitlab.corp": { code: 1, stdout: "", stderr: "API call failed: dial tcp: lookup gitlab.corp: no such host" } },
+    routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].init.headers["PRIVATE-TOKEN"], TOKEN);
+  assert.equal(wtOf(c).pipeline.status, "passed");
+});
+
+test("fix (R4): a Retry that fails again alerts once more; a restart with the same key doesn't", async () => {
+  const F1 = "2026-11-22T10:05:00Z", F2 = "2026-11-22T10:20:00Z";
+  let pl = pipeline({ status: "running", created_at: "2026-11-22T10:01:00Z" });
+  const RETRY = `${GL}/pipelines/48213/retry`;
+  const routes = {
+    [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS),
+    [RETRY]: res(201, { id: 48213, status: "running" }),
+  };
+  const { io, shared } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  pl = pipeline({ status: "failed", created_at: "2026-11-22T10:01:00Z", finished_at: F1 });
+  io.t += 30000; await c.tick();
+  assert.equal(io.notes.length, 1);
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: `48213|${F1}` });
+  await c.select(WT);
+  assert.deepEqual(await c.retry(), { ok: true, error: null });
+  pl = pipeline({ status: "running", created_at: "2026-11-22T10:01:00Z", finished_at: null, updated_at: "2026-11-22T10:15:00Z" });
+  io.t += 1000; await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "running");
+  pl = pipeline({ status: "failed", created_at: "2026-11-22T10:01:00Z", finished_at: F2 });
+  io.t += 30000; await c.tick();
+  assert.equal(io.notes.length, 2);
+  assert.deepEqual(io.sounds, ["blocked", "blocked"]);
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: `48213|${F2}` });
+  io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 2);
+  // Restart (started before the pipeline was created) over the same store: same key, no alert.
+  const { io: io2 } = ciIo({ routes, store: shared });
+  const c2 = createCollector(io2);
+  await c2.tick();
+  assert.equal(io2.notes.length, 0);
 });
