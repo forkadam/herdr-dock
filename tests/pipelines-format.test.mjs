@@ -41,3 +41,9 @@ test("duration: missing or negative gives an empty string", () => {
   assert.equal(duration(-1), "");
   assert.equal(duration(NaN), "");
 });
+
+test("fix 5: Retry is enabled only for failed or canceled pipelines", async () => {
+  const { canRetry } = await import("../src/mods/dock-pipelines/format.js");
+  for (const s of ["failed", "canceled"]) assert.equal(canRetry(s), true, s);
+  for (const s of ["passed", "running", "pending", "skipped", "unknown", "none", undefined]) assert.equal(canRetry(s), false, String(s));
+});

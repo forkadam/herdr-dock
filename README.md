@@ -183,7 +183,7 @@ Run the command again to close it.
 - Each worktree row shows its branch, ↑ahead ↓behind, a dim "no upstream", • for uncommitted changes, a green dot
   when it is open in a space, and the CI badge: ✓ passed, ✕ failed, ⟳ running or pending, – none or canceled,
   ⚠ unknown (hover for why). Click a row to select it (and its space). Click the badge to open Pipelines.
-- The icon rail and the Git projects icon get a red dot while any pipeline has failed.
+- While any pipeline has failed, the Git projects icon gets a red dot when the left panel is collapsed to icons.
 
 **Pipelines** (`dock-pipelines`) shows the selected worktree's latest pipeline: `<repo> · <branch>` with
 "↗ GitLab" (or GitHub) to open it in the browser, the pipeline number, status, age and short sha, the stages,

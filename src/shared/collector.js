@@ -5,13 +5,15 @@
 // compare io.now() on each tick. The HTTP/CLI route lives in ci-client.js.
 // (No Node built-ins: bundled into Herdr mods.)
 import { parseWorktrees, parseStatus, parseRevParse, parseRemote, worktreeId } from "./git.js";
-import { gitInterval, ciInterval, alertFor, alertKey } from "./ci.js";
+import { gitInterval, ciInterval, alertFor, alertKey, nextAlerted } from "./ci.js";
 import { createCiClient } from "./ci-client.js";
 import { limiter } from "./limiter.js";
 import { gitCommandName } from "./gitcmd.js";
 import { slashPath } from "./path.js";
 
 const GIT_LIMIT = 4; // git processes at once
+// Absolute paths (git >= 2.31): without it the common dir comes back relative to the -C folder.
+const REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
 const REPOS_KEY = "dock.git.repos";
 const STATE_KEY = "dock.git.state";
@@ -51,7 +53,8 @@ export function createCollector(io) {
   // --- internal state ---------------------------------------------------------------------------
   // Added repos, by `${machine}|${path}`: { machine, path, at, busy, done, error, commonDir, list }.
   const added = new Map();
-  // Pane cwds, by `${machine}|${cwd}`: { busy, done, result: { top, commonDir } | null }.
+  // Pane cwds, by `${machine}|${cwd}`: { busy, done, at, result: { top, commonDir } | null }. A cwd git couldn't
+  // even run in (code -1: exec rejected, machine unreachable) isn't done: it retries on the git cadence (at).
   const cwds = new Map();
   // Per repo (by repo id): { origin: undefined (unread) | { host, path } | null (no origin), busy, tried }.
   const repoRecs = new Map();
@@ -92,12 +95,12 @@ export function createCollector(io) {
   async function listAdded(e, now) {
     e.busy = true;
     try {
-      const rp = await run(e.machine, ["-C", e.path, "rev-parse", "--show-toplevel", "--git-common-dir"]);
+      const rp = await run(e.machine, ["-C", e.path, ...REV_PARSE]);
       if (rp.code !== 0) {
         Object.assign(e, { error: errText(rp), list: [] });
         return;
       }
-      const { top, commonDir } = parseRevParse(rp.stdout);
+      const { top, commonDir } = parseRevParse(rp.stdout, e.path);
       const wl = await run(e.machine, ["-C", top, "worktree", "list", "--porcelain"]);
       if (wl.code !== 0) {
         Object.assign(e, { error: errText(wl), list: [] });
@@ -109,13 +112,19 @@ export function createCollector(io) {
     }
   }
 
-  async function resolveCwd(e, p) {
+  async function resolveCwd(e, p, now) {
     e.busy = true;
+    let done = true;
     try {
-      const r = await run(p.machine, ["-C", p.cwd, "rev-parse", "--show-toplevel", "--git-common-dir"]);
-      e.result = r.code === 0 ? parseRevParse(r.stdout) : null;
+      const r = await run(p.machine, ["-C", p.cwd, ...REV_PARSE]);
+      e.result = r.code === 0 ? parseRevParse(r.stdout, p.cwd) : null;
+      // Not a repo (git ran and said so) is cached; git not running at all is retried.
+      if (r.code === -1) {
+        done = false;
+        log(`git rev-parse failed in ${p.cwd}: ${errText(r)}`);
+      }
     } finally {
-      Object.assign(e, { busy: false, done: true });
+      Object.assign(e, { busy: false, done, at: now });
     }
   }
 
@@ -136,7 +145,9 @@ export function createCollector(io) {
   async function pollStatus(w, now) {
     w.busy = true;
     try {
-      const r = await run(w.machine, ["-C", w.path, "status", "--porcelain=v2", "--branch"]);
+      // --no-optional-locks: a background status must never take index.lock (it would break the user's own
+      // git commit/add/rebase, on Windows especially).
+      const r = await run(w.machine, ["--no-optional-locks", "-C", w.path, "status", "--porcelain=v2", "--branch"]);
       if (r.code === 0) {
         const g = parseStatus(r.stdout);
         // A push: ahead drops from >0 to 0 between two polls. CI then polls fast for a while (ciInterval).
@@ -154,7 +165,7 @@ export function createCollector(io) {
   // --- CI ---------------------------------------------------------------------------------------
   const newCi = () => ({
     at: -Infinity, busy: false, done: false, host: null, path: null, provider: null, pipeline: null, runIds: [],
-    error: null, hint: null, hostFailure: false, target: null, prev: undefined,
+    error: null, hint: null, hostFailure: false, target: null, prev: undefined, retryError: null,
   });
   const headOf = (wt, w) => (wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head });
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
@@ -166,7 +177,9 @@ export function createCollector(io) {
     });
     if (!a) return;
     // Recorded before notifying, so a crash or restart mid-alert can't alert twice.
-    io.setShared(ALERTED_KEY, { ...(alerted && typeof alerted === "object" ? alerted : {}), [wt.id]: alertKey(cur) });
+    // Per worktree, the last 20 alert keys: a branch switch back to an old failure doesn't alert again.
+    const all = alerted && typeof alerted === "object" && !Array.isArray(alerted) ? alerted : {};
+    io.setShared(ALERTED_KEY, { ...all, [wt.id]: nextAlerted(all[wt.id], alertKey(cur)) });
     try {
       // Herdr drops a mod command's args, so the worktree rides in the name (args kept for readers).
       const name = `dock-core.${gitCommandName("git.show", { worktree: wt.id })}`;
@@ -220,6 +233,7 @@ export function createCollector(io) {
     return {
       status: ci.error ? "unknown" : p ? p.status : "none",
       id: p?.id ?? null,
+      number: p?.number ?? null,
       sha: p?.sha ?? null,
       webUrl: p?.webUrl ?? null,
       createdAt: p?.createdAt ?? null,
@@ -252,6 +266,7 @@ export function createCollector(io) {
       olderThanHead: !!(p && head.sha && p.sha && p.sha !== head.sha),
       error: ci?.error ?? null,
       hint: ci?.hint ?? null,
+      retryError: ci?.retryError ?? null, // the last Retry's failure, until a Retry succeeds
     };
     const key = JSON.stringify(detail);
     if (key === detailKey) return;
@@ -260,22 +275,26 @@ export function createCollector(io) {
   }
 
   // --- discovery view ---------------------------------------------------------------------------
-  // Repo id -> { id, machine, mainPath, added, error, wts: Map(wtId -> { path, branch, detached, head, open, space }) }.
+  // Repo id -> { id, machine, mainPath, added, addedPaths, error, wts: Map(wtId -> { path, branch, detached, head,
+  // open, space }) }. addedPaths: the dock.git.repos entries that produced the repo (Remove repo drops those).
   function buildView(addedList, paneList) {
     const view = new Map();
     const repoFor = (id, machine, mainPath) => {
-      if (!view.has(id)) view.set(id, { id, machine, mainPath, added: false, error: null, wts: new Map() });
+      if (!view.has(id)) view.set(id, { id, machine, mainPath, added: false, addedPaths: [], error: null, wts: new Map() });
       return view.get(id);
     };
     for (const a of addedList) {
       const e = added.get(`${a.machine ?? ""}|${a.path}`);
       if (!e?.done) continue;
       if (e.error) {
-        Object.assign(repoFor(idOf(a.machine, a.path), a.machine, a.path), { added: true, error: e.error });
+        const bad = repoFor(idOf(a.machine, a.path), a.machine, a.path);
+        Object.assign(bad, { added: true, error: e.error });
+        bad.addedPaths.push({ path: a.path, machine: a.machine });
         continue;
       }
       const repo = repoFor(idOf(a.machine, e.commonDir), a.machine, e.list[0]?.path ?? mainFromCommonDir(e.commonDir));
       repo.added = true;
+      repo.addedPaths.push({ path: a.path, machine: a.machine });
       for (const w of e.list) {
         const id = idOf(a.machine, w.path);
         if (!repo.wts.has(id)) {
@@ -318,6 +337,7 @@ export function createCollector(io) {
         host: origin?.host ?? null,
         path: origin?.path ?? null, // the origin's remote path (e.g. "grp/api"), not a folder
         added: r.added,
+        addedPaths: r.addedPaths,
         error: r.error,
         worktrees: [...r.wts].map(([id, w]) => {
           const g = wtRecs.get(id)?.git;
@@ -369,9 +389,9 @@ export function createCollector(io) {
     for (const p of paneList) {
       const key = `${p.machine ?? ""}|${p.cwd}`;
       cwdKeys.add(key);
-      if (!cwds.has(key)) cwds.set(key, { busy: false, done: false, result: null });
+      if (!cwds.has(key)) cwds.set(key, { busy: false, done: false, at: -Infinity, result: null });
       const e = cwds.get(key);
-      if (!e.busy && !e.done) jobs.push(resolveCwd(e, p));
+      if (!e.busy && !e.done && now - e.at >= gitInterval({ open: true })) jobs.push(resolveCwd(e, p, now));
     }
     for (const key of cwds.keys()) if (!cwdKeys.has(key)) cwds.delete(key);
     await Promise.all(jobs);
@@ -429,7 +449,7 @@ export function createCollector(io) {
 
   function refresh() {
     for (const e of added.values()) e.at = -Infinity;
-    for (const e of cwds.values()) if (!e.busy) e.done = false;
+    for (const e of cwds.values()) if (!e.busy) Object.assign(e, { done: false, at: -Infinity });
     for (const w of wtRecs.values()) {
       w.gitAt = -Infinity;
       w.ci.at = -Infinity;
@@ -458,7 +478,9 @@ export function createCollector(io) {
     if (!p || !ci.provider) return { ok: false, error: "no pipeline" };
     const r = await client.retry(ci.host, ci.provider, ci.path, p, ci.runIds);
     ci.at = -Infinity; // re-query on the next tick
+    ci.retryError = r.ok ? null : r.error ?? "retry failed";
     if (!r.ok) log(`CI: retry on ${ci.host}/${ci.path}: ${r.error}`);
+    publishDetail(); // the panel shows a failed Retry
     return r;
   }
 

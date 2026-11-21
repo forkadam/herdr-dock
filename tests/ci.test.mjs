@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeStatus, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval } from "../src/shared/ci.js";
+import { normalizeStatus, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval, nextAlerted } from "../src/shared/ci.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 
@@ -107,7 +107,7 @@ test("ciInterval and gitInterval", () => {
 });
 
 test("unknown statuses stay unknown and never alert", () => {
-  assert.equal(normalizeStatus("gitlab", { status: "canceling" }), "unknown");
+  assert.equal(normalizeStatus("gitlab", { status: "bogus" }), "unknown");
   for (const c of ["stale", null, undefined]) {
     assert.equal(normalizeStatus("github", { status: "completed", conclusion: c }), "unknown", String(c));
   }
@@ -156,4 +156,43 @@ test("alertFor: the key is id + finishedAt; a retried pipeline failing again ale
   // Old format: a bare id (number or string) suppresses that pipeline.
   assert.equal(alertFor({ prev: { id: 5, status: "running" }, cur: f1, alerted: 5, startedAt: t0, ...who }), null);
   assert.equal(alertFor({ prev: { id: 5, status: "running" }, cur: f1, alerted: "5", startedAt: t0, ...who }), null);
+});
+
+// --- final-review fixes -------------------------------------------------------------------------
+
+test("fix 9: GitLab canceling is canceled; manual stays pending", () => {
+  assert.equal(normalizeStatus("gitlab", { status: "canceling" }), "canceled");
+  assert.equal(normalizeStatus("gitlab", { status: "manual" }), "pending");
+});
+
+test("fix 4: a display number: GitLab's pipeline id, GitHub's newest run_number (id stays the alert identity)", () => {
+  const g = gitlabPipeline(fx("gitlab-pipeline.json"), null);
+  assert.equal(g.number, 4821);
+  assert.equal(g.id, 4821);
+  const h = githubLatest(fx("github-runs.json"), {});
+  assert.equal(h.number, 58); // run 302 is the newest of that sha
+  assert.equal(h.id, "bbbb000000000000000000000000000000000002");
+  const noNum = githubLatest({ workflow_runs: [{ id: 1, name: "CI", head_sha: "s", status: "completed", conclusion: "success", created_at: "2026-11-22T09:00:00Z" }] }, {});
+  assert.equal(noNum.number, null);
+});
+
+test("fix 2: alerted per worktree is a capped list; any key in it suppresses; old string values still work", () => {
+  const fa = { ...failed, id: 10, finishedAt: "A" };
+  const fb = { ...failed, id: 20, finishedAt: "B" };
+  // A branch switch forgets prev; the list still remembers a's failure.
+  assert.equal(alertFor({ prev: undefined, cur: fa, alerted: [alertKey(fa), alertKey(fb)], startedAt: t0, ...who }), null);
+  assert.equal(alertFor({ prev: undefined, cur: fb, alerted: [alertKey(fa), alertKey(fb)], startedAt: t0, ...who }), null);
+  assert.ok(alertFor({ prev: undefined, cur: fb, alerted: [alertKey(fa)], startedAt: t0, ...who }));
+  // An old bare id inside a list, or an old single string, still suppresses.
+  assert.equal(alertFor({ prev: undefined, cur: fa, alerted: ["10"], startedAt: t0, ...who }), null);
+  assert.equal(alertFor({ prev: undefined, cur: fa, alerted: alertKey(fa), startedAt: t0, ...who }), null);
+
+  assert.deepEqual(nextAlerted(undefined, "k1"), ["k1"]);
+  assert.deepEqual(nextAlerted("old|x", "k1"), ["old|x", "k1"]); // the old string format is kept
+  assert.deepEqual(nextAlerted(["k1", "k2"], "k1"), ["k2", "k1"]); // no duplicates; newest last
+  let list;
+  for (let i = 0; i < 25; i++) list = nextAlerted(list, `k${i}`);
+  assert.equal(list.length, 20);
+  assert.equal(list[0], "k5");
+  assert.equal(list[19], "k24");
 });

@@ -66,7 +66,7 @@ export default class Git extends View {
 
   repoRow(t, r, i) {
     const red = t.ansi1 ?? "#e5484d";
-    const detail = [r.machine && `@${r.machine}`, r.provider].filter(Boolean).join(" · ");
+    const detail = r.detail;
     return h_flex().id(`git-repo-${i}`).h(24).px(16).gap(6).flex_none().items_center().mt(i ? 6 : 0)
       .tooltip(r.tooltip)
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu = this.menu === r.id ? null : r.id; cx.notify(); })

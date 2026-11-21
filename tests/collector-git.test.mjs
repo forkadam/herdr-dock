@@ -61,14 +61,14 @@ test("(a) an added repo with two worktrees, plus a terminal repo on a second mac
       { pane: "m1", tab: "t1", cwd: null },
     ],
     table: {
-      " -C D:/work/api rev-parse --show-toplevel --git-common-dir": ok("D:/work/api\n.git\n"),
+      " -C D:/work/api rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
       " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"], ["D:/work/api-login", "feature/login"]),
       " -C D:/work/api remote get-url origin": ok("git@gitlab.corp:grp/api.git\n"),
-      " -C D:/work/api status --porcelain=v2 --branch": status("main", { ab: "+0 -2" }),
-      " -C D:/work/api-login status --porcelain=v2 --branch": status("feature/login", { ab: "+1 -0", dirty: true }),
-      "devbox -C /home/me/tool/lib rev-parse --show-toplevel --git-common-dir": ok("/home/me/tool\n/home/me/tool/.git\n"),
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main", { ab: "+0 -2" }),
+      " --no-optional-locks -C D:/work/api-login status --porcelain=v2 --branch": status("feature/login", { ab: "+1 -0", dirty: true }),
+      "devbox -C /home/me/tool/lib rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/home/me/tool\n/home/me/tool/.git\n"),
       "devbox -C /home/me/tool remote get-url origin": ok("https://github.com/me/tool.git\n"),
-      "devbox -C /home/me/tool status --porcelain=v2 --branch": status("main"),
+      "devbox --no-optional-locks -C /home/me/tool status --porcelain=v2 --branch": status("main"),
     },
   });
   const c = createCollector(io);
@@ -111,11 +111,11 @@ test("(b) the same worktree added and reached from a terminal is one row", async
     spaces: [{ id: "s9", name: "main", machine: null, tabs: [{ id: "t1" }] }],
     panes: [{ pane: "p1", tab: "t1", cwd: "d:/work/api/src", branch: "main" }],
     table: {
-      " -C D:/work/api rev-parse --show-toplevel --git-common-dir": ok("D:/work/api\n.git\n"),
+      " -C D:/work/api rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
       " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"]),
-      " -C d:/work/api/src rev-parse --show-toplevel --git-common-dir": ok("d:/work/api\nd:/work/api/.git\n"),
+      " -C d:/work/api/src rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
       " -C D:/work/api remote get-url origin": NO_ORIGIN,
-      " -C D:/work/api status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
     },
   });
   const c = createCollector(io);
@@ -132,11 +132,11 @@ test("(c) an added path that is no longer a repo, and a repo with no origin", as
   const io = fakeIo({
     repos: [{ path: "D:/gone", machine: null }, { path: "D:/local", machine: null }],
     table: {
-      " -C D:/gone rev-parse --show-toplevel --git-common-dir": { code: 128, stdout: "", stderr: "fatal: not a git repository" },
-      " -C D:/local rev-parse --show-toplevel --git-common-dir": ok("D:/local\n.git\n"),
+      " -C D:/gone rev-parse --path-format=absolute --show-toplevel --git-common-dir": { code: 128, stdout: "", stderr: "fatal: not a git repository" },
+      " -C D:/local rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/local\nD:/local/.git\n"),
       " -C D:/local worktree list --porcelain": wtList(["D:/local", "main"]),
       " -C D:/local remote get-url origin": NO_ORIGIN,
-      " -C D:/local status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C D:/local status --porcelain=v2 --branch": status("main"),
     },
   });
   const c = createCollector(io);
@@ -169,11 +169,11 @@ test("(d) git cadence: open worktrees every 15 s, others every 60 s; refresh pol
     spaces: [{ id: "s1", name: "dev", machine: null, tabs: [{ id: "t1" }] }],
     panes: [{ pane: "p1", tab: "t1", cwd: "D:/work/api", branch: "main" }],
     table: {
-      " -C D:/work/api rev-parse --show-toplevel --git-common-dir": ok("D:/work/api\n.git\n"),
+      " -C D:/work/api rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
       " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"], ["D:/work/api-x", "x"]),
       " -C D:/work/api remote get-url origin": NO_ORIGIN,
-      " -C D:/work/api status --porcelain=v2 --branch": status("main"),
-      " -C D:/work/api-x status --porcelain=v2 --branch": status("x"),
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C D:/work/api-x status --porcelain=v2 --branch": status("x"),
     },
   });
   const c = createCollector(io);
@@ -197,14 +197,14 @@ test("(d) git cadence: open worktrees every 15 s, others every 60 s; refresh pol
 
 test("(e) never more than 4 git processes at once", async () => {
   const table = {
-    " -C D:/r rev-parse --show-toplevel --git-common-dir": ok("D:/r\n.git\n"),
+    " -C D:/r rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/r\nD:/r/.git\n"),
     " -C D:/r remote get-url origin": NO_ORIGIN,
   };
   const wts = [];
   for (let i = 0; i < 10; i++) {
     const p = i ? `D:/r-${i}` : "D:/r";
     wts.push([p, `b${i}`]);
-    table[` -C ${p} status --porcelain=v2 --branch`] = status(`b${i}`);
+    table[` --no-optional-locks -C ${p} status --porcelain=v2 --branch`] = status(`b${i}`);
   }
   table[" -C D:/r worktree list --porcelain"] = wtList(...wts);
   const io = fakeIo({ repos: [{ path: "D:/r", machine: null }], table });
@@ -221,10 +221,10 @@ test("(f) publishes dock.git.state only when it changed", async () => {
   const io = fakeIo({
     repos: [{ path: "D:/local", machine: null }],
     table: {
-      " -C D:/local rev-parse --show-toplevel --git-common-dir": ok("D:/local\n.git\n"),
+      " -C D:/local rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/local\nD:/local/.git\n"),
       " -C D:/local worktree list --porcelain": wtList(["D:/local", "main"]),
       " -C D:/local remote get-url origin": NO_ORIGIN,
-      " -C D:/local status --porcelain=v2 --branch": () => st,
+      " --no-optional-locks -C D:/local status --porcelain=v2 --branch": () => st,
     },
   });
   const c = createCollector(io);
@@ -247,9 +247,9 @@ test("a terminal in a linked worktree of a non-added repo lists only that worktr
     spaces: [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }],
     panes: [{ pane: "p1", tab: "t1", cwd: "/w/api-fix", branch: "fix" }],
     table: {
-      " -C /w/api-fix rev-parse --show-toplevel --git-common-dir": ok("/w/api-fix\n/w/api/.git\n"),
+      " -C /w/api-fix rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/api-fix\n/w/api/.git\n"),
       " -C /w/api-fix remote get-url origin": NO_ORIGIN,
-      " -C /w/api-fix status --porcelain=v2 --branch": status("fix"),
+      " --no-optional-locks -C /w/api-fix status --porcelain=v2 --branch": status("fix"),
     },
   });
   const c = createCollector(io);
@@ -267,9 +267,9 @@ test("a closed terminal drops its non-added worktree; a cwd outside any repo sho
     platform: "linux",
     spaces: [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }],
     table: {
-      " -C /w/tool rev-parse --show-toplevel --git-common-dir": ok("/w/tool\n.git\n"),
+      " -C /w/tool rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/tool\n/w/tool/.git\n"),
       " -C /w/tool remote get-url origin": NO_ORIGIN,
-      " -C /w/tool status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": status("main"),
     },
   });
   io.panes = () => panes;
@@ -291,12 +291,12 @@ test("overlapping ticks: a slow status from an older tick doesn't republish a st
     platform: "linux",
     spaces: [{ id: "s1", name: "x", machine: null, tabs: [{ id: "t1" }] }],
     table: {
-      " -C /w/a rev-parse --show-toplevel --git-common-dir": ok("/w/a\n.git\n"),
-      " -C /w/b rev-parse --show-toplevel --git-common-dir": ok("/w/b\n.git\n"),
+      " -C /w/a rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/a\n/w/a/.git\n"),
+      " -C /w/b rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/b\n/w/b/.git\n"),
       " -C /w/a remote get-url origin": NO_ORIGIN,
       " -C /w/b remote get-url origin": NO_ORIGIN,
-      " -C /w/a status --porcelain=v2 --branch": status("main"),
-      " -C /w/b status --porcelain=v2 --branch": () => slowB.then(() => status("main")),
+      " --no-optional-locks -C /w/a status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C /w/b status --porcelain=v2 --branch": () => slowB.then(() => status("main")),
     },
   });
   io.panes = () => panes;
@@ -320,9 +320,9 @@ test("a transient remote get-url failure is retried; only exit 2 means no origin
   const io = fakeIo({
     repos: [{ path: "D:/local", machine: null }],
     table: {
-      " -C D:/local rev-parse --show-toplevel --git-common-dir": ok("D:/local\n.git\n"),
+      " -C D:/local rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/local\nD:/local/.git\n"),
       " -C D:/local worktree list --porcelain": wtList(["D:/local", "main"]),
-      " -C D:/local status --porcelain=v2 --branch": status("main"),
+      " --no-optional-locks -C D:/local status --porcelain=v2 --branch": status("main"),
     },
   });
   const exec = io.exec;
@@ -357,12 +357,12 @@ test("overlapping ticks: an older tick finishing after a newer one pruned (but b
     platform: "linux",
     spaces: [{ id: "s1", name: "x", machine: null, tabs: [{ id: "t1" }] }],
     table: {
-      " -C /w/a rev-parse --show-toplevel --git-common-dir": ok("/w/a\n.git\n"),
-      " -C /w/b rev-parse --show-toplevel --git-common-dir": ok("/w/b\n.git\n"),
+      " -C /w/a rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/a\n/w/a/.git\n"),
+      " -C /w/b rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/w/b\n/w/b/.git\n"),
       " -C /w/a remote get-url origin": NO_ORIGIN,
       " -C /w/b remote get-url origin": NO_ORIGIN,
-      " -C /w/a status --porcelain=v2 --branch": () => (holdA ? holdA.p : Promise.resolve()).then(() => status("main")),
-      " -C /w/b status --porcelain=v2 --branch": () => (holdB ? holdB.p : Promise.resolve()).then(() => status("main")),
+      " --no-optional-locks -C /w/a status --porcelain=v2 --branch": () => (holdA ? holdA.p : Promise.resolve()).then(() => status("main")),
+      " --no-optional-locks -C /w/b status --porcelain=v2 --branch": () => (holdB ? holdB.p : Promise.resolve()).then(() => status("main")),
     },
   });
   io.panes = () => panes;
@@ -393,4 +393,130 @@ test("overlapping ticks: an older tick finishing after a newer one pruned (but b
   await tickB;
   assert.deepEqual(published, ["a"]);
   assert.deepEqual(c.state().repos.map((r) => r.name), ["a"]);
+});
+
+// --- final-review fixes -------------------------------------------------------------------------
+
+const RP = "rev-parse --path-format=absolute --show-toplevel --git-common-dir";
+const siblings = (answer) => fakeIo({
+  spaces: [{ id: "s1", name: "dev", machine: null, tabs: [{ id: "t1" }] }],
+  panes: [{ pane: "p1", tab: "t1", cwd: "D:/work/api/src" }, { pane: "p2", tab: "t1", cwd: "D:/work/web/src" }],
+  table: {
+    [` -C D:/work/api/src ${RP}`]: answer("api"),
+    [` -C D:/work/web/src ${RP}`]: answer("web"),
+    " -C D:/work/api remote get-url origin": ok("git@gitlab.corp:grp/api.git\n"),
+    " -C D:/work/web remote get-url origin": ok("git@gitlab.corp:grp/web.git\n"),
+    " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+    " --no-optional-locks -C D:/work/web status --porcelain=v2 --branch": status("dev"),
+  },
+});
+const assertSiblings = (c) => {
+  const repos = c.state().repos;
+  assert.deepEqual(repos.map((r) => [r.id, r.name, r.host, r.path]), [
+    ["|d:/work/api/.git", "api", "gitlab.corp", "grp/api"],
+    ["|d:/work/web/.git", "web", "gitlab.corp", "grp/web"],
+  ]);
+  assert.deepEqual(repos.map((r) => r.worktrees.map((w) => [w.path, w.branch, w.open])), [
+    [["D:/work/api", "main", true]], [["D:/work/web", "dev", true]],
+  ]);
+};
+
+test("fix 1: sibling repos opened from terminals in their src/ subfolders are two repos, each with its origin", async () => {
+  // Real `git -C <sub> rev-parse --path-format=absolute ...` output.
+  const io = siblings((n) => ok(`D:/work/${n}\nD:/work/${n}/.git\n`));
+  const c = createCollector(io);
+  await c.tick();
+  assertSiblings(c);
+});
+
+test("fix 1: a relative common dir (git without --path-format) resolves against the -C folder, not top", async () => {
+  // What git prints without --path-format=absolute: relative to the -C folder.
+  const io = siblings((n) => ok(`D:/work/${n}\n../.git\n`));
+  const c = createCollector(io);
+  await c.tick();
+  assertSiblings(c);
+});
+
+test("fix 1: an added repo folder plus a terminal in its subfolder is one row, open", async () => {
+  const io = fakeIo({
+    repos: [{ path: "D:\\work\\api", machine: null }],
+    spaces: [{ id: "s9", name: "main", machine: null, tabs: [{ id: "t1" }] }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "d:/work/api/src" }],
+    table: {
+      [` -C D:/work/api ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"]),
+      [` -C d:/work/api/src ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      " -C D:/work/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  const { repos } = c.state();
+  assert.equal(repos.length, 1);
+  assert.equal(repos[0].worktrees.length, 1);
+  assert.equal(repos[0].worktrees[0].open, true);
+  assert.equal(repos[0].worktrees[0].id, "|d:/work/api");
+});
+
+test("fix 3: git status runs with --no-optional-locks (never takes index.lock)", async () => {
+  const io = fakeIo({
+    repos: [{ path: "D:/local", machine: null }],
+    table: {
+      [` -C D:/local ${RP}`]: ok("D:/local\nD:/local/.git\n"),
+      " -C D:/local worktree list --porcelain": wtList(["D:/local", "main"]),
+      " -C D:/local remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C D:/local status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  const st = io.calls.filter((x) => x.key.includes(" status "));
+  assert.equal(st.length, 1);
+  assert.ok(st[0].key.startsWith(" --no-optional-locks -C D:/local status"), st[0].key);
+  assert.equal(c.state().repos[0].worktrees[0].branch, "main");
+});
+
+test("fix 6: a cwd whose rev-parse couldn't run (code -1) isn't cached; it retries on the git cadence", async () => {
+  let down = true;
+  const io = fakeIo({
+    platform: "linux",
+    spaces: [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: {
+      [` -C /w/tool ${RP}`]: () => { if (down) throw new Error("ssh: connect refused"); return ok("/w/tool\n/w/tool/.git\n"); },
+      " -C /w/tool remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(c.state().repos, []);
+  down = false;
+  io.t = 1000; await c.tick();
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 1, "not retried every second");
+  io.t = 15000; await c.tick();
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 2);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"]);
+  io.t = 30000; await c.tick();
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 2, "a resolved cwd is cached");
+});
+
+test("fix 8: each repo publishes the added paths that produced it (a subfolder, or a broken path)", async () => {
+  const io = fakeIo({
+    repos: [{ path: "D:/work/api/src", machine: null }, { path: "D:/gone", machine: null }],
+    table: {
+      [` -C D:/work/api/src ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"]),
+      " -C D:/work/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+      [` -C D:/gone ${RP}`]: { code: 128, stdout: "", stderr: "fatal: not a git repository" },
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  const [api, gone] = c.state().repos;
+  assert.equal(api.id, "|d:/work/api/.git");
+  assert.deepEqual(api.addedPaths, [{ path: "D:/work/api/src", machine: null }]);
+  assert.deepEqual(gone.addedPaths, [{ path: "D:/gone", machine: null }]);
 });

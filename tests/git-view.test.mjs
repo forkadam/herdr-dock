@@ -88,3 +88,33 @@ test("removeRepoPaths drops entries naming the repo or any of its worktrees", ()
   const gone = R({ id: "|d:/gone", error: "x", worktrees: [] });
   assert.deepEqual(removeRepoPaths([{ path: "D:/gone", machine: null }], gone, "windows"), []);
 });
+
+// --- final-review fixes -------------------------------------------------------------------------
+
+test("fix 7: a remote repo's machine shows once (in the name), the detail is just the provider", () => {
+  const [r] = gitRows({ repos: [R({ name: "tool · devbox", machine: "devbox", provider: "github" })] }, null);
+  assert.equal(r.name, "tool · devbox");
+  assert.equal(r.detail, "github");
+  assert.ok(!r.detail.includes("devbox"));
+  const [local] = gitRows({ repos: [R({ provider: null })] }, null);
+  assert.equal(local.detail, "");
+});
+
+test("fix 4: the badge tooltip shows the display number, not a GitHub sha", () => {
+  const sha = "f".repeat(40);
+  const [, w] = gitRows({ repos: [R({ worktrees: [W({ pipeline: P("passed", { id: sha, number: 58 }) })] })] }, null);
+  assert.match(w.badgeTip, /^Pipeline #58 passed/);
+  assert.ok(!w.badgeTip.includes(sha));
+  const [, g] = gitRows({ repos: [R({ worktrees: [W({ pipeline: P("failed", { id: 7, number: 7 }) })] })] }, null);
+  assert.match(g.badgeTip, /^Pipeline #7 failed/);
+});
+
+test("fix 8: removeRepoPaths drops the added paths that produced the repo (an added subfolder too)", () => {
+  const repo = R({ addedPaths: [{ path: "D:/r/api/src", machine: null }] });
+  const list = [{ path: "D:\\R\\api\\src", machine: null }, { path: "D:/r/web", machine: null }];
+  assert.deepEqual(removeRepoPaths(list, repo, "windows"), [{ path: "D:/r/web", machine: null }]);
+  // A remote added path is matched on its own machine only.
+  const remote = R({ machine: "devbox", addedPaths: [{ path: "/srv/api/sub", machine: "devbox" }], worktrees: [] });
+  assert.deepEqual(removeRepoPaths([{ path: "/srv/api/sub", machine: "devbox" }, { path: "/srv/api/sub", machine: null }], remote, "windows"),
+    [{ path: "/srv/api/sub", machine: null }]);
+});

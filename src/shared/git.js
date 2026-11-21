@@ -41,15 +41,18 @@ export function parseStatus(porcelainV2) {
 
 const isAbs = (p) => /^([A-Za-z]:)?\//.test(p);
 
-// `git rev-parse --show-toplevel --git-common-dir`: two lines. A relative common dir is
-// resolved against top.
-export function parseRevParse(stdout) {
+// `git rev-parse [--path-format=absolute] --show-toplevel --git-common-dir`: two lines. The collector asks for
+// absolute paths (git >= 2.31); without that, git prints a relative common dir relative to the -C folder (not
+// to top: from D:/r/src it prints "../.git"), so a relative one is resolved against `base`, the -C folder, and
+// only against top when no base is given.
+export function parseRevParse(stdout, base) {
   const [a = "", b = ""] = lines(stdout).map((l) => l.trim()).filter(Boolean);
   const top = slashPath(a);
   let commonDir = b.replace(/[\\]/g, "/");
   if (!isAbs(commonDir)) {
+    const from = base ? slashPath(base) : top;
     const parts = [];
-    for (const seg of `${top}/${commonDir}`.split("/")) {
+    for (const seg of `${from}/${commonDir}`.split("/")) {
       if (seg === "." || (seg === "" && parts.length)) continue;
       if (seg === ".." && parts.length > 1) parts.pop();
       else parts.push(seg);

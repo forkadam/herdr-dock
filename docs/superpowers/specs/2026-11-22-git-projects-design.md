@@ -189,8 +189,9 @@ sound, and a ✕ in the list. One click reaches the failed job.
 - `dock.git.state`: `{ repos: [{ id, name, machine, provider, host, worktrees: [{ id, path, branch, ahead, behind, dirty, open, space, pipeline: { status, id, sha, webUrl, createdAt, stale, error } }] }], updatedAt }`.
   - The full details live only for the selected worktree, in `dock.git.detail`, so shared state stays small.
 - `dock.git.selected`: the selected worktree id, set by row and badge clicks. The collector fetches its details.
-- `dock.git.alerted`: `{ "<worktree id>": "<pipeline id>" }`. It is persisted, so a restart doesn't repeat an
-  alert.
+- `dock.git.alerted`: `{ "<worktree id>": ["<pipeline id>|<finished at>", ...] }`, the worktree's last 20 alert
+  keys (an older single-string value still counts). It is persisted, so a restart doesn't repeat an alert, and a
+  list, so switching branches back to an old failure doesn't either.
 - Commands (to dock-core, the same way as `right`):
   - `git.refresh`;
   - `git.retry` (the selected pipeline);
@@ -203,7 +204,7 @@ sound, and a ✕ in the list. One click reaches the failed job.
 - An alert fires only when **all** of these hold:
   - the worktree's pipeline status was first observed this session as not failed, and is now failed; or a
     pipeline id never seen this session is failed and was created after Herdr started;
-  - `dock.git.alerted[worktree] !== pipeline id`.
+  - the pipeline's alert key is not in `dock.git.alerted[worktree]`.
 - On an alert:
   - `notify({ title: "<repo> · <branch>", body: "Pipeline failed: <first failed job> (+N more)", level: "error", action: { name: "dock-core.git.show", args: { worktree } } })`;
   - `playSound("blocked")`.

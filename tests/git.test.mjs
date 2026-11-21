@@ -54,6 +54,15 @@ test("parseStatus: clean tree, detached, no upstream", () => {
   assert.equal(parseStatus("# branch.oid abc\n# branch.head main\n? new.txt\n").dirty, true);
 });
 
+test("parseRevParse: a relative common dir resolves against the -C folder when given (git prints it relative to that)", () => {
+  // Real git 2.51: `git -C D:/w/herdr-dock/src/shared rev-parse --show-toplevel --git-common-dir`.
+  assert.deepEqual(parseRevParse("D:/w/herdr-dock\n../../.git\n", "D:/w/herdr-dock/src/shared"),
+    { top: "D:/w/herdr-dock", commonDir: "D:/w/herdr-dock/.git" });
+  assert.equal(parseRevParse("D:/work/api\n../.git\n", "d:\\work\\api\\src").commonDir, "D:/work/api/.git");
+  assert.equal(parseRevParse("/home/a/p\n.git\n", "/home/a/p").commonDir, "/home/a/p/.git");
+  assert.equal(parseRevParse("/w/wt\n/w/main/.git\n", "/w/wt/src").commonDir, "/w/main/.git");
+});
+
 test("parseRevParse: relative common dir resolves against top", () => {
   assert.deepEqual(parseRevParse("D:/workspace/herdr-dock\n.git\n"), { top: "D:/workspace/herdr-dock", commonDir: "D:/workspace/herdr-dock/.git" });
   assert.equal(parseRevParse("/home/a/p\n./.git\n").commonDir, "/home/a/p/.git");

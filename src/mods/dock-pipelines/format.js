@@ -23,3 +23,8 @@ export function duration(sec) {
   if (s < 3600) return `${Math.floor(s / 60)}m${pad(s % 60)}s`;
   return `${Math.floor(s / 3600)}h${pad(Math.floor((s % 3600) / 60))}m`;
 }
+
+// Retry only makes sense for a finished pipeline that didn't pass.
+export function canRetry(status) {
+  return status === "failed" || status === "canceled";
+}

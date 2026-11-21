@@ -6,7 +6,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, props, closeOverlay } from "herdr";
 import { gitCommand } from "../_git-command.js";
 import { badgeOf } from "../dock-git/view.js";
-import { ago, duration } from "./format.js";
+import { ago, duration, canRetry } from "./format.js";
 
 const WARN = "#d29922";
 const PROVIDER = { gitlab: "GitLab", github: "GitHub" };
@@ -94,7 +94,7 @@ export default class Pipelines extends View {
     const badge = badgeOf({ status: p.status });
     const when = ago(p.createdAt, Date.now());
     const line = h_flex().flex_wrap().px(16).gap(8).items_center().flex_none().text_size(12.5)
-      .child(div().flex_none().font_medium().text_color(t.foreground).child(`#${p.id}`))
+      .when(p.number != null, (el) => el.child(div().flex_none().font_medium().text_color(t.foreground).child(`#${p.number}`)))
       .child(h_flex().flex_none().gap(4).text_color(tones[badge.tone] ?? t.dim)
         .child(div().child(badge.glyph || "–")).child(div().child(p.status)))
       .when(Boolean(when), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${when}`)))
@@ -133,18 +133,21 @@ export default class Pipelines extends View {
           () => gitCommand("git.open.job", { index: i }))))));
   }
 
-  retryButton(t, p) {
+  retryButton(t, p, retryError) {
     const busy = p.status === "running" || p.status === "pending";
-    const enabled = !busy && !this.retrying && p.id != null;
+    const enabled = canRetry(p.status) && !this.retrying && p.id != null;
     const label = this.retrying ? "Retrying…" : "Retry";
-    return h_flex().px(16).pt(12).flex_none()
-      .child(div().id("pl-retry").px(12).h(26).rounded(6).border(1).border_color(t.border).flex().items_center()
+    const tip = busy ? "The pipeline is still running" : canRetry(p.status) ? "Retry the failed jobs" : "Nothing to retry";
+    return v_flex().px(16).pt(12).gap(6).flex_none()
+      .child(div().id("pl-retry").flex_none().self_start().px(12).h(26).rounded(6).border(1).border_color(t.border).flex().items_center()
         .text_size(12.5).text_color(t.foreground)
-        .tooltip(busy ? "The pipeline is still running" : "Retry the failed jobs")
+        .tooltip(tip)
         .when(enabled, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => { cx.stop_propagation(); this.retry(cx); }))
         .when(!enabled, (el) => el.opacity(0.45))
-        .child(label));
+        .child(label))
+      .when(Boolean(retryError) && !this.retrying, (el) => el.child(div().text_size(11.5).text_color(WARN)
+        .child(`Retry failed: ${retryError}`)));
   }
 
   message(t, text) {
@@ -165,7 +168,7 @@ export default class Pipelines extends View {
     if (stages) out.push(stages);
     const jobs = this.failedJobs(t, p);
     if (jobs) out.push(jobs);
-    out.push(this.retryButton(t, p));
+    out.push(this.retryButton(t, p, d.retryError));
     return out;
   }
 

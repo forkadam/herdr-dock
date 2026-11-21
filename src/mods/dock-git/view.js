@@ -23,7 +23,8 @@ function pipelineTip(p) {
   if (!p) return "No pipeline";
   if (p.error) return `Pipeline: ${p.error}${p.hint ? ` · run ${p.hint}` : ""}`;
   const s = p.status === "none" ? "no pipeline yet" : p.status;
-  return `Pipeline ${p.id != null ? `#${p.id} ` : ""}${s}${p.stale ? " · older commit than local HEAD" : ""} · click for details`;
+  // number is the display number (GitHub: run_number); id is a 40-char sha on GitHub, so never shown.
+  return `Pipeline ${p.number != null ? `#${p.number} ` : ""}${s}${p.stale ? " · older commit than local HEAD" : ""} · click for details`;
 }
 
 export function repoWebUrl(repo) {
@@ -40,6 +41,8 @@ export function gitRows(state, selected) {
     rows.push({
       kind: "repo", id: r.id, name: r.name, machine: r.machine ?? null, provider: r.provider ?? null,
       added: Boolean(r.added), error: r.error ?? null,
+      // The machine is already in the name ("tool · devbox"): the detail is just the provider.
+      detail: r.provider ?? "",
       webUrl: repoWebUrl(r), webLabel: `Open in ${PROVIDER[r.provider] ?? "browser"}`,
       mainPath: wts[0]?.path ?? null,
       tooltip: [r.name, r.machine && `on ${r.machine}`, r.host && r.path && `${r.host}/${r.path}`, r.error].filter(Boolean).join(" · "),
@@ -81,11 +84,15 @@ export function addRepoPath(list, path, platform) {
   return [...cur, { path, machine: null }];
 }
 
-// dock.git.repos without the entries that name this repo (its id) or any of its worktrees.
+// dock.git.repos without the entries that produced this repo (its addedPaths, e.g. an added subfolder), name it
+// (its id) or any of its worktrees.
 export function removeRepoPaths(list, repo, platform) {
   const cur = Array.isArray(list) ? list : [];
   const machine = repo.machine ?? null;
   const ids = new Set([repo.id, ...(repo.worktrees ?? []).map((w) => idOf(machine, w.path, platform))]);
+  for (const a of Array.isArray(repo.addedPaths) ? repo.addedPaths : []) {
+    if (a && typeof a.path === "string" && (a.machine ?? null) === machine) ids.add(idOf(machine, a.path, platform));
+  }
   return cur.filter((e) => !(e && typeof e.path === "string" && (e.machine ?? null) === machine
     && ids.has(idOf(machine, e.path, platform))));
 }

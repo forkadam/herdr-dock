@@ -12,7 +12,7 @@ const worst = (statuses) => statuses.reduce((a, b) => (rank(b) < rank(a) ? b : a
 const GITLAB = {
   success: "passed", failed: "failed", running: "running", canceled: "canceled", skipped: "skipped",
   pending: "pending", created: "pending", waiting_for_resource: "pending", preparing: "pending",
-  scheduled: "pending", manual: "pending",
+  scheduled: "pending", manual: "pending", canceling: "canceled",
 };
 const GITHUB_DONE = {
   success: "passed", failure: "failed", timed_out: "failed", startup_failure: "failed", action_required: "failed",
@@ -42,6 +42,7 @@ export function gitlabPipeline(p, jobs) {
   }
   return {
     id: p.id,
+    number: p.id ?? null, // what the UI shows as #<number>
     status: normalizeStatus("gitlab", p),
     ref: p.ref,
     sha: p.sha,
@@ -87,7 +88,8 @@ export function githubLatest(runsJson, jobsByRunId) {
   const times = same.map(time).filter(Boolean);
   const earliest = same.find((r) => time(r) === Math.min(...times)) ?? newest;
   return {
-    id: newest.head_sha,
+    id: newest.head_sha, // the alert identity; the UI shows number
+    number: newest.run_number ?? null,
     status: worst(stages.map((s) => s.status)),
     ref: newest.head_branch,
     sha: newest.head_sha,
@@ -103,10 +105,23 @@ export function githubLatest(runsJson, jobsByRunId) {
 // (same GitLab pipeline id, same GitHub sha) is a new failure.
 export const alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;
 
+const ALERTED_MAX = 20;
+const alertedList = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+
+// A worktree's dock.git.alerted value after alerting `key`: a list of the last 20 keys, newest last. A branch
+// switch forgets the last-seen pipeline, so one key per worktree would re-alert the other branch's old failure on
+// every switch. An old single-string value is kept as the list's first entry.
+export function nextAlerted(prev, key) {
+  const list = alertedList(prev).filter((k) => k !== key);
+  list.push(key);
+  return list.slice(-ALERTED_MAX);
+}
+
 export function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
   if (cur.status !== "failed") return null;
-  // A bare id is the old format of alerted: it still suppresses that pipeline.
-  if (alerted != null && (alerted === alertKey(cur) || String(alerted) === String(cur.id))) return null;
+  // alerted: a list of keys (or, in older stores, one key or a bare id). A bare id still suppresses that pipeline.
+  const key = alertKey(cur);
+  if (alertedList(alerted).some((k) => k != null && (k === key || String(k) === String(cur.id)))) return null;
   const refinished = prev?.finishedAt != null && cur.finishedAt != null && prev.finishedAt !== cur.finishedAt;
   const fresh = prev
     ? prev.status !== "failed" || prev.id !== cur.id || refinished

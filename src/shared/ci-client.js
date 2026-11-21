@@ -60,9 +60,10 @@ export function createCiClient(io, log) {
     }
   }
 
-  // A local CLI call (glab/gh run on this PC). A rejection or timeout becomes code -1.
+  // A local CLI call (glab/gh run on this PC). A rejection or timeout becomes code -1. The exec timeout makes
+  // Herdr kill a hung CLI process too (the sweep only stops waiting for it).
   const cli = (cmd, args) =>
-    timed(() => io.exec(cmd, args)).catch((e) => ({ code: -1, stdout: "", stderr: e instanceof Timeout ? "timeout" : String(e?.message ?? e) }));
+    timed(() => io.exec(cmd, args, { timeout: TIMEOUT })).catch((e) => ({ code: -1, stdout: "", stderr: e instanceof Timeout ? "timeout" : String(e?.message ?? e) }));
 
   async function readToken(host, provider) {
     let token = "";

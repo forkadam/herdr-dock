@@ -55,16 +55,16 @@ function ciIo({
       if (r === undefined) return res(404, { message: "404 Not found" });
       return typeof r === "function" ? r(url, init, n) : r;
     },
-    async exec(cmd, args) {
+    async exec(cmd, args, opts) {
       const key = `${cmd} ${args.join(" ")}`;
-      io.calls.push({ cmd, args, key });
+      io.calls.push({ cmd, args, key, opts });
       await new Promise((r) => setTimeout(r, 1));
       if (cmd === "git") {
         const git = {
-          "-C D:/work/api rev-parse --show-toplevel --git-common-dir": ok("D:/work/api\n.git\n"),
+          "-C D:/work/api rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
           "-C D:/work/api worktree list --porcelain": ok(`worktree D:/work/api\nHEAD ${"c".repeat(40)}\nbranch refs/heads/${branch}\n`),
           "-C D:/work/api remote get-url origin": ok(`${origin}\n`),
-          "-C D:/work/api status --porcelain=v2 --branch": io.st,
+          "--no-optional-locks -C D:/work/api status --porcelain=v2 --branch": io.st,
         };
         return git[args.join(" ")] ?? { code: 128, stdout: "", stderr: "fatal" };
       }
@@ -262,7 +262,7 @@ test("(h) alerts: running -> failed alerts once; no repeat on the next tick or a
     action: { name: `dock-core.git.show.${b64urlEncode(WT)}`, args: { worktree: WT } },
   });
   assert.deepEqual(io.sounds, ["blocked"]);
-  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: "48213|null" });
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["48213|null"] });
   // alerted is written before notify.
   const iAlerted = io.sets.findIndex(([k]) => k === "dock.git.alerted");
   assert.ok(iAlerted >= 0);
@@ -397,7 +397,7 @@ test("at most 4 HTTP requests at once", async () => {
     await new Promise((r) => setTimeout(r, 1));
     const a = args.join(" ");
     let m;
-    if ((m = /^-C (\S+) rev-parse/.exec(a))) return ok(`${m[1]}\n.git\n`);
+    if ((m = /^-C (\S+) rev-parse/.exec(a))) return ok(`${m[1]}\n${m[1]}/.git\n`);
     if ((m = /^-C (\S+) worktree list/.exec(a))) return ok(`worktree ${m[1]}\nHEAD ${"c".repeat(40)}\nbranch refs/heads/main\n`);
     if ((m = /^-C D:\/w\/(r\d) remote/.exec(a))) return ok(`git@gitlab.corp:grp/${m[1]}.git\n`);
     if (/status --porcelain/.test(a)) return status("main");
@@ -520,7 +520,7 @@ test("fix (R4): a Retry that fails again alerts once more; a restart with the sa
   jobs = jobsDone(F1);
   io.t += 30000; await c.tick();
   assert.equal(io.notes.length, 1);
-  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: `48213|${F1}` });
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: [`48213|${F1}`] });
   await c.select(WT);
   assert.deepEqual(await c.retry(), { ok: true, error: null });
   pl = listed({ status: "running", updated_at: "2026-11-22T10:15:00Z" });
@@ -532,7 +532,7 @@ test("fix (R4): a Retry that fails again alerts once more; a restart with the sa
   io.t += 30000; await c.tick();
   assert.equal(io.notes.length, 2);
   assert.deepEqual(io.sounds, ["blocked", "blocked"]);
-  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: `48213|${F2}` });
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: [`48213|${F1}`, `48213|${F2}`] });
   io.t += 300000; await c.tick();
   assert.equal(io.notes.length, 2);
   // Restart (started before the pipeline was created) over the same store: same key, no alert.
@@ -590,4 +590,84 @@ test("fix: a success during an outage clears the window, so the next failure blo
   await d;
   assert.equal(c.blocked("gitlab.corp", 60999), true);
   assert.equal(c.blocked("gitlab.corp", 61000), false);
+});
+
+// --- final-review fixes -------------------------------------------------------------------------
+
+const pipesOf = (ref) => `${GL}/pipelines?ref=${ref}&per_page=1&order_by=id&sort=desc`;
+const jobsOf = (id, fin) => JOBS.map((j) => (j.status === "failed" ? { ...j, finished_at: fin } : j));
+
+test("fix 2: switching branches back and forth doesn't re-alert an old failure", async () => {
+  const routes = {
+    [pipesOf("a")]: res(200, [pipeline({ id: 100, ref: "a", created_at: "2026-11-22T10:01:00Z" })]),
+    [`${GL}/pipelines/100/jobs?per_page=100`]: res(200, jobsOf(100, "2026-11-22T10:05:00Z")),
+    [pipesOf("b")]: res(200, [pipeline({ id: 200, ref: "b", created_at: "2026-11-22T10:02:00Z" })]),
+    [`${GL}/pipelines/200/jobs?per_page=100`]: res(200, jobsOf(200, "2026-11-22T10:06:00Z")),
+  };
+  const { io, shared } = ciIo({ branch: "a", routes });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 1, "a fails: alert");
+  const step = async (branch) => { io.st = status(branch); io.t += 300000; await c.tick(); };
+  await step("b");
+  assert.equal(wtOf(c).branch, "b");
+  assert.equal(io.notes.length, 2, "b fails: alert");
+  await step("a");
+  assert.equal(wtOf(c).pipeline.id, 100);
+  assert.equal(io.notes.length, 2, "back on a, same failed pipeline: no alert");
+  await step("b");
+  assert.equal(io.notes.length, 2, "back on b: no alert");
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["100|2026-11-22T10:05:00Z", "200|2026-11-22T10:06:00Z"] });
+});
+
+test("fix 2: an old single-string dock.git.alerted value still suppresses, and becomes a list", async () => {
+  const store = new Map([["dock.git.alerted", { [WT]: "200|2026-11-22T10:06:00Z" }]]);
+  const routes = {
+    [pipesOf("b")]: res(200, [pipeline({ id: 200, ref: "b", created_at: "2026-11-22T10:02:00Z" })]),
+    [`${GL}/pipelines/200/jobs?per_page=100`]: res(200, jobsOf(200, "2026-11-22T10:06:00Z")),
+    [pipesOf("a")]: res(200, [pipeline({ id: 100, ref: "a", created_at: "2026-11-22T10:01:00Z" })]),
+    [`${GL}/pipelines/100/jobs?per_page=100`]: res(200, jobsOf(100, "2026-11-22T10:05:00Z")),
+  };
+  const { io, shared } = ciIo({ branch: "b", routes, store });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 0);
+  io.st = status("a"); io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 1);
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["200|2026-11-22T10:06:00Z", "100|2026-11-22T10:05:00Z"] });
+});
+
+test("fix 4: the published summary carries the display number", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline()]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.number, 48213);
+});
+
+test("fix 5: a failed Retry is published in the detail (retryError); a later good Retry clears it", async () => {
+  let retry = res(403, { message: "403 Forbidden" });
+  const routes = {
+    [PIPES]: res(200, [pipeline()]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS),
+    [`${GL}/pipelines/48213/retry`]: () => retry,
+  };
+  const { io } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.equal(detailOf(io).retryError, null);
+  const r = await c.retry();
+  assert.equal(r.ok, false);
+  assert.equal(detailOf(io).retryError, "HTTP 403");
+  retry = res(201, { id: 48213, status: "running" });
+  assert.equal((await c.retry()).ok, true);
+  assert.equal(detailOf(io).retryError, null);
+});
+
+test("fix 11: glab/gh CLI calls pass a 15 s exec timeout", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) } });
+  const c = createCollector(io);
+  await c.tick();
+  const cliCalls = io.calls.filter((x) => x.cmd === "glab" || x.cmd === "gh");
+  assert.ok(cliCalls.length > 0);
+  for (const x of cliCalls) assert.deepEqual(x.opts, { timeout: 15000 }, x.key);
 });

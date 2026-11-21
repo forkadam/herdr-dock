@@ -111,10 +111,17 @@ export default class DockCore extends View {
   startCollector(cx) {
     const platform = window()?.platform;
     this.platform = platform;
-    this.collector = createCollector({
-      exec, fetch: (url, init) => globalThis.fetch(url, init), panes, spaces, shared, setShared, notify, playSound,
-      platform, now: Date.now, log: (m) => console.log(`dock-core: ${m}`),
-    });
+    // A collector that fails to start leaves Git projects empty but never takes dock-core (layout, panels) down.
+    try {
+      this.collector = createCollector({
+        exec, fetch: (url, init) => globalThis.fetch(url, init), panes, spaces, shared, setShared, notify, playSound,
+        platform, now: Date.now, log: (m) => console.log(`dock-core: ${m}`),
+      });
+    } catch (e) {
+      this.collector = null;
+      console.log(`dock-core: git collector failed to start: ${e?.message ?? e}`);
+      return;
+    }
     cx.spawn(async (cx) => {
       for (;;) {
         this.collector.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
