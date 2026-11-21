@@ -16,10 +16,9 @@ const KNOWN = {
 const parse = (text) => { try { return JSON.parse(text ?? "null"); } catch { return null; } };
 
 export default class DockRail extends View {
-  init(_props, cx) {
+  init() {
     this.meta = {}; // mod id -> { title, icon } (icon null: letter badge)
     this.loading = new Set();
-    this.cx = cx;
   }
 
   // A mod's title and icon: KNOWN, else mod.json's title / manifest name, and the manifest icon

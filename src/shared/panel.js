@@ -197,3 +197,33 @@ export function rightStateFromShared(shared) {
     active: typeof active === "string" ? active : undefined,
   };
 }
+
+// The right panel state for a newly read, valid config, decided BEFORE the layout file is built
+// so the file already matches it. `prev` is the last good merged config (null on the first read),
+// `saved` this PC's { shown, active, configHidden } (shared keys). Returns { set: { key: value }
+// (shared keys to write), state: { rightShown, active } (for buildLayout) }.
+// - a changed config right.hidden applies once (rightFromConfig);
+// - a mod newly placed in the right region (compared with prev) becomes active and shown.
+export function rightConfigUpdate({ prev, merged, saved }) {
+  const set = {};
+  let shown = saved.shown;
+  let active = saved.active;
+  const r = rightFromConfig(saved.configHidden, shown, merged.regions.right.hidden);
+  if (r) {
+    set["dock.right.configHidden"] = r.record;
+    if (r.shown !== null) { shown = r.shown; set["dock.right.shown"] = r.shown; }
+  }
+  if (prev) {
+    const before = new Set(prev.regions.right.features.map((f) => f.mod));
+    const added = merged.regions.right.features.find((f) => !before.has(f.mod))?.mod;
+    if (added) {
+      active = added;
+      set["dock.right.active"] = added;
+      if (shown !== true) { shown = true; set["dock.right.shown"] = true; }
+    }
+  }
+  return {
+    set,
+    state: { rightShown: rightShownOf(shown, merged.regions), active: typeof active === "string" ? active : undefined },
+  };
+}

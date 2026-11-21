@@ -1,7 +1,8 @@
 # herdr-dock
 
 A configurable dock layout for [Herdr](https://herdr.app): a top bar, a left panel, and optional right and
-bottom regions around your main pane. It ships four mods:
+bottom regions around your main pane. Its main mods (it also ships dock-header, dock-footer and the Dock layout
+dialog, dock-config):
 
 - **dock-core**: the left-panel toggle at the start of the tab bar. It cycles the left panel between expanded,
   icons and hidden, keeps the right panel in line with this PC's state, and rewrites the layout when
@@ -74,7 +75,8 @@ config order (it scrolls when there are many):
   when it exists, else the first letter of their name. Hover for the name.
 - Whether the panel is shown and which mod it shows are remembered per PC in Herdr's own state
   (`dock.right.shown`, `dock.right.active`). They are never written to `config/dock.json`, and a config save,
-  a deploy or a restart keeps them. A mod newly placed in the right region opens in the panel.
+  a deploy or a restart keeps them. A mod you add to the right region while Herdr
+  is running in this layout (for example from the Dock layout dialog) opens in the panel.
 - The config's `right.hidden` (the dialog's right "shown" switch) is the default. Changing it applies once, the
   same way `left.mode` does.
 - With no right mods there is no panel and no rail.

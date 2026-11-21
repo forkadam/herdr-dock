@@ -5,7 +5,7 @@ const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
 
 export function allowedRegions(mod) {
-  if (mod === "dock-core") return ["top"];
+  if (mod === "dock-core" || mod === "dock-tabs") return ["top"];
   if (LEFT_ONLY.includes(mod)) return ["left"];
   return [...REGION_NAMES];
 }

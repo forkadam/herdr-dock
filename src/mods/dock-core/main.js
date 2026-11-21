@@ -7,7 +7,7 @@ import {
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
-  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightFromConfig, rightShownOf,
+  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightConfigUpdate, rightShownOf,
   sizeChanges,
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
@@ -103,14 +103,21 @@ export default class DockCore extends View {
     if (!this.configPath || checking()) return;
     const configText = await readTextFile(this.configPath).catch(() => null);
     const current = await readTextFile(this.layoutPath).catch(() => null);
-    const plan = planApply(configText, this.host, current, this.merged, this.rightState());
+    // Parse first, decide this PC's right panel state from the new config, then build the layout
+    // file with it, so the file already matches what the panel should be.
+    let plan = planApply(configText, this.host, current, this.merged);
+    if (!plan.error && plan.merged) {
+      const active = shared(ACTIVE_KEY);
+      const u = rightConfigUpdate({
+        prev: this.merged, merged: plan.merged,
+        saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) },
+      });
+      for (const [key, value] of Object.entries(u.set)) setShared(key, value);
+      plan = planApply(configText, this.host, current, this.merged, u.state);
+    }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
     const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
-    // A mod newly placed in the right region should be seen: show it on this PC.
-    const before = new Set((this.merged?.regions.right.features ?? []).map((f) => f.mod));
-    const added = this.merged && !plan.error && plan.merged
-      ? plan.merged.regions.right.features.find((f) => !before.has(f.mod))?.mod ?? null : null;
     this.merged = plan.merged;
     if (!plan.error && plan.merged) {
       const regions = JSON.parse(JSON.stringify(plan.merged.regions));
@@ -125,17 +132,6 @@ export default class DockCore extends View {
           setShared(MODE_KEY, m.mode);
         }
       }
-    }
-    if (!plan.error && plan.merged) {
-      const r = rightFromConfig(shared(RIGHT_CONFIG_KEY), shared(RIGHT_KEY), plan.merged.regions.right.hidden);
-      if (r) {
-        setShared(RIGHT_CONFIG_KEY, r.record);
-        if (r.shown !== null) setShared(RIGHT_KEY, r.shown);
-      }
-    }
-    if (added) {
-      setShared(ACTIVE_KEY, added);
-      if (shared(RIGHT_KEY) !== true) setShared(RIGHT_KEY, true);
     }
     if (plan.write) {
       const err = await this.writeLayout(plan.write, current);
@@ -176,11 +172,6 @@ export default class DockCore extends View {
     return rightShownOf(shared(RIGHT_KEY), this.merged?.regions);
   }
 
-  // What the layout file is built with, so a rewrite keeps this PC's right panel as it is.
-  rightState() {
-    const active = shared(ACTIVE_KEY);
-    return { rightShown: this.rightShown(), active: typeof active === "string" ? active : undefined };
-  }
 
   mode() {
     const m = shared(MODE_KEY);

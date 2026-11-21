@@ -87,7 +87,7 @@ if (!dry) {
 }
 
 if (!hasKeys) {
-  console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B and Ctrl+Alt+,");
+  console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B, Ctrl+Alt+N and Ctrl+Alt+,");
 } else {
   const merged = mergeKeys(keys, SECTION, BINDINGS);
   for (const { key, reason } of merged.skipped) console.log(`keys.json: ${key} in ${SECTION} is ${reason}; skipping`);
