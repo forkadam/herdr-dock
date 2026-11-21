@@ -37,7 +37,8 @@ export function parseStatusline(text, nowMs) {
       const act = isObj(s.cache) ? s.cache.last_activity_unix : undefined;
       // No activity time: treat as stale rather than fresh-looking.
       const seenMs = isNum(act) ? act * 1000 : 0;
-      sessions.set(id, { usedPercent: s.used_percent, seenMs, stale: nowMs - seenMs > STALE_MS });
+      // Lowercase: matchSession returns lowercase ids.
+      sessions.set(id.toLowerCase(), { usedPercent: s.used_percent, seenMs, stale: nowMs - seenMs > STALE_MS });
     }
   }
   const windows = [];
@@ -74,4 +75,29 @@ export function formatReset(resetsMs, nowMs) {
   if (d > 0) return `resets in ${d}d ${h}h`;
   if (h > 0) return `resets in ${h}h ${String(m).padStart(2, "0")}m`;
   return `resets in ${m}m`;
+}
+
+// The identity hc reports for a terminal (`hc get <t> --json`): its foreground pid and when
+// the terminal was made. Either changing means another program or terminal: a new session.
+function identityOf(info) {
+  const pid = isObj(info) && isObj(info.foreground) ? info.foreground.pid : undefined;
+  if (!isNum(pid) || !isNum(info.created_ms)) return null;
+  return { pid, createdMs: info.created_ms };
+}
+
+// Keep a cached context entry only while hc still reports the same pid and created_ms.
+export function keepEntry(prev, info) {
+  const id = identityOf(info);
+  return Boolean(prev && id && prev.pid === id.pid && prev.createdMs === id.createdMs);
+}
+
+// One agent's context from a fresh hc result, its session record text and the parsed cache:
+// { pid, createdMs, sessionId, usedPercent, seenMs, stale } or null when anything doesn't match.
+export function contextEntry(info, recordText, cache, nowMs) {
+  const id = identityOf(info);
+  if (!id || !cache) return null;
+  const sessionId = matchSession(recordText, { pid: id.pid }, id.createdMs, nowMs);
+  const s = sessionId ? cache.sessions.get(sessionId) : undefined;
+  if (!s) return null;
+  return { ...id, sessionId, usedPercent: s.usedPercent, seenMs: s.seenMs, stale: s.stale };
 }

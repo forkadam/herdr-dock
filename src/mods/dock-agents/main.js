@@ -9,7 +9,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, hc, home, readTextFile } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
-import { matchSession, parseStatusline, formatPercent } from "../../shared/claude.js";
+import { parseStatusline, formatPercent, formatAge, contextEntry, keepEntry } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
 
 // herdr-dock: per-agent context, refreshed this often and when the Claude agents listed change.
@@ -18,31 +18,12 @@ const LIST_CHECK_MS = 1000;
 
 // A local Claude Code agent: its session record and the statusline cache are on this machine.
 const isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
-const claudeKey = () => agents().filter(isLocalClaude).map((a) => a.address).join(",");
-
-// address -> "NN% used" for agents whose live session matched and whose reading is fresh.
-async function readContext(list) {
-  const out = new Map();
-  if (!list.length) return out;
-  const root = slashPath(home());
-  const now = Date.now();
-  const cache = parseStatusline(await readTextFile(root + "/.claude/statusline-cache/claude-statusline.json").catch(() => null), now);
-  if (!cache) return out;
-  for (const a of list) {
-    try {
-      const r = await hc(["get", a.address, "--json"]);
-      if (r.code !== 0) continue;
-      const info = JSON.parse(r.stdout);
-      const pid = info?.foreground?.pid;
-      if (typeof pid !== "number" || typeof info.created_ms !== "number") continue;
-      const record = await readTextFile(root + "/.claude/sessions/" + pid + ".json").catch(() => null);
-      const id = matchSession(record, { pid }, info.created_ms, now);
-      const s = id ? cache.sessions.get(id) : null;
-      if (s && !s.stale) out.set(a.address, formatPercent(s.usedPercent));
-    } catch {}
-  }
-  return out;
-}
+// What a row's cached context is tied to besides the address: a different program in the
+// terminal (or its pane) means the entry is not this agent's.
+const sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
+const claudeKey = () => agents().filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
+const sameEntry = (x, y) => x.sig === y.sig && x.pid === y.pid && x.createdMs === y.createdMs
+  && x.sessionId === y.sessionId && x.usedPercent === y.usedPercent && x.stale === y.stale && x.seenMs === y.seenMs;
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -137,20 +118,62 @@ export default class Agents extends View {
     cx.timer.every(LIST_CHECK_MS, (cx) => { if (claudeKey() !== this.contextKey) this.refreshContext(cx); });
   }
 
-  // One read at a time; a request meanwhile runs once more after it.
+  // The row's context entry, only while it is still the same local Claude agent it was read for.
+  contextFor(a) {
+    const e = this.context?.get(a.address);
+    return e && isLocalClaude(a) && e.sig === sigOf(a) ? e : null;
+  }
+
+  // One pass: address -> { sig, pid, createdMs, sessionId, usedPercent, seenMs, stale }.
+  // An entry whose terminal now reports another pid or created_ms is dropped at once.
+  async readContext(cx) {
+    const list = agents().filter(isLocalClaude);
+    const root = slashPath(home());
+    const now = Date.now();
+    const cache = list.length
+      ? parseStatusline(await readTextFile(root + "/.claude/statusline-cache/claude-statusline.json").catch(() => null), now)
+      : null;
+    const next = new Map();
+    for (const a of list) {
+      const r = await hc(["get", a.address, "--json"]).catch(() => null);
+      let info = null;
+      try { info = r && r.code === 0 ? JSON.parse(r.stdout) : null; } catch { info = null; }
+      const prev = this.context.get(a.address);
+      if (prev && !keepEntry(prev, info)) { this.context.delete(a.address); cx.notify(); }
+      const pid = info?.foreground?.pid;
+      const record = typeof pid === "number"
+        ? await readTextFile(root + "/.claude/sessions/" + pid + ".json").catch(() => null) : null;
+      const e = contextEntry(info, record, cache, now);
+      if (e) next.set(a.address, { ...e, sig: sigOf(a) });
+    }
+    return next;
+  }
+
+  // One read at a time; a request meanwhile runs once more after it. Entries for agents that
+  // left the list or changed program are dropped before the read; any failure clears them all.
   refreshContext(cx) {
-    this.contextKey = claudeKey();
+    const key = claudeKey();
+    if (key !== this.contextKey) {
+      const now = new Map(agents().filter(isLocalClaude).map((a) => [a.address, sigOf(a)]));
+      for (const [addr, e] of this.context) if (now.get(addr) !== e.sig) this.context.delete(addr);
+      cx.notify();
+    }
+    this.contextKey = key;
     if (this.fetching) { this.again = true; return; }
     this.fetching = true;
     cx.spawn(async (cx) => {
       try {
         do {
           this.again = false;
-          const next = await readContext(agents().filter(isLocalClaude));
-          const same = next.size === this.context.size && [...next].every(([k, v]) => this.context.get(k) === v);
+          const next = await this.readContext(cx);
+          const same = next.size === this.context.size && [...next].every(([k, v]) => this.context.has(k) && sameEntry(this.context.get(k), v));
           this.context = next;
           if (!same) cx.notify();
         } while (this.again);
+      } catch (e) {
+        console.log(`dock-agents: context read failed: ${e}`);
+        this.context = new Map();
+        cx.notify();
       } finally {
         this.fetching = false;
       }
@@ -402,6 +425,7 @@ export default class Agents extends View {
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      const ctx = this.contextFor(a);
       if (collapsed) {
         return h_flex()
           .id(`ag-${a.address}`)
@@ -465,8 +489,10 @@ export default class Agents extends View {
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`)))
-          // herdr-dock: the session's context use, dim, after the title.
-          .when(Boolean(this.context?.get(a.address)), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.context.get(a.address)))))
+          // herdr-dock: the session's context use, dim, after the title; fainter when Claude is idle.
+          .when(Boolean(ctx), el => el.child(div().id(`ctx-${a.address}`).flex_none().text_size(11).text_color(t.dim)
+            .when(ctx.stale, el => el.opacity(0.55).tooltip(`last reported ${ctx.seenMs ? formatAge(now - ctx.seenMs) : "at an unknown time"} — Claude is idle`))
+            .child(formatPercent(ctx.usedPercent)))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))

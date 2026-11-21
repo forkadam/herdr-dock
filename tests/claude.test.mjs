@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchSession, parseStatusline, formatPercent, formatAge, formatReset } from "../src/shared/claude.js";
+import { matchSession, parseStatusline, formatPercent, formatAge, formatReset, contextEntry, keepEntry } from "../src/shared/claude.js";
 
 const SID = "73636264-03cb-4b62-bb2d-36ccfbcbee15";
 const rec = (o) => JSON.stringify({ pid: 16604, sessionId: SID,
@@ -67,4 +67,42 @@ test("formatters", () => {
   assert.equal(formatReset(1000 + (3 * 24 + 4) * 3600_000, 1000), "resets in 3d 4h");
   assert.equal(formatReset(1000 + 45 * 60_000, 1000), "resets in 45m");
   assert.equal(formatReset(500, 1000), "resetting");
+});
+
+const cacheText = (id, act, pct = 47) => JSON.stringify({ provider: "claude", source: "claude-statusline",
+  fetched_at_unix: act, session_contexts: { [id]: { used_percent: pct, cache: { last_activity_unix: act } } } });
+
+test("parseStatusline looks sessions up case-insensitively (uppercase cache key)", () => {
+  const p = parseStatusline(cacheText(SID.toUpperCase(), 1_000), 1_000_000);
+  assert.equal(p.sessions.get(SID).usedPercent, 47);
+});
+
+const info = (o) => ({ foreground: { pid: 16604 }, created_ms: 999_000, ...o });
+test("contextEntry: matched fresh session gives its identity and reading", () => {
+  const cache = parseStatusline(cacheText(SID, 1_990), 2_000_000);
+  assert.deepEqual(contextEntry(info(), rec(), cache, 2_000_000),
+    { pid: 16604, createdMs: 999_000, sessionId: SID, usedPercent: 47, seenMs: 1_990_000, stale: false });
+});
+test("contextEntry: a stale reading is kept, marked stale", () => {
+  const cache = parseStatusline(cacheText(SID, 1_000), 2_000_000);
+  assert.equal(contextEntry(info(), rec(), cache, 2_000_000).stale, true);
+});
+test("contextEntry: nothing without identity, match, cache or session", () => {
+  const cache = parseStatusline(cacheText(SID, 1_990), 2_000_000);
+  assert.equal(contextEntry(null, rec(), cache, 2_000_000), null);
+  assert.equal(contextEntry(info({ foreground: null }), rec(), cache, 2_000_000), null);
+  assert.equal(contextEntry(info({ created_ms: "x" }), rec(), cache, 2_000_000), null);
+  assert.equal(contextEntry(info(), rec({ pid: 1 }), cache, 2_000_000), null);
+  assert.equal(contextEntry(info(), rec(), null, 2_000_000), null);
+  const other = parseStatusline(cacheText("11111111-2222-3333-4444-555555555555", 1_990), 2_000_000);
+  assert.equal(contextEntry(info(), rec(), other, 2_000_000), null);
+});
+test("keepEntry: keep only while hc reports the same pid and created_ms", () => {
+  const prev = { pid: 16604, createdMs: 999_000 };
+  assert.equal(keepEntry(prev, info()), true);
+  assert.equal(keepEntry(prev, info({ foreground: { pid: 1 } })), false); // Claude restarted
+  assert.equal(keepEntry(prev, info({ created_ms: 5 })), false); // a new terminal at the address
+  assert.equal(keepEntry(prev, info({ foreground: null })), false);
+  assert.equal(keepEntry(prev, null), false);
+  assert.equal(keepEntry(null, info()), false);
 });
