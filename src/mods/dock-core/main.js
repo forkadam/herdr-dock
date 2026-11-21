@@ -1,18 +1,21 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme,
+  appHome, checking, exec, layout, nextCommand, props, readTextFile, run, setShared, shared, theme,
   watchFolder, window, writeTextFile,
 } from "herdr";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
-import { nextMode, panelActions, planSync } from "../../shared/panel.js";
+import { liveSizes, nextMode, planPanel, planSync, sizeChanges } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
 const FOCUS_KEY = "dock.left.focus";
 const ERROR_KEY = "dock.config.error";
+// The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
+// while the live tree holds them). Machine-local, like the drag-resizes it keeps.
+const RESTORE_KEY = "dock.left.restore";
 // After writing the layout file, give Herdr time to reload it before re-applying the mode.
 const RELOAD_SETTLE_MS = 400;
 // Fallback when watchFolder rejects (too many watches, etc.).
@@ -24,6 +27,7 @@ export default class DockCore extends View {
   init(_props, cx) {
     this.merged = null; // last good merged config
     this.applied = null; // "<mode>|<focus>" last applied, so each change is applied once
+    this.changes = null; // config size edits (sizeChanges) not applied yet
     this.host = "";
     this.configPath = null;
     this.layoutPath = null;
@@ -76,6 +80,7 @@ export default class DockCore extends View {
     const current = await readTextFile(this.layoutPath).catch(() => null);
     const plan = planApply(configText, this.host, current, this.merged);
     if ((shared(ERROR_KEY) ?? null) !== plan.error) setShared(ERROR_KEY, plan.error);
+    const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
     this.merged = plan.merged;
     if (plan.write) {
       const err = await this.writeLayout(plan.write, current);
@@ -85,6 +90,10 @@ export default class DockCore extends View {
       // old tree and the reload then wins, leaving the panel out of sync with dock.left.mode until
       // the next toggle or config change.
       await cx.sleep(RELOAD_SETTLE_MS);
+      this.applied = null;
+    }
+    if (changes) {
+      this.changes = changes;
       this.applied = null;
     }
     cx.notify();
@@ -142,9 +151,15 @@ export default class DockCore extends View {
   apply(key, mode, focus, clearFocus) {
     // A newer change was planned before this task ran: its own task applies it.
     if (!this.merged || this.applied !== key) return;
-    for (const a of panelActions(mode, this.merged, focus)) {
+    let live = null;
+    try { live = liveSizes(layout(), this.merged); } catch (e) { console.log(`dock-core: layout() failed: ${e}`); }
+    const restore = shared(RESTORE_KEY) ?? null;
+    const plan = planPanel({ mode, focus, merged: this.merged, live, restore, changes: this.changes });
+    this.changes = null;
+    for (const a of plan.actions) {
       try { run(a.command, a.args); } catch (e) { console.log(`dock-core: ${a.command} failed: ${e}`); }
     }
+    if (JSON.stringify(plan.restore) !== JSON.stringify(restore)) setShared(RESTORE_KEY, plan.restore);
     if (shared(MODE_KEY) !== mode) setShared(MODE_KEY, mode);
     if (clearFocus) setShared(FOCUS_KEY, null);
   }
