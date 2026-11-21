@@ -1,0 +1,70 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { matchSession, parseStatusline, formatPercent, formatAge, formatReset } from "../src/shared/claude.js";
+
+const SID = "73636264-03cb-4b62-bb2d-36ccfbcbee15";
+const rec = (o) => JSON.stringify({ pid: 16604, sessionId: SID,
+  kind: "interactive", startedAt: 1_000_000, pidDomain: "win32:forkadam-pc", ...o });
+test("matchSession accepts a live record in the terminal's lifetime", () => {
+  assert.equal(matchSession(rec(), { pid: 16604 }, 999_000, 2_000_000), SID);
+});
+test("matchSession rejects wrong pid, non-interactive, older than terminal, missing", () => {
+  assert.equal(matchSession(rec({ pid: 1 }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(rec({ kind: "bg" }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(rec({ startedAt: 100 }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(null, { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession("{oops", { pid: 16604 }, 999_000, 2_000_000), null);
+});
+test("matchSession boundaries, uuid check, case", () => {
+  assert.equal(matchSession(rec({ startedAt: 994_000 }), { pid: 16604 }, 999_000, 2_000_000), SID);
+  assert.equal(matchSession(rec({ startedAt: 993_999 }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(rec({ startedAt: 2_060_000 }), { pid: 16604 }, 999_000, 2_000_000), SID);
+  assert.equal(matchSession(rec({ startedAt: 2_060_001 }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(rec({ sessionId: "not-a-uuid" }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession(rec({ sessionId: SID.toUpperCase() }), { pid: 16604 }, 999_000, 2_000_000), SID);
+  assert.equal(matchSession(rec({ startedAt: "x" }), { pid: 16604 }, 999_000, 2_000_000), null);
+  assert.equal(matchSession("[]", { pid: 16604 }, 999_000, 2_000_000), null);
+});
+const cache = { provider: "claude", source: "claude-statusline", fetched_at_unix: 1000,
+  session_contexts: { "s1": { used_percent: 31, cache: { session_id: "s1", last_activity_unix: 990 } } },
+  windows: [{ kind: "five_hour", used_percent: 5, remaining_percent: 95, resets_at: 8200 },
+            { kind: "weekly", used_percent: 1, remaining_percent: 99, resets_at: 600000 },
+            { kind: "monthly", used_percent: 9 }] };
+test("parseStatusline reads sessions and known windows", () => {
+  const s = parseStatusline(JSON.stringify(cache), 1_000_000 + 30_000);
+  assert.equal(s.sessions.get("s1").usedPercent, 31);
+  assert.equal(s.sessions.get("s1").stale, false);
+  assert.deepEqual(s.windows.map((w) => [w.kind, w.usedPercent, w.resetsMs]),
+    [["five_hour", 5, 8_200_000], ["weekly", 1, 600_000_000]]);
+});
+test("parseStatusline marks stale and rejects foreign files", () => {
+  assert.equal(parseStatusline(JSON.stringify(cache), 1_000_000 + 600_000).stale, true);
+  assert.equal(parseStatusline(JSON.stringify({ ...cache, provider: "codex" }), 0), null);
+  assert.equal(parseStatusline(JSON.stringify({ ...cache, source: "x" }), 0), null);
+  assert.equal(parseStatusline(null, 0), null);
+  assert.equal(parseStatusline("{oops", 0), null);
+});
+test("parseStatusline: per-session staleness, null reset, float seconds, missing parts", () => {
+  const c = { ...cache, fetched_at_unix: 1000.5,
+    session_contexts: { a: { used_percent: 1, cache: { last_activity_unix: 800 } }, b: { used_percent: 2 } },
+    windows: [{ kind: "five_hour", used_percent: 5, resets_at: null }] };
+  const s = parseStatusline(JSON.stringify(c), 1_000_500 + 1000);
+  assert.equal(s.fetchedMs, 1_000_500);
+  assert.equal(s.stale, false);
+  assert.equal(s.sessions.get("a").stale, true);
+  assert.equal(s.sessions.get("b").stale, true);
+  assert.equal(s.windows[0].resetsMs, null);
+  const e = parseStatusline(JSON.stringify({ provider: "claude", source: "claude-statusline", fetched_at_unix: 1 }), 5000);
+  assert.equal(e.sessions.size, 0);
+  assert.deepEqual(e.windows, []);
+});
+test("formatters", () => {
+  assert.equal(formatPercent(30.6), "31% used");
+  assert.equal(formatAge(30_000), "just now"); assert.equal(formatAge(5 * 60_000), "5m ago");
+  assert.equal(formatAge(2 * 3600_000), "2h ago");
+  assert.equal(formatAge(3 * 86400_000), "3d ago");
+  assert.equal(formatReset(1000 + (2 * 60 + 5) * 60_000, 1000), "resets in 2h 05m");
+  assert.equal(formatReset(1000 + (3 * 24 + 4) * 3600_000, 1000), "resets in 3d 4h");
+  assert.equal(formatReset(1000 + 45 * 60_000, 1000), "resets in 45m");
+  assert.equal(formatReset(500, 1000), "resetting");
+});
