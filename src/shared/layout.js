@@ -52,21 +52,28 @@ export function buildLayout(merged) {
   });
   const right = regionNode(merged, "right", "column", { node: {}, hidden: regions.right.hidden });
   const bottom = regionNode(merged, "bottom", "row", { node: {}, hidden: regions.bottom.hidden });
-  const main = { id: "dock-main", type: "block", content: { tab: "active", pane: MAIN_PANE }, padding: 8 };
+  const main = { id: "dock-main", type: "block", content: { tab: "active", pane: MAIN_PANE } };
   const body = {
     id: "dock-body",
     type: "row",
-    divider: DIVIDER,
-    children: [left, main, right].filter(Boolean),
+    padding: 8,
+    gap: 8,
+    children: [main, right].filter(Boolean),
+  };
+  const work = {
+    id: "dock-work",
+    type: "column",
+    resizable: false,
+    children: [top, body, bottom].filter(Boolean),
   };
   return {
     id: "root",
-    type: "column",
+    type: "row",
     titlebar: "none",
     background: "canvas",
     terminal_padding: [14, 12],
     divider: DIVIDER,
-    children: [top, body, bottom].filter(Boolean),
+    children: [left, work].filter(Boolean),
   };
 }
 

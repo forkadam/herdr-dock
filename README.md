@@ -79,11 +79,11 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 {
   "v": 1,
   "regions": {
-    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 132 }, { "mod": "tabs" } ] },
+    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 } ] },
     "right":  { "size": 360, "hidden": true, "features": [] },
-    "bottom": { "size": 28,  "hidden": true, "features": [] }
+    "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
   },
   "machines": { "my-hostname": { "regions": { "left": { "size": 320 } } } }
 }

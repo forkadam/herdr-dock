@@ -47,3 +47,27 @@ test("leftFeatureIds lists left block ids in order", () => {
   assert.deepEqual(leftFeatureIds(m),
     ["dock-left-0-dock-spaces", "dock-left-1-dock-agents", "dock-left-2-dock-quotas"]);
 });
+
+test("tree is aligned like Herdr's main layout", () => {
+  const cfg = parseConfig(readFileSync("config/dock.json", "utf8")).config;
+  const m = mergeForHost({ ...cfg, regions: { ...cfg.regions, right: { size: 360, features: [{ mod: "x" }] } } }, "h");
+  const t = buildLayout(m);
+  assert.equal(t.type, "row");
+  assert.deepEqual(t.children.map((c) => c.id), ["dock-left", "dock-work"]);
+  const work = t.children[1];
+  assert.equal(work.type, "column");
+  assert.deepEqual(work.children.map((c) => c.id), ["dock-top", "dock-body", "dock-bottom"]);
+  const body = work.children[1];
+  assert.deepEqual(body.children.map((c) => c.id), ["dock-main", "dock-right"]);
+  assert.equal(body.padding, 8);
+  assert.equal(body.gap, 8);
+  assert.equal(find(t, "dock-main").padding, undefined);
+});
+test("default config shows workspace-status bottom and a 44px dock-core", () => {
+  const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "h");
+  const t = buildLayout(m);
+  const bottom = find(t, "dock-bottom");
+  assert.equal(bottom.hidden, undefined);
+  assert.equal(bottom.children[0].content.mod, "workspace-status");
+  assert.deepEqual(find(t, "dock-top").children[0].size, { px: 44 });
+});

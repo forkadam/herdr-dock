@@ -193,17 +193,18 @@ export default class DockCore extends View {
     const mode = this.mode();
     const err = shared(ERROR_KEY);
     const stop = (_e, cx) => cx.stop_propagation();
-    return h_flex().size_full().px(8).gap(6).items_center()
-      .child(div().id("dock-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(6)
-        .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
-        .tooltip(`Left panel: ${mode} (Ctrl+Alt+B)`)
-        .on_mouse_down("left", stop)
-        .on_click((_e, cx) => { cx.stop_propagation(); this.command("cycle", cx); })
-        .child(svg(`mods/dock-core/panel-${mode}.svg`).size(16)))
-      .when(typeof err === "string" && err !== "", (el) => el.child(
-        div().id("dock-error").size(18).flex_none().flex().items_center().justify_center()
-          .tooltip(`Config error: ${err}`)
+    return h_flex().size_full().items_center().justify_center()
+      .child(div().relative().size(28).flex_none()
+        .child(div().id("dock-toggle").size_full().flex().items_center().justify_center().rounded(6)
+          .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+          .tooltip(`Left panel: ${mode} (Ctrl+Alt+B)`)
           .on_mouse_down("left", stop)
-          .child(div().size(8).rounded_full().bg(t.ansi1 ?? "#e5484d"))));
+          .on_click((_e, cx) => { cx.stop_propagation(); this.command("cycle", cx); })
+          .child(svg(`mods/dock-core/panel-${mode}.svg`).size(16)))
+        .when(typeof err === "string" && err !== "", (el) => el.child(
+          div().id("dock-error").absolute().top(-2).right(-2).size(10).flex().items_center().justify_center()
+            .tooltip(`Config error: ${err}`)
+            .on_mouse_down("left", stop)
+            .child(div().size(8).rounded_full().bg(t.ansi1 ?? "#e5484d")))));
   }
 }

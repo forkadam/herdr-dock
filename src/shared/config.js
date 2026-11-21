@@ -10,14 +10,14 @@ const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and s
 export const DEFAULT_CONFIG = {
   v: 1,
   regions: {
-    top: { size: 42, features: [{ mod: "dock-core", size: 132 }, { mod: "tabs" }] },
+    top: { size: 42, features: [{ mod: "dock-core", size: 44 }, { mod: "tabs" }] },
     left: {
       size: 268,
       mode: "expanded",
       features: [{ mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-quotas", size: 150 }],
     },
     right: { size: 360, hidden: true, features: [] },
-    bottom: { size: 28, hidden: true, features: [] },
+    bottom: { size: 28, features: [{ mod: "workspace-status" }] },
   },
 };
 
