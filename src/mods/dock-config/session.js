@@ -1,6 +1,6 @@
 // The config dialog's editing session over injected I/O (no gpui, no Node built-ins).
 import { DEFAULT_CONFIG, parseConfig } from "../../shared/config.js";
-import { draftFromConfig, planReset, planSave, sameDraft } from "../../shared/edit.js";
+import { draftFromConfig, planReset, planSave, rebaseDraft, sameDraft } from "../../shared/edit.js";
 import { buildInventory, installedFallbackIds } from "../../shared/inventory.js";
 import { listDirCommand, parseDirListing } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
@@ -64,38 +64,62 @@ export async function loadSession(io) {
     readOnly = true;
     error = "this computer's hostname is unknown: run npm run deploy";
   }
-  return { path, host, opened, draft, inventory: buildInventory(entries, draft), entries, readOnly, notice, error };
+  // baseDraft: the draft as the file had it; a conflict re-applies only what differs from it.
+  return { path, host, opened, draft, baseDraft: draft, inventory: buildInventory(entries, draft), entries, readOnly, notice, error };
 }
 
 const withInventory = (s, draft) => ({ ...s, draft, inventory: buildInventory(s.entries, draft) });
 
-// Write planned text; on a refused write, adopt the file's fresh text and keep the draft.
-async function commit(session, io, plan) {
+const parseOpened = (text) => (text === null || text === undefined ? { ok: false, error: "dock.json could not be read" } : parseConfig(text));
+
+// The file changed under the dialog: load its new text and put back only the fields the user changed.
+// Writes nothing. A file that can't be used keeps the edits (still dirty) and shows why.
+function rebase(session, fresh) {
+  const parsed = parseOpened(fresh);
+  if (!parsed.ok) {
+    return { ...session, opened: fresh, notice: null, error: `${parsed.error} — fix config/dock.json by hand, then save again (your edits are kept)` };
+  }
+  const freshDraft = draftFromConfig(parsed.config, session.host);
+  const draft = rebaseDraft(session.baseDraft, session.draft, freshDraft);
+  return { ...withInventory(session, draft), baseDraft: freshDraft, opened: fresh, notice: CHANGED_NOTICE, error: null };
+}
+
+const reread = (session, io) => io.readTextFile(session.path).catch(() => null);
+
+// Write the planned text. A refused write is a conflict only when the file's text moved; otherwise
+// the write's own error is shown. A session whose file text didn't parse re-reads it first.
+async function commit(session, io, makePlan) {
+  if (!parseOpened(session.opened).ok) return rebase(session, await reread(session, io));
+  const plan = makePlan(session.opened);
   if (!plan.ok) return { ...session, error: plan.error };
   try {
     await io.writeTextFile(session.path, plan.text, session.opened);
-  } catch {
-    const fresh = await io.readTextFile(session.path).catch(() => null);
-    return { ...session, opened: fresh, notice: CHANGED_NOTICE, error: null };
+  } catch (e) {
+    const fresh = await reread(session, io);
+    if (fresh === session.opened) return { ...session, notice: null, error: String(e) };
+    return rebase(session, fresh);
   }
-  return { ...session, opened: plan.text, notice: null, error: null };
+  return { ...session, opened: plan.text, baseDraft: session.draft, notice: null, error: null };
 }
 
 export async function saveSession(session, io) {
   if (session.readOnly) return session;
-  return commit(session, io, planSave(session.opened, session.host, session.draft));
+  return commit(session, io, (opened) => planSave(opened, session.host, session.draft));
 }
 
 export async function resetSession(session, io) {
   if (session.readOnly) return session;
-  const next = await commit(session, io, planReset(session.opened, session.host));
+  const next = await commit(session, io, (opened) => planReset(opened, session.host));
   if (next.error || next.notice) return next;
   const parsed = parseConfig(next.opened);
-  return parsed.ok ? withInventory(next, draftFromConfig(parsed.config, session.host)) : next;
+  if (!parsed.ok) return next;
+  const draft = draftFromConfig(parsed.config, session.host);
+  return { ...withInventory(next, draft), baseDraft: draft };
 }
 
+// A writable session whose file text doesn't parse holds edits that still need a save.
 export function isDirty(session) {
-  const parsed = parseConfig(session.opened);
-  if (!parsed.ok) return false;
+  const parsed = parseOpened(session.opened);
+  if (!parsed.ok) return !session.readOnly;
   return !sameDraft(session.draft, draftFromConfig(parsed.config, session.host));
 }

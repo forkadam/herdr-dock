@@ -30,8 +30,37 @@ export function regionOf(draft, mod) {
   return null;
 }
 
+// JSON with object keys sorted, so key order doesn't matter.
+const canonical = (v) => JSON.stringify(v, (_k, x) => (x !== null && typeof x === "object" && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]]))
+  : x));
+const same = (a, b) => canonical(a) === canonical(b);
+
+// The fields the dialog edits, per region: size, hidden (not left), mode (left) and features.
+const EDITED = ["size", "hidden", "mode", "features"];
+const fields = (name) => (name === "left" ? ["size", "mode", "features"] : ["size", "hidden", "features"]);
+
 export function sameDraft(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name][k], b.regions[name][k])));
+}
+
+// On a conflict: the fresh draft with only the fields the user changed (draft vs baseDraft) put back on top.
+export function rebaseDraft(baseDraft, draft, freshDraft) {
+  const out = JSON.parse(JSON.stringify(freshDraft));
+  for (const name of REGION_NAMES) {
+    for (const k of fields(name)) {
+      const mine = draft.regions[name][k];
+      if (same(mine, baseDraft.regions[name][k])) continue;
+      if (mine === undefined) delete out.regions[name][k];
+      else out.regions[name][k] = JSON.parse(JSON.stringify(mine));
+    }
+  }
+  return out;
+}
+
+// The size a step button sets: 1 when there's no size yet, never below 1.
+export function stepSize(size, delta) {
+  return Number.isInteger(size) ? Math.max(1, size + delta) : 1;
 }
 
 const isPosInt = (v) => Number.isInteger(v) && v > 0;
@@ -109,8 +138,6 @@ export function applyEdit(draft, op) {
   return error ? { draft, error } : { draft: d, error: null };
 }
 
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
 // The regions this host overrides: only what differs from the base (config without machines).
 export function machineSection(config, draft) {
   const base = mergeForHost({ ...config, machines: {} }, "");
@@ -128,6 +155,10 @@ export function machineSection(config, draft) {
       diff.hidden = d.hidden;
     }
     if (!same(d.features, b.features)) diff.features = d.features;
+    // Keys the dialog doesn't edit (e.g. a hand-written note in this host's section) stay when they differ.
+    for (const k of Object.keys(d)) {
+      if (!EDITED.includes(k) && !same(d[k], b[k])) diff[k] = d[k];
+    }
     if (Object.keys(diff).length) section[name] = diff;
   }
   return Object.keys(section).length ? section : null;

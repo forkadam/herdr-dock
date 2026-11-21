@@ -58,3 +58,15 @@ test("buildInventory: a config mod that is also installed is listed once", () =>
   assert.equal(items.filter((i) => i.id === "tabs").length, 1);
   assert.equal(items.find((i) => i.id === "tabs").title, "tabs");
 });
+
+test("modRows: placed mods are always normal rows; unplaced unplaceable ones go to the others", async () => {
+  const { modRows } = await import("../src/shared/inventory.js");
+  const inv = [
+    { id: "files", reason: null, region: null },
+    { id: "toast", reason: "helper", region: "right" },
+    { id: "menu", reason: "helper", region: null },
+  ];
+  const { normal, others } = modRows(inv);
+  assert.deepEqual(normal.map((i) => i.id), ["files", "toast"]);
+  assert.deepEqual(others.map((i) => i.id), ["menu"]);
+});

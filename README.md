@@ -131,13 +131,16 @@ Run the command again to close it.
   config is never changed by it, so other machines keep their own layout.
 - **Two views.** "By region" lists each region with its features; "By mod" lists each mod with where it is
   placed. Both edit the same draft, and nothing is written until you save.
-- **Placement rules are enforced.** The same rules as in Config: the top bar keeps `dock-core`, and `dock-spaces`,
-  `dock-agents` and `dock-quotas` only go in the left region. An edit that would break them is refused, so the
-  saved config always passes the same checks as a hand edit.
+- **Placement rules are enforced.** The same rules as in Config: the top bar keeps `dock-core`, and `dock-header`,
+  `dock-footer`, `dock-spaces`, `dock-agents` and `dock-quotas` only go in the left region. An edit that would
+  break them is refused, so the saved config always passes the same checks as a hand edit.
 - **Reset this PC to shared** removes this PC's `machines.<hostname>` section, so it follows the shared config again.
 - **If `dock.json` changed on disk since the dialog opened** (for example, you edited it by hand), the next Save or
-  Reset writes nothing: it loads the file's new version, re-applies your edits on top, and shows "dock.json changed
-  on disk; your edits were re-applied, check and save again". Check them and save again.
+  Reset writes nothing: it loads the file's new version, re-applies only the fields you changed on top (a region's
+  size, its shown setting, the left mode, or a region's whole mod list), and shows "dock.json changed on disk; your
+  edits were re-applied, check and save again". Check and save again. Everything you didn't change keeps the file's
+  new values. If the new version isn't valid JSON or config, your edits are kept and the error is shown; fix the file
+  and save again.
 - **The first save may reformat `dock.json`.** The writer uses a stable format: 2-space indent, each feature
   object on one line. Content and key order are unchanged, so later saves give small diffs.
 

@@ -136,3 +136,21 @@ test("draftFromConfig: left hidden, host merge, deep copy", () => {
   d3.regions.top.features[0].size = 1;
   assert.equal(fixture().regions.top.features[0].size, 44);
 });
+
+test("stepSize: starts at 1 with no size and never goes below 1", async () => {
+  const { stepSize } = await import("../src/shared/edit.js");
+  assert.equal(stepSize(undefined, 1), 1);
+  assert.equal(stepSize(undefined, -1), 1);
+  assert.equal(stepSize(1, -1), 1);
+  assert.equal(stepSize(10, -1), 9);
+  assert.equal(stepSize(10, 1), 11);
+});
+
+test("sameDraft ignores key order and compares features by content", async () => {
+  const { sameDraft } = await import("../src/shared/edit.js");
+  const a = { regions: { top: { size: 1, features: [{ mod: "x", size: 2 }], hidden: false }, left: { mode: "icons", features: [], hidden: false }, right: { features: [], hidden: true }, bottom: { features: [], hidden: false } } };
+  const b = { regions: { top: { hidden: false, features: [{ size: 2, mod: "x" }], size: 1 }, left: { hidden: false, features: [], mode: "icons" }, right: { hidden: true, features: [] }, bottom: { hidden: false, features: [] } } };
+  assert.equal(sameDraft(a, b), true);
+  b.regions.left.mode = "hidden";
+  assert.equal(sameDraft(a, b), false);
+});

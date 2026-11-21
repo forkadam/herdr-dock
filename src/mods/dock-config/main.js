@@ -9,7 +9,7 @@ import {
   appHome, checking, closeOverlay, exec, props, readTextFile, setShared, shared, theme, window, writeTextFile,
 } from "herdr";
 import { DEFAULT_CONFIG } from "../../shared/config.js";
-import { applyEdit, draftFromConfig } from "../../shared/edit.js";
+import { applyEdit, draftFromConfig, stepSize } from "../../shared/edit.js";
 import { buildInventory } from "../../shared/inventory.js";
 import { slashPath } from "../../shared/path.js";
 import { isDirty, loadSession, resetSession, saveSession } from "./session.js";
@@ -28,7 +28,7 @@ const makeIo = () => ({
 // What `herdr-app check` renders: the default config, read-only, with no files read.
 function checkSession() {
   const draft = draftFromConfig(DEFAULT_CONFIG, "");
-  return { path: null, host: null, opened: null, draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
+  return { path: null, host: null, opened: null, draft, baseDraft: draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
 }
 
 export default class DockConfig extends View {
@@ -36,7 +36,7 @@ export default class DockConfig extends View {
     this.session = null;
     this.loadError = null;
     this.editError = null; // the last refused edit, or a failed save
-    this.busy = false; // a save or reset is running
+    this.busy = null; // "save" or "reset" while one is running
     this.confirmReset = false;
     this.showAll = false;
     this.addOpen = null; // the region whose "+ Add mod" list is open
@@ -46,7 +46,12 @@ export default class DockConfig extends View {
       state.set_step(1);
       state.set_min(1);
       state.on("change", (_e, cx) => this.typedSize(region, cx));
-      state.on("blur", () => this.showSize(region));
+      // Leaving the field shows the draft's size again, so a refused size's error is stale.
+      state.on("blur", (_e, cx) => {
+        this.editError = null;
+        this.showSize(region);
+        cx.notify();
+      });
       this.sizes[region] = state;
     }
     if (checking()) {
@@ -92,7 +97,8 @@ export default class DockConfig extends View {
       draft = r.draft;
     }
     this.editError = null;
-    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft) };
+    // A successful edit also clears the last save's error.
+    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft), error: null };
     cx.notify();
   }
 
@@ -113,14 +119,16 @@ export default class DockConfig extends View {
 
   step(region, delta, cx) {
     if (!this.session) return;
-    this.act(cx, { type: "size", region, value: this.session.draft.regions[region].size + delta });
+    const size = this.session.draft.regions[region].size;
+    const value = stepSize(size, delta);
+    if (value !== size) this.act(cx, { type: "size", region, value });
     this.showSize(region);
   }
 
   // Save or reset; edits wait (editable() is false) until it's done.
-  write(cx, fn) {
+  write(cx, fn, kind) {
     if (!this.session || this.session.readOnly || this.busy) return;
-    this.busy = true;
+    this.busy = kind;
     this.confirmReset = false;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -131,7 +139,7 @@ export default class DockConfig extends View {
       } catch (e) {
         this.editError = `${e?.message ?? e}`;
       } finally {
-        this.busy = false;
+        this.busy = null;
         cx.notify();
       }
     });
@@ -177,7 +185,7 @@ export default class DockConfig extends View {
     const reset = this.confirmReset
       ? h_flex().gap(6).items_center()
           .child(div().text_size(12.5).child("Reset this PC to shared?"))
-          .child(button(t, "dc-reset-yes", "Yes", { enabled: canWrite }, (_e, cx) => this.write(cx, resetSession)))
+          .child(button(t, "dc-reset-yes", "Yes", { enabled: canWrite }, (_e, cx) => this.write(cx, resetSession, "reset")))
           .child(button(t, "dc-reset-no", "No", {}, (_e, cx) => { this.confirmReset = false; cx.notify(); }))
       : h_flex().id("dc-reset").h(28).px(8).items_center().rounded(7).text_size(12.5).text_color(t.muted)
           .when(canWrite, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover).text_color(t.foreground))
@@ -188,8 +196,8 @@ export default class DockConfig extends View {
       .child(reset)
       .child(div().flex_1())
       .child(button(t, "dc-cancel", "Cancel", {}, () => this.cancel()))
-      .child(button(t, "dc-save", this.busy ? "Saving…" : "Save", { primary: true, enabled: canWrite && dirty },
-        (_e, cx) => this.write(cx, saveSession)))
+      .child(button(t, "dc-save", this.busy === "save" ? "Saving…" : "Save", { primary: true, enabled: canWrite && dirty },
+        (_e, cx) => this.write(cx, saveSession, "save")))
       .when(dirty, (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child("● unsaved")));
   }
 

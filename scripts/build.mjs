@@ -10,7 +10,7 @@ export async function buildAll() {
   const out = join(ROOT, "dist/mods");
   rmSync(join(ROOT, "dist"), { recursive: true, force: true });
   const names = readdirSync(modsSrc, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith("dock-") && existsSync(join(modsSrc, d.name, "main.js"))).map((d) => d.name);
+    .filter((d) => d.isDirectory() && d.name.startsWith("dock-")).map((d) => d.name);
   for (const name of names) {
     const src = join(modsSrc, name), dest = join(out, name);
     const manifest = JSON.parse(readFileSync(join(src, "manifest.json"), "utf8"));

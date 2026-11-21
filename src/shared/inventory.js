@@ -47,3 +47,10 @@ export function buildInventory(entries, draft) {
   const key = (i) => i.title.toLowerCase();
   return items.sort((a, b) => (a.reason === null ? 0 : 1) - (b.reason === null ? 0 : 1) || key(a).localeCompare(key(b)));
 }
+
+// The "By mod" rows: every placeable mod and every mod the config already places (whatever its
+// reason), then the rest, shown only with "Show all mods".
+export function modRows(inventory) {
+  const normal = inventory.filter((i) => i.reason === null || i.region !== null);
+  return { normal, others: inventory.filter((i) => !normal.includes(i)) };
+}

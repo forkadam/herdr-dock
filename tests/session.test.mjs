@@ -122,3 +122,127 @@ test("reset with no machine section and a dirty draft discards the edits", async
   assert.deepEqual(s.draft, draftFromConfig(base, HOST));
   assert.equal(isDirty(s), false);
 });
+
+// ---- final-review fixes: rebase on conflict, dirty tracking, stranded edits, real write errors ----
+const withHost = (regions) => {
+  const c = JSON.parse(text);
+  c.machines = { [HOST]: { regions } };
+  return JSON.stringify(c, null, 2);
+};
+
+test("conflict: a hand edit to this host's own section survives; the user's edit is re-applied", async () => {
+  const { io, files } = fakeIo({ file: withHost({ top: { size: 50 } }) });
+  const s = sized(await loadSession(io), 300);
+  files.set(CFG, withHost({ top: { size: 60 } }));
+  const r = await saveSession(s, io);
+  assert.match(r.notice, /changed on disk/);
+  assert.equal(r.draft.regions.top.size, 60);
+  assert.equal(r.draft.regions.left.size, 300);
+  const r2 = await saveSession(r, io);
+  assert.equal(r2.error, null);
+  const saved = JSON.parse(files.get(CFG));
+  assert.equal(saved.machines[HOST].regions.top.size, 60);
+  assert.equal(saved.machines[HOST].regions.left.size, 300);
+  assert.equal(isDirty(r2), false);
+});
+
+test("conflict: a hand edit to an untouched base region is not overridden", async () => {
+  const { io, files } = fakeIo();
+  const s = sized(await loadSession(io), 300);
+  const hand = JSON.parse(text);
+  hand.regions.bottom.features.push({ mod: "files" });
+  files.set(CFG, JSON.stringify(hand, null, 2));
+  const r = await saveSession(s, io);
+  assert.deepEqual(r.draft.regions.bottom.features.map((f) => f.mod), ["workspace-status", "files"]);
+  await saveSession(r, io);
+  const saved = JSON.parse(files.get(CFG));
+  assert.deepEqual(saved.machines[HOST].regions, { left: { size: 300 } });
+});
+
+test("conflict: a changed feature list is re-applied whole", async () => {
+  const { io, files } = fakeIo();
+  let s = await loadSession(io);
+  s = { ...s, draft: applyEdit(s.draft, { type: "place", mod: "files", region: "right" }).draft };
+  const hand = JSON.parse(text);
+  hand.regions.right.size = 400;
+  files.set(CFG, JSON.stringify(hand, null, 2));
+  const r = await saveSession(s, io);
+  assert.deepEqual(r.draft.regions.right.features, [{ mod: "files" }]);
+  assert.equal(r.draft.regions.right.size, 400);
+});
+
+test("isDirty is false after saving a left mode the base doesn't set", async () => {
+  const base = JSON.parse(text);
+  delete base.regions.left.mode;
+  const { io } = fakeIo({ file: JSON.stringify(base, null, 2) });
+  let s = await loadSession(io);
+  s = { ...s, draft: applyEdit(s.draft, { type: "mode", value: "icons" }).draft };
+  assert.equal(isDirty(s), true);
+  s = await saveSession(s, io);
+  assert.equal(s.error, null);
+  assert.equal(isDirty(s), false);
+});
+
+test("isDirty is false after saving a size on a region without one", async () => {
+  const base = JSON.parse(text);
+  delete base.regions.right.size;
+  const { io } = fakeIo({ file: JSON.stringify(base, null, 2) });
+  let s = await loadSession(io);
+  s = { ...s, draft: applyEdit(s.draft, { type: "size", region: "right", value: 200 }).draft };
+  s = await saveSession(s, io);
+  assert.equal(s.error, null);
+  assert.equal(isDirty(s), false);
+});
+
+test("an unknown key in this host's region is kept on save and isDirty is right", async () => {
+  const { io, files } = fakeIo({ file: withHost({ top: { size: 50, note: "mine" } }) });
+  let s = sized(await loadSession(io), 300);
+  s = await saveSession(s, io);
+  assert.equal(s.error, null);
+  assert.equal(JSON.parse(files.get(CFG)).machines[HOST].regions.top.note, "mine");
+  assert.equal(isDirty(s), false);
+});
+
+test("conflict onto an invalid file keeps the edits dirty, shows the parse error, and a later save rebases", async () => {
+  const { io, files } = fakeIo();
+  const s = sized(await loadSession(io), 300);
+  files.set(CFG, "{ nope");
+  const r = await saveSession(s, io);
+  assert.equal(r.draft.regions.left.size, 300);
+  assert.match(r.error, /Invalid JSON/);
+  assert.equal(isDirty(r), true);
+  const hand = JSON.parse(text);
+  hand.regions.top.size = 44;
+  files.set(CFG, JSON.stringify(hand, null, 2));
+  const r2 = await saveSession(r, io);
+  assert.equal(files.get(CFG), JSON.stringify(hand, null, 2)); // nothing written yet
+  assert.match(r2.notice, /changed on disk/);
+  assert.equal(r2.error, null);
+  assert.equal(r2.draft.regions.left.size, 300);
+  assert.equal(r2.draft.regions.top.size, 44);
+  const r3 = await saveSession(r2, io);
+  assert.equal(r3.error, null);
+  assert.equal(JSON.parse(files.get(CFG)).machines[HOST].regions.left.size, 300);
+});
+
+test("conflict onto a missing file keeps the edits dirty with an error", async () => {
+  const { io, files } = fakeIo();
+  const s = sized(await loadSession(io), 300);
+  files.delete(CFG);
+  const r = await saveSession(s, io);
+  assert.equal(r.opened, null);
+  assert.match(r.error, /could not be read/);
+  assert.equal(isDirty(r), true);
+});
+
+test("a write error with the file unchanged is reported as itself, not as a conflict", async () => {
+  const { io, files } = fakeIo();
+  io.writeTextFile = async () => { throw new Error("EPERM: operation not permitted"); };
+  const s = sized(await loadSession(io), 300);
+  const r = await saveSession(s, io);
+  assert.match(r.error, /EPERM/);
+  assert.equal(r.notice, null);
+  assert.equal(r.opened, text);
+  assert.equal(files.get(CFG), text);
+  assert.equal(isDirty(r), true);
+});
