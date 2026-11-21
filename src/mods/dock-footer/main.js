@@ -1,6 +1,6 @@
 // Based on Herdr's shipped workspace-chrome mod (installed.json main.js hash 2209012f93fc170c):
 // its footer (props.footer) with Settings and Add machine, on one line. Faces follow the left panel mode:
-// one row with labels, the Settings icon on the 48 px rail, and icons only in a 32 px collapsed slot.
+// the gear on the left and "+ Add machine" on the right, the gear alone on the 48 px rail, icons only when collapsed.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, shared, updates } from "herdr";
@@ -35,12 +35,12 @@ export default class DockFooter extends View {
       return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).gap(4).items_center()
         .children(ITEMS.map(iconButton));
     }
-    const row = (item) => h_flex().id(item.id).h(28).px(8).gap(9).items_center().rounded(8)
-      .text_color(item.dim ? t.dim : t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
-      .on_click(item.action).child(svg(`mods/dock-footer/${item.icon}.svg`).size(14)).child(item.label)
-      .when(item.id === "settings" && ready, el => el.child(dot()));
-    // Both on one line, to keep the footer compact.
-    return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).gap(4).items_center().text_size(13)
-      .children(ITEMS.map(row));
+    const [settings, machine] = ITEMS;
+    // One line: the Settings gear (icon only) on the left, "+ Add machine" on the right.
+    return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(8).items_center().justify_between().text_size(13)
+      .child(iconButton(settings))
+      .child(h_flex().id(machine.id).h(28).px(8).gap(9).items_center().rounded(8)
+        .text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+        .on_click(machine.action).child(svg(`mods/dock-footer/${machine.icon}.svg`).size(14)).child(machine.label));
   }
 }

@@ -100,8 +100,8 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
   brand and search, copied from Herdr's `workspace-chrome` without its collapse button. The left panel is
   toggled by the button at the start of the tab bar and by Ctrl+Alt+B. In icons mode the header shows the
   Herdr logo.
-- The left panel ends with `dock-footer` (40 px): Settings and Add machine on one line. A dot by
-  Settings means an update is ready. In icons mode it shows the Settings icon.
+- The left panel ends with `dock-footer` (40 px): the Settings gear on the left and + Add machine on the right, on one line. A dot on
+  the gear means an update is ready. In icons mode it shows the gear.
 - `machines.<hostname>` deep-merges into the base config for that machine. Hostnames match case-insensitively.
   Objects merge key by key, arrays (`features`) replace whole, and scalars replace.
 
