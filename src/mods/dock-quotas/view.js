@@ -1,33 +1,50 @@
 // Pure view model for the Quotas feature (no host imports: node --test runs it).
+// Usage readings ({ windows: [{ kind, usedPercent, resetsMs }], fetchedMs, stale }) come from the Claude
+// status-line cache (src/shared/claude.js) and Codex's session logs (src/shared/codex.js).
 import { formatPercent, formatAge, formatReset } from "../../shared/claude.js";
 
-const LABELS = { five_hour: "Claude · 5-hour", weekly: "Claude · weekly" };
-const SOURCE = "Claude status line";
+// Group order and names. `agent` is the program key in Herdr's agent table (knownAgents), for the icon.
+export const PROVIDERS = [
+  { id: "claude", title: "Claude", agent: "claude", source: "Claude status line" },
+  { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" },
+];
+const LABELS = { five_hour: "5-hour", weekly: "weekly" };
 
-// Statusline | null -> rows { label, value, detail, stale, tooltip, percent? }.
-export function quotaRows(statusline, nowMs) {
-  if (!statusline) return [{ label: "Claude", value: "no data", detail: "start Claude Code to report usage", stale: false,
-    tooltip: `Claude usage · source: ${SOURCE} (none yet)` }];
-  const age = formatAge(nowMs - statusline.fetchedMs);
-  return statusline.windows.map((w) => {
-    const label = LABELS[w.kind] ?? `Claude · ${w.kind}`;
+// One provider's reading -> rows { label, value, detail, stale, tooltip, percent }.
+export function quotaRows(usage, nowMs, provider) {
+  const age = formatAge(nowMs - usage.fetchedMs);
+  return usage.windows.map((w) => {
+    const label = LABELS[w.kind] ?? w.kind;
     return {
       label,
       value: formatPercent(w.usedPercent),
       detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`,
-      stale: Boolean(statusline.stale),
-      tooltip: `${label}: ${formatPercent(w.usedPercent)} · source: ${SOURCE}`,
+      stale: Boolean(usage.stale),
+      tooltip: `${provider.title} · ${label}: ${formatPercent(w.usedPercent)} · source: ${provider.source}`,
       percent: w.usedPercent,
     };
   });
 }
 
-// Icon-rail badge: highest finite used % (rounded), marked stale with the cache. Null: nothing to show.
-export function iconBadge(statusline) {
-  if (!statusline) return null;
-  const ps = statusline.windows.map((w) => w.usedPercent).filter((p) => Number.isFinite(p));
-  if (!ps.length) return null;
-  return { text: `${Math.round(Math.max(...ps))}%`, stale: Boolean(statusline.stale) };
+// { [providerId]: reading | null } -> [{ id, title, agent, rows }] in PROVIDERS order, leaving out providers
+// with nothing recorded.
+export function quotaGroups(byId, nowMs) {
+  return PROVIDERS
+    .filter((p) => byId?.[p.id]?.windows?.length)
+    .map((p) => ({ id: p.id, title: p.title, agent: p.agent, rows: quotaRows(byId[p.id], nowMs, p) }));
+}
+
+// Icon-rail badge: the highest finite used % (rounded) across readings, stale when the reading it came from
+// is. Null: nothing to show.
+export function iconBadge(readings) {
+  let best = null;
+  for (const r of readings ?? []) {
+    for (const w of r?.windows ?? []) {
+      if (!Number.isFinite(w.usedPercent)) continue;
+      if (!best || w.usedPercent > best.p) best = { p: w.usedPercent, stale: Boolean(r.stale) };
+    }
+  }
+  return best ? { text: `${Math.round(best.p)}%`, stale: best.stale } : null;
 }
 
 export const barLevel = (p) => (p >= 90 ? "high" : p >= 70 ? "warn" : "ok");

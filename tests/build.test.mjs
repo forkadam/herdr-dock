@@ -5,8 +5,10 @@ import { mkdtempSync, readdirSync, readFileSync, existsSync, writeFileSync, rmSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Deploy also installs the status-line writer into ~/.claude: tests point it at a temp folder.
+const noClaude = join(tmpdir(), "dock-no-claude-" + process.pid);
 const run = (args, env = {}) =>
-  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, ...env } });
 const tmpHome = () => mkdtempSync(join(tmpdir(), "dock-app-"));
 
 test("deploy --dry-run into a temp app home writes nothing and lists actions", () => {
@@ -119,4 +121,22 @@ test("deploy defaults the app home to HERDR_APP_HOME", () => {
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.ok(r.stdout.includes(tmp), r.stdout);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy installs the status-line writer into an existing Claude folder, and skips it when there is none", () => {
+  const tmp = tmpHome();
+  const claude = mkdtempSync(join(tmpdir(), "dock-claude-"));
+  try {
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(join(claude, "herdr-statusline-cache.mjs"), "utf8"), readFileSync("scripts/herdr-statusline-cache.mjs", "utf8"));
+    const missing = join(tmpdir(), "dock-claude-missing-" + process.pid);
+    const r2 = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: missing });
+    assert.equal(r2.status, 0, r2.stderr);
+    assert.equal(existsSync(missing), false);
+    assert.match(r2.stdout, /status-line writer/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(claude, { recursive: true, force: true });
+  }
 });

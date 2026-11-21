@@ -26,3 +26,15 @@ export function openUrlCommand(platform, url) {
   if (platform === "macos") return { command: "open", args: [url] };
   return { command: "xdg-open", args: [url] };
 }
+
+// The command that lists the files (not folders) in `dir`.
+export function listFilesCommand(platform, dir) {
+  if (platform === "windows") return { command: "cmd", args: ["/c", "dir", "/b", "/a-d", dir.replaceAll("/", "\\")] };
+  return { command: "ls", args: ["-1", "-p", dir] };
+}
+
+// listFilesCommand's stdout -> file names (macOS/Linux: entries ending in "/" are folders, dropped).
+export function parseFileListing(platform, stdout) {
+  const names = String(stdout ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return platform === "windows" ? names : names.filter((n) => !n.endsWith("/"));
+}

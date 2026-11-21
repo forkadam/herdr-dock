@@ -13,7 +13,8 @@ dialog, dock-config):
 - **dock-spaces**: your spaces. Click one to select it.
 - **dock-agents**: your agents. Click one to focus it. Each local Claude agent shows its context as "NN% used"
   (dimmed when the reading is older than 2 minutes).
-- **dock-quotas**: Claude 5-hour and weekly quota as "% used", with reset time, age, and a stale mark.
+- **dock-quotas**: usage limits grouped by provider, each under its icon: Claude and Codex 5-hour and weekly windows
+  as "% used", with reset time, age, and a stale mark. A provider with nothing recorded is left out.
 - **dock-git**: Git projects, your repos and worktrees with git status and a CI pipeline badge (see
   [Git projects and Pipelines](#git-projects-and-pipelines)).
 - **dock-pipelines**: Pipelines, the selected worktree's pipeline: stages, failed jobs, Retry.
@@ -252,14 +253,24 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
 - Only the latest pipeline of the branch (or of the commit, when detached) is shown. GitHub runs of several
   workflows for the same commit are combined, with the worst status.
 
-## Prerequisite: the Claude status-line cache
+## Where the quota and context numbers come from
 
-Context and quota numbers come from the Claude status-line cache,
-`~/.claude/statusline-cache/claude-statusline.json`, plus the session records in `~/.claude/sessions/`. The cache
-is written by your Claude Code status line: `~/.claude/statusline.ps1` calls `~/.claude/herdr-statusline-cache.py`.
-Set that up before you expect numbers. Without it, Quotas shows "no data" and agent rows show no context figure.
-That writer currently needs Python on Windows. A cross-platform writer is future work. The mods themselves contain
-no Python.
+No Python is needed anywhere; everything runs on Node.
+
+- **Claude:** your Claude Code status line pipes its JSON to `~/.claude/herdr-statusline-cache.mjs` (installed by
+  `npm run deploy` when `~/.claude` exists), which writes `~/.claude/statusline-cache/claude-statusline.json`: the
+  5-hour/weekly windows and each session's context %. Add this one line to your status-line script, before it prints:
+  - Windows (`statusline.ps1`): `$raw | & node "$env:USERPROFILE.claudeherdr-statusline-cache.mjs" 2>$null | Out-Null`
+    (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`).
+  - macOS / Linux (a shell script): `printf '%s' "$input" | node ~/.claude/herdr-statusline-cache.mjs >/dev/null 2>&1`
+    (with `input=$(cat)` read first).
+
+  Without it, the Claude block doesn't show and agent rows show no context figure.
+- **Codex:** read from Codex's own session logs, `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (the newest one with
+  rate limits, from the last 8 days). Nothing to set up: use Codex once. A custom `CODEX_HOME` isn't followed (mods
+  can't read environment variables).
+- **Gemini / Antigravity:** not shown. It keeps no usage record on disk; its quota comes from Google's servers, and
+  herdr-dock won't use your Google login to fetch it.
 
 ## Known limitations
 

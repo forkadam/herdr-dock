@@ -86,6 +86,16 @@ if (!dry) {
   writeFileSync(join(appHome, "layouts/herdr-dock.json"), JSON.stringify(layout, null, 2) + "\n");
 }
 
+// The status-line writer (Quotas and per-agent context): your Claude Code status line runs it with node.
+// Installed only where Claude Code already keeps its folder; DOCK_CLAUDE_HOME overrides (tests).
+const claudeHome = resolve(process.env.DOCK_CLAUDE_HOME || join(homedir(), ".claude"));
+if (existsSync(claudeHome)) {
+  say(`install the status-line writer: ${join(claudeHome, "herdr-statusline-cache.mjs")}`);
+  if (!dry) cpSync(join(ROOT, "scripts/herdr-statusline-cache.mjs"), join(claudeHome, "herdr-statusline-cache.mjs"));
+} else {
+  console.log(`no ${claudeHome}: skipping the status-line writer (install Claude Code, then re-run deploy)`);
+}
+
 if (!hasKeys) {
   console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B, Ctrl+Alt+N and Ctrl+Alt+,");
 } else {
