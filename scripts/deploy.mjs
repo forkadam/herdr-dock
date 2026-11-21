@@ -14,16 +14,18 @@ if (ai >= 0 && (!args[ai + 1] || args[ai + 1].startsWith("--"))) {
   console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run]");
   process.exit(1);
 }
-const appHome = resolve(ai >= 0 ? args[ai + 1] : join(homedir(), ".config/herdr-app"));
+const appHome = resolve(ai >= 0 ? args[ai + 1] : process.env.HERDR_APP_HOME || join(homedir(), ".config/herdr-app"));
 const KEY = "ctrl-alt-b", ACTION = "dock-core.cycle", SECTION = "layout:herdr-dock";
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
 const fail = (msg) => { console.error(msg); process.exit(1); };
+say(`app home: ${appHome}`);
 
 // Validate config first so an invalid one aborts before anything is written.
 const configPath = join(ROOT, "config/dock.json");
 const parsed = parseConfig(readFileSync(configPath, "utf8"));
 if (!parsed.ok) fail(`config/dock.json invalid: ${parsed.error}`);
-const layout = buildLayout(mergeForHost(parsed.config, hostname()));
+const host = hostname().toLowerCase();
+const layout = buildLayout(mergeForHost(parsed.config, host));
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");
@@ -38,21 +40,39 @@ if (!isObj(keys)) fail("keys.json: root must be an object");
 if (SECTION in keys && !isObj(keys[SECTION])) fail(`keys.json: "${SECTION}" must be an object`);
 
 const names = await buildAll().catch((e) => fail(`build failed: ${e.message}`));
-const installed = [];
 for (const name of names) {
   if (!name.startsWith("dock-")) fail(`refusing to write mods/${name}: not prefixed dock-`);
-  const target = join(appHome, "mods", name);
-  say(`install mods/${name}`);
-  if (!dry) {
-    rmSync(target, { recursive: true, force: true });
-    mkdirSync(join(appHome, "mods"), { recursive: true });
-    cpSync(join(ROOT, "dist/mods", name), target, { recursive: true });
-    installed.push(target);
-  }
 }
 
+// source.json goes into the built dock-core before it is copied, so the installed mod never
+// runs without it. It points at this repo's config (re-run deploy after moving the repo) and
+// carries the hostname dock-core falls back on when it can't run the hostname command.
 say("write mods/dock-core/source.json");
-if (!dry) writeFileSync(join(appHome, "mods/dock-core/source.json"), JSON.stringify({ config: slashPath(configPath) }, null, 2) + "\n");
+writeFileSync(join(ROOT, "dist/mods/dock-core/source.json"),
+  JSON.stringify({ config: slashPath(configPath), hostname: host }, null, 2) + "\n");
+
+// Each mod is copied to a staging folder in the app home, then swapped in by rename, so Herdr
+// never sees a half-copied or missing mod folder.
+const installed = [];
+const stage = join(appHome, `.dock-deploy-${process.pid}`);
+try {
+  for (const name of names) {
+    const target = join(appHome, "mods", name);
+    say(`install mods/${name}`);
+    if (dry) continue;
+    mkdirSync(join(appHome, "mods"), { recursive: true });
+    const fresh = join(stage, name), old = join(stage, `${name}.old`);
+    cpSync(join(ROOT, "dist/mods", name), fresh, { recursive: true });
+    if (existsSync(target)) {
+      // Moved aside first (a rename can't replace a folder); removed with the stage below.
+      try { renameSync(target, old); } catch { rmSync(target, { recursive: true, force: true }); }
+    }
+    renameSync(fresh, target);
+    installed.push(target);
+  }
+} finally {
+  if (!dry) rmSync(stage, { recursive: true, force: true });
+}
 
 say("write layouts/herdr-dock.json");
 if (!dry) {

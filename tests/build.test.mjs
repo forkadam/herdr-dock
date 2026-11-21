@@ -93,3 +93,30 @@ test("--app-home without a value prints usage", () => {
   assert.equal(r.status, 1);
   assert.match(r.stderr, /usage/);
 });
+
+test("deploy writes the hostname into source.json and leaves no temp folders", async () => {
+  const { hostname } = await import("node:os");
+  const tmp = tmpHome();
+  try {
+    writeFileSync(join(tmp, "keys.json"), "{}");
+    // Deploy twice: the second run replaces mods that are already there.
+    for (let i = 0; i < 2; i++) {
+      const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+      assert.equal(r.status, 0, r.stderr + r.stdout);
+    }
+    const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
+    assert.equal(src.hostname, hostname().toLowerCase());
+    assert.deepEqual(readdirSync(tmp).sort(), ["keys.json", "layouts", "mods"]);
+    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-core", "dock-quotas", "dock-spaces"]);
+    assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy defaults the app home to HERDR_APP_HOME", () => {
+  const tmp = tmpHome();
+  try {
+    const r = run(["--dry-run"], { HERDR_APP_HOME: tmp });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.ok(r.stdout.includes(tmp), r.stdout);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});

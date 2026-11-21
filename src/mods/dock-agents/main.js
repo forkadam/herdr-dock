@@ -7,9 +7,9 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, checking, hc, home, readTextFile } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
-import { parseStatusline, formatPercent, formatAge, contextEntry, keepEntry } from "../../shared/claude.js";
+import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
 
 // herdr-dock: per-agent context, refreshed this often and when the Claude agents listed change.
@@ -34,17 +34,10 @@ function find(node, id) {
   return null;
 }
 
-// The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
-const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
-
-// To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
-function toggleSidebar() {
-  const width = find(layout(), "sidebar")?.size?.px;
-  if (!narrow()) setShared("sidebar.width", width);
-  // Mods edited before the rail went by width still read the flag.
-  setShared("sidebar.collapsed", !narrow());
-  run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
-}
+// herdr-dock: the rail goes by the left panel's width (dock-left), not a flag: dragging its
+// edge narrows it too. (The shipped mod's "»" sidebar toggle is gone: the panel's width and
+// modes belong to dock-core and its top-bar toggle / Ctrl+Alt+B.)
+const narrow = () => (find(layout(), "dock-left")?.size?.px ?? Infinity) < 160;
 
 // Drops what an agent puts before its title: a status glyph or spinner and the separator
 // after it ("✦  Working", "⠋ - Thinking"), and Codex's blinking "[ ! ] " / "[ . ] " mark.
@@ -361,7 +354,7 @@ export default class Agents extends View {
     // herdr-dock: icon rail or header only (after the bookkeeping above, which the shipped mod
     // does on every render: state stamps, pin migration, the agent order).
     const myId = props()?.dockFeature ?? "dock-agents";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId);
+    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") return iconRail(t, "mods/dock-agents/icon.svg", "Agents", () => requestFocus(myId));
     if (face === "collapsed") {
       return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
@@ -491,7 +484,8 @@ export default class Agents extends View {
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`)))
           // herdr-dock: the session's context use, dim, after the title; fainter when Claude is idle.
           .when(Boolean(ctx), el => el.child(div().id(`ctx-${a.address}`).flex_none().text_size(11).text_color(t.dim)
-            .when(ctx.stale, el => el.opacity(0.55).tooltip(`last reported ${ctx.seenMs ? formatAge(now - ctx.seenMs) : "at an unknown time"} — Claude is idle`))
+            .tooltip(contextTooltip(ctx, now))
+            .when(ctx.stale, el => el.opacity(0.55))
             .child(formatPercent(ctx.usedPercent)))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
@@ -552,23 +546,6 @@ export default class Agents extends View {
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
-      .when(collapsed, (el) =>
-        el.child(
-          h_flex()
-            .h(28)
-            .items_center()
-            .justify_center()
-            .child(
-              div()
-                .id("collapse")
-                .text_size(13)
-                .text_color(t.dim)
-                .hover((s) => s.text_color(t.foreground))
-                .on_click(toggleSidebar)
-                .child("»"),
-            ),
-        ),
-      );
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows));
   }
 }

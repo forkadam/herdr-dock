@@ -106,3 +106,14 @@ test("keepEntry: keep only while hc reports the same pid and created_ms", () => 
   assert.equal(keepEntry(prev, null), false);
   assert.equal(keepEntry(null, info()), false);
 });
+
+test("contextTooltip names the reading, its source and its age", async () => {
+  const { contextTooltip } = await import("../src/shared/claude.js");
+  const now = 10 * 60_000;
+  assert.equal(contextTooltip({ usedPercent: 42.4, seenMs: now - 5 * 60_000, stale: false }, now),
+    "Context window: 42% used · Claude status line · 5m ago");
+  assert.equal(contextTooltip({ usedPercent: 42, seenMs: now - 5 * 60_000, stale: true }, now),
+    "Context window: 42% used · Claude status line · 5m ago · Claude is idle");
+  assert.equal(contextTooltip({ usedPercent: 7, seenMs: 0, stale: true }, now),
+    "Context window: 7% used · Claude status line · reported at an unknown time · Claude is idle");
+});

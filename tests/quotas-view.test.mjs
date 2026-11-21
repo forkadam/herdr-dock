@@ -17,7 +17,8 @@ test("quotaRows weekly label, null reset", () => {
   assert.equal(r.detail, "1m ago");
 });
 test("quotaRows with no data", () => {
-  assert.deepEqual(quotaRows(null, 0), [{ label: "Claude", value: "no data", detail: "start Claude Code to report usage", stale: false }]);
+  assert.deepEqual(quotaRows(null, 0), [{ label: "Claude", value: "no data", detail: "start Claude Code to report usage", stale: false,
+    tooltip: "Claude usage · source: Claude status line (none yet)" }]);
 });
 test("a stale reading marks every row stale", () => {
   const rows = quotaRows(S({ stale: true }), 2_000_000);
@@ -34,4 +35,10 @@ test("iconBadge", () => {
   assert.equal(iconBadge(S({ windows: [] })), null);
   assert.deepEqual(iconBadge(S({ windows: [{ kind: "five_hour", usedPercent: NaN }, { kind: "weekly", usedPercent: null }, { kind: "weekly", usedPercent: 7 }] })), { text: "7%", stale: false });
   assert.equal(iconBadge(S({ windows: [{ kind: "weekly", usedPercent: NaN }] })), null);
+});
+
+test("quotaRows name their source in a tooltip", () => {
+  const [r] = quotaRows(S(), 1_000_000 + 30_000);
+  assert.equal(r.tooltip, "Claude · 5-hour: 5% used · source: Claude status line");
+  assert.match(quotaRows(null, 0)[0].tooltip, /Claude status line/);
 });

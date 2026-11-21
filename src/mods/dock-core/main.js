@@ -8,6 +8,7 @@ import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import { liveSizes, modeFromConfig, nextMode, planPanel, planSync, sizeChanges } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
+import { hostnameCommand } from "../../shared/platform.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
@@ -22,6 +23,8 @@ const CONFIG_MODE_KEY = "dock.left.configMode";
 const RELOAD_SETTLE_MS = 400;
 // Fallback when watchFolder rejects (too many watches, etc.).
 const POLL_MS = 3000;
+// A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
+const EMPTY_WATCH_MS = 1000;
 
 const isTop = () => props()?.dockRegion === "top";
 
@@ -31,6 +34,7 @@ export default class DockCore extends View {
     this.applied = null; // "<mode>|<focus>" last applied, so each change is applied once
     this.changes = null; // config size edits (sizeChanges) not applied yet
     this.host = "";
+    this.hostError = null; // set when neither the hostname command nor source.json gave one
     this.configPath = null;
     this.layoutPath = null;
     if (checking() || !isTop()) return;
@@ -55,18 +59,21 @@ export default class DockCore extends View {
       return;
     }
     this.configPath = slashPath(src.config);
+    // The hostname picks the machines.<host> section: ask the OS, else use the one deploy saved.
     try {
-      const linux = window()?.platform === "linux";
-      const r = linux ? await exec("uname", ["-n"]) : await exec("hostname");
-      this.host = r.stdout.trim().toLowerCase();
+      const { command, args } = hostnameCommand(window()?.platform);
+      this.host = (await exec(command, args)).stdout.trim().toLowerCase();
     } catch (e) {
-      console.log(`dock-core: hostname failed, using the base config: ${e}`);
+      console.log(`dock-core: hostname failed, using source.json: ${e}`);
     }
+    if (!this.host && typeof src.hostname === "string" && src.hostname.trim()) this.host = src.hostname.trim().toLowerCase();
+    if (!this.host) this.hostError = "could not read this computer's hostname: machines sections are ignored (re-run npm run deploy)";
     await this.reload(cx);
     const dir = this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/";
     for (;;) {
       try {
-        await watchFolder(dir);
+        const changed = await watchFolder(dir);
+        if (!changed?.length) { await cx.sleep(EMPTY_WATCH_MS); continue; }
       } catch (e) {
         console.log(`dock-core: watch failed, polling: ${e}`);
         await cx.sleep(POLL_MS);
@@ -81,7 +88,8 @@ export default class DockCore extends View {
     const configText = await readTextFile(this.configPath).catch(() => null);
     const current = await readTextFile(this.layoutPath).catch(() => null);
     const plan = planApply(configText, this.host, current, this.merged);
-    if ((shared(ERROR_KEY) ?? null) !== plan.error) setShared(ERROR_KEY, plan.error);
+    const error = plan.error ?? this.hostError;
+    if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
     const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
     this.merged = plan.merged;
     if (!plan.error && plan.merged) {
@@ -141,7 +149,8 @@ export default class DockCore extends View {
       cx.spawn(async (cx) => this.reload(cx));
       return;
     }
-    const mode = c === "cycle" ? nextMode(this.mode()) : MODES.includes(c) ? c : null;
+    // From a focused expanded panel, the cycle first goes back to plain expanded.
+    const mode = c === "cycle" ? nextMode(this.mode(), shared(FOCUS_KEY) ?? null) : MODES.includes(c) ? c : null;
     if (!mode) return;
     // A mode change by the person ends any feature's focus request; render applies the result.
     if ((shared(FOCUS_KEY) ?? null) !== null) setShared(FOCUS_KEY, null);

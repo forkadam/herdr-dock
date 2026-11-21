@@ -101,3 +101,9 @@ export function contextEntry(info, recordText, cache, nowMs) {
   if (!s) return null;
   return { ...id, sessionId, usedPercent: s.usedPercent, seenMs: s.seenMs, stale: s.stale };
 }
+
+// The tooltip on a per-agent context reading: what the number is, where it comes from, how old.
+export function contextTooltip(ctx, nowMs) {
+  const age = ctx.seenMs ? formatAge(nowMs - ctx.seenMs) : "reported at an unknown time";
+  return `Context window: ${formatPercent(ctx.usedPercent)} · Claude status line · ${age}${ctx.stale ? " · Claude is idle" : ""}`;
+}

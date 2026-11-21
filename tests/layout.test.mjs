@@ -30,11 +30,11 @@ test("buildLayout places features with ids, props and sizes", () => {
   assert.equal(find(t, "dock-right"), undefined);
 });
 test("left mode hidden sets hidden on the column", () => {
-  const m = mergeForHost(parseConfig('{"v":1,"regions":{"left":{"mode":"hidden","features":[{"mod":"x"}]}}}').config, "h");
+  const m = mergeForHost(parseConfig('{"v":1,"regions":{"top":{"features":[{"mod":"dock-core"}]},"left":{"mode":"hidden","features":[{"mod":"x"}]}}}').config, "h");
   assert.equal(find(buildLayout(m), "dock-left").hidden, true);
 });
 test("ids are unique even with the same mod twice", () => {
-  const m = mergeForHost(parseConfig('{"v":1,"regions":{"right":{"features":[{"mod":"x"},{"mod":"x"}]}}}').config, "h");
+  const m = mergeForHost(parseConfig('{"v":1,"regions":{"top":{"features":[{"mod":"dock-core"}]},"right":{"features":[{"mod":"x"},{"mod":"x"}]}}}').config, "h");
   const ids = allIds(buildLayout(m));
   assert.equal(new Set(ids).size, ids.length);
 });

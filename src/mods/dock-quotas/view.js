@@ -2,18 +2,24 @@
 import { formatPercent, formatAge, formatReset } from "../../shared/claude.js";
 
 const LABELS = { five_hour: "Claude · 5-hour", weekly: "Claude · weekly" };
+const SOURCE = "Claude status line";
 
-// Statusline | null -> rows { label, value, detail, stale, percent? }.
+// Statusline | null -> rows { label, value, detail, stale, tooltip, percent? }.
 export function quotaRows(statusline, nowMs) {
-  if (!statusline) return [{ label: "Claude", value: "no data", detail: "start Claude Code to report usage", stale: false }];
+  if (!statusline) return [{ label: "Claude", value: "no data", detail: "start Claude Code to report usage", stale: false,
+    tooltip: `Claude usage · source: ${SOURCE} (none yet)` }];
   const age = formatAge(nowMs - statusline.fetchedMs);
-  return statusline.windows.map((w) => ({
-    label: LABELS[w.kind] ?? `Claude · ${w.kind}`,
-    value: formatPercent(w.usedPercent),
-    detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`,
-    stale: Boolean(statusline.stale),
-    percent: w.usedPercent,
-  }));
+  return statusline.windows.map((w) => {
+    const label = LABELS[w.kind] ?? `Claude · ${w.kind}`;
+    return {
+      label,
+      value: formatPercent(w.usedPercent),
+      detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`,
+      stale: Boolean(statusline.stale),
+      tooltip: `${label}: ${formatPercent(w.usedPercent)} · source: ${SOURCE}`,
+      percent: w.usedPercent,
+    };
+  });
 }
 
 // Icon-rail badge: highest finite used % (rounded), marked stale with the cache. Null: nothing to show.

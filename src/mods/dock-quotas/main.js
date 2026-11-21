@@ -8,6 +8,8 @@ import { slashPath } from "../../shared/path.js";
 import { quotaRows, iconBadge, barLevel } from "./view.js";
 
 const REFRESH_MS = 30000;
+// A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
+const EMPTY_WATCH_MS = 1000;
 const WARN = "#d29922";
 const HIGH = "#f85149";
 
@@ -21,7 +23,8 @@ export default class Quotas extends View {
     cx.spawn(async (cx) => {
       try {
         for (;;) {
-          await watchFolder(dir);
+          const changed = await watchFolder(dir);
+          if (!changed?.length) { await cx.sleep(EMPTY_WATCH_MS); continue; }
           this.reload(cx);
         }
       } catch (e) {
@@ -63,7 +66,7 @@ export default class Quotas extends View {
   row(t, r, i) {
     const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[barLevel(r.percent ?? 0)];
     const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return v_flex().id(`quota-${i}`).px(16).py(4).gap(3).flex_none()
+    return v_flex().id(`quota-${i}`).px(16).py(4).gap(3).flex_none().tooltip(r.tooltip)
       .when(r.stale, (el) => el.opacity(0.55))
       .child(h_flex().items_center().gap(6)
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label))
@@ -77,7 +80,7 @@ export default class Quotas extends View {
   render(cx) {
     const t = theme();
     const myId = props()?.dockFeature ?? "dock-quotas";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId);
+    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
       const b = iconBadge(this.statusline);
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));

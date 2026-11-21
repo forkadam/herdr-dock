@@ -3,6 +3,9 @@ import { buildLayout } from "./layout.js";
 
 export const REGION_NAMES = ["top", "left", "right", "bottom"];
 const LEFT_MODES = ["expanded", "icons", "hidden"];
+// Core features that draw the left panel modes (icon rail, collapsed header).
+const LEFT_ONLY = ["dock-spaces", "dock-agents", "dock-quotas"];
+const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 
 export const DEFAULT_CONFIG = {
   v: 1,
@@ -32,6 +35,7 @@ function checkRegions(regions, where) {
       if (name !== "left") return `${at}.mode: only the left region has a mode`;
       if (!LEFT_MODES.includes(r.mode)) return `${at}.mode: must be one of ${LEFT_MODES.join(", ")}`;
     }
+    if (name === "top" && r.hidden === true) return `${at}.hidden: the top bar can't be hidden: ${NEEDS_CORE}`;
     if ("features" in r) {
       if (!Array.isArray(r.features)) return `${at}.features: must be an array`;
       for (let i = 0; i < r.features.length; i++) {
@@ -41,7 +45,9 @@ function checkRegions(regions, where) {
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
         if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
+        if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
       }
+      if (name === "top" && !r.features.some((f) => f.mod === "dock-core")) return `${at}.features: must include dock-core: ${NEEDS_CORE}`;
     }
   }
   return null;
@@ -58,6 +64,7 @@ export function parseConfig(text) {
   if (c.v !== 1) return { ok: false, error: `v: unsupported version ${JSON.stringify(c.v)} (expected 1)` };
   const err = checkRegions(c.regions ?? {}, "regions");
   if (err) return { ok: false, error: err };
+  if (!Array.isArray(c.regions?.top?.features)) return { ok: false, error: `regions.top.features: must include dock-core: ${NEEDS_CORE}` };
   if ("machines" in c) {
     if (!isObj(c.machines)) return { ok: false, error: "machines: must be an object" };
     for (const [host, m] of Object.entries(c.machines)) {

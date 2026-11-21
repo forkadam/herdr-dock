@@ -21,8 +21,9 @@ function find(node, id) {
   return null;
 }
 
-// The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
-const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
+// herdr-dock: the rail goes by the left panel's width (dock-left), not a flag: dragging its
+// edge narrows it too.
+const narrow = () => (find(layout(), "dock-left")?.size?.px ?? Infinity) < 160;
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -548,7 +549,7 @@ export default class Spaces extends View {
     // herdr-dock: icon rail or header only. The colors above and the space order (ordered())
     // are still kept up to date, as the shipped mod does on every render.
     const myId = props()?.dockFeature ?? "dock-spaces";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId);
+    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face !== "full") {
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));
