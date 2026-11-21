@@ -19,3 +19,10 @@ export function parseDirListing(platform, stdout) {
   if (platform === "windows") return lines;
   return lines.filter((l) => l.endsWith("/")).map((l) => l.slice(0, -1));
 }
+
+// The command that opens url in the default browser.
+export function openUrlCommand(platform, url) {
+  if (platform === "windows") return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
+  if (platform === "macos") return { command: "open", args: [url] };
+  return { command: "xdg-open", args: [url] };
+}
