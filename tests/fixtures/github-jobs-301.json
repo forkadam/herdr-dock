@@ -1,0 +1,4 @@
+{"total_count":2,"jobs":[
+{"id":7001,"name":"build","status":"completed","conclusion":"success","html_url":"https://github.com/o/r/actions/runs/301/job/7001","started_at":"2026-11-22T09:00:10Z","completed_at":"2026-11-22T09:01:10Z"},
+{"id":7002,"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/301/job/7002","started_at":"2026-11-22T09:01:12Z","completed_at":"2026-11-22T09:03:00Z"}
+]}

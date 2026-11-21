@@ -1,0 +1,6 @@
+[
+{"id":9001,"name":"compile","stage":"build","status":"success","allow_failure":false,"duration":61.2,"web_url":"https://gitlab.example.com/team/api/-/jobs/9001"},
+{"id":9002,"name":"unit","stage":"test","status":"failed","allow_failure":false,"duration":93.5,"web_url":"https://gitlab.example.com/team/api/-/jobs/9002"},
+{"id":9003,"name":"lint","stage":"test","status":"failed","allow_failure":true,"duration":12.0,"web_url":"https://gitlab.example.com/team/api/-/jobs/9003"},
+{"id":9004,"name":"release","stage":"deploy","status":"skipped","allow_failure":false,"duration":null,"web_url":"https://gitlab.example.com/team/api/-/jobs/9004"}
+]
