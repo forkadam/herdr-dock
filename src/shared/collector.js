@@ -8,6 +8,7 @@ import { parseWorktrees, parseStatus, parseRevParse, parseRemote, worktreeId } f
 import { gitInterval, ciInterval, alertFor, alertKey } from "./ci.js";
 import { createCiClient } from "./ci-client.js";
 import { limiter } from "./limiter.js";
+import { gitCommandName } from "./gitcmd.js";
 import { slashPath } from "./path.js";
 
 const GIT_LIMIT = 4; // git processes at once
@@ -167,7 +168,9 @@ export function createCollector(io) {
     // Recorded before notifying, so a crash or restart mid-alert can't alert twice.
     io.setShared(ALERTED_KEY, { ...(alerted && typeof alerted === "object" ? alerted : {}), [wt.id]: alertKey(cur) });
     try {
-      io.notify({ ...a, level: "error", action: { name: "dock-core.git.show", args: { worktree: wt.id } } });
+      // Herdr drops a mod command's args, so the worktree rides in the name (args kept for readers).
+      const name = `dock-core.${gitCommandName("git.show", { worktree: wt.id })}`;
+      io.notify({ ...a, level: "error", action: { name, args: { worktree: wt.id } } });
       io.playSound("blocked");
     } catch (e) {
       log(`CI: alert failed: ${e?.message ?? e}`);

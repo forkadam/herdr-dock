@@ -1,9 +1,10 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  appHome, checking, exec, layout, nextCommand, props, readTextFile, run, setShared, shared, theme,
-  watchFolder, window, writeTextFile,
+  appHome, checking, exec, layout, nextCommand, notify, openOverlay, panes, playSound, props, readTextFile, run,
+  setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
+import { createCollector } from "../../shared/collector.js";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
@@ -11,7 +12,8 @@ import {
   sizeChanges,
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
-import { hostnameCommand } from "../../shared/platform.js";
+import { parseGitCommand, showPlan } from "../../shared/gitcmd.js";
+import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
@@ -39,6 +41,8 @@ const RELOAD_SETTLE_MS = 400;
 const POLL_MS = 3000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
+// The git/CI collector's tick: it compares io.now() each tick, so this is its scheduling resolution.
+const TICK_MS = 1000;
 
 const isTop = () => props()?.dockRegion === "top";
 
@@ -51,8 +55,10 @@ export default class DockCore extends View {
     this.hostError = null; // set when neither the hostname command nor source.json gave one
     this.configPath = null;
     this.layoutPath = null;
+    this.collector = null;
     if (checking() || !isTop()) return;
     cx.spawn(async (cx) => this.start(cx));
+    this.startCollector(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -96,6 +102,53 @@ export default class DockCore extends View {
       }
       await this.reload(cx);
     }
+  }
+
+  // The git/CI collector runs here, in the one top copy: it publishes dock.git.* for dock-git and
+  // dock-pipelines. Ticks are not awaited: a tick waits on its CI requests, and the next tick is what times
+  // them out (the collector's busy flags keep overlapping ticks from repeating work).
+  startCollector(cx) {
+    const platform = window()?.platform;
+    this.platform = platform;
+    this.collector = createCollector({
+      exec, fetch: (url, init) => globalThis.fetch(url, init), panes, spaces, shared, setShared, notify, playSound,
+      platform, now: Date.now, log: (m) => console.log(`dock-core: ${m}`),
+    });
+    cx.spawn(async (cx) => {
+      for (;;) {
+        this.collector.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
+        await cx.sleep(TICK_MS);
+      }
+    });
+  }
+
+  // A git.* command (see src/mods/_git-command.js). Returns false when c isn't one.
+  gitCommand(c) {
+    const g = parseGitCommand(c);
+    if (!g) return false;
+    const col = this.collector;
+    if (!col) return true;
+    const fail = (what) => (e) => console.log(`dock-core: git.${what} failed: ${e?.message ?? e}`);
+    const open = (url) => {
+      if (!url) return;
+      const { command, args } = openUrlCommand(this.platform, url);
+      exec(command, args).catch(fail("open"));
+    };
+    if (g.cmd === "refresh") col.refresh();
+    else if (g.cmd === "retry") col.retry().catch(fail("retry"));
+    else if (g.cmd === "open") open(col.urlFor("pipeline"));
+    else if (g.cmd === "open.job") open(col.urlFor({ job: g.index }));
+    else if (g.cmd === "select") col.select(g.worktree).catch(fail("select"));
+    else if (g.cmd === "show") {
+      const worktree = g.worktree ?? shared("dock.git.selected") ?? null;
+      if (worktree) col.select(worktree).catch(fail("select"));
+      const plan = showPlan(this.merged);
+      if (plan.set) for (const [k, v] of Object.entries(plan.set)) setShared(k, v);
+      else {
+        try { openOverlay(plan.overlay); } catch (e) { fail("show")(e); }
+      }
+    }
+    return true;
   }
 
   // Re-read the config; write the layout only when it changed and the config is valid.
@@ -180,6 +233,7 @@ export default class DockCore extends View {
   }
 
   command(c, cx) {
+    if (this.gitCommand(c)) return;
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));
       return;

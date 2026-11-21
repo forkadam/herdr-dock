@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createCollector } from "../src/shared/collector.js";
 import { createCiClient } from "../src/shared/ci-client.js";
+import { b64urlEncode } from "../src/shared/gitcmd.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 const ok = (stdout, stderr = "") => ({ code: 0, stdout, stderr });
@@ -257,7 +258,8 @@ test("(h) alerts: running -> failed alerts once; no repeat on the next tick or a
   assert.equal(io.notes.length, 1);
   assert.deepEqual(io.notes[0], {
     title: "api · main", body: "Pipeline failed: unit", level: "error",
-    action: { name: "dock-core.git.show", args: { worktree: WT } },
+    // Herdr drops mod-command args, so the worktree rides in the name too.
+    action: { name: `dock-core.git.show.${b64urlEncode(WT)}`, args: { worktree: WT } },
   });
   assert.deepEqual(io.sounds, ["blocked"]);
   assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: "48213|null" });
