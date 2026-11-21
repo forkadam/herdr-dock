@@ -63,3 +63,30 @@ test("listFilesCommand / parseFileListing: files only, per platform", () => {
   assert.deepEqual(parseFileListing("windows", "a.jsonl\r\nb.jsonl\r\n\r\n"), ["a.jsonl", "b.jsonl"]);
   assert.deepEqual(parseFileListing("macos", "sub/\na.jsonl\n"), ["a.jsonl"]);
 });
+
+// --- review fixes ---
+import { rateLimitLinesCommand, listFilesByTimeCommand } from "../src/shared/platform.js";
+
+test("rateLimitLinesCommand: only the lines holding rate_limits, so huge logs never load whole", () => {
+  assert.deepEqual(rateLimitLinesCommand("windows", "C:/Users/a/.codex/sessions/2026/11/22/rollout-x.jsonl"),
+    { command: "findstr", args: ["/l", "/c:rate_limits", "C:\\Users\\a\\.codex\\sessions\\2026\\11\\22\\rollout-x.jsonl"] });
+  assert.deepEqual(rateLimitLinesCommand("linux", "/home/a/x.jsonl"), { command: "grep", args: ["-F", "rate_limits", "/home/a/x.jsonl"] });
+});
+
+test("listFilesByTimeCommand: files newest-modified first", () => {
+  assert.deepEqual(listFilesByTimeCommand("windows", "C:/a/b"), { command: "cmd", args: ["/c", "dir", "/b", "/a-d", "/o-d", "/t:w", "C:\\a\\b"] });
+  assert.deepEqual(listFilesByTimeCommand("macos", "/a/b"), { command: "ls", args: ["-1", "-t", "-p", "/a/b"] });
+});
+
+test("parseCodexUsage: an unreadable timestamp counts as stale, not fresh", () => {
+  const text = JSON.stringify({ timestamp: "garbage", type: "event_msg", payload: { type: "token_count", rate_limits: { primary: { used_percent: 3 } } } });
+  assert.equal(parseCodexUsage(text, NOW).stale, true);
+});
+
+test("pickNewestUsage: the reading with the latest event wins across candidates", async () => {
+  const { pickNewestUsage } = await import("../src/shared/codex.js");
+  const a = { windows: [{ kind: "weekly", usedPercent: 1, resetsMs: null }], fetchedMs: 100, stale: true };
+  const b = { windows: [{ kind: "weekly", usedPercent: 2, resetsMs: null }], fetchedMs: 300, stale: false };
+  assert.equal(pickNewestUsage([a, null, b]), b);
+  assert.equal(pickNewestUsage([null]), null);
+});

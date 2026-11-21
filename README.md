@@ -260,14 +260,17 @@ No Python is needed anywhere; everything runs on Node.
 - **Claude:** your Claude Code status line pipes its JSON to `~/.claude/herdr-statusline-cache.mjs` (installed by
   `npm run deploy` when `~/.claude` exists), which writes `~/.claude/statusline-cache/claude-statusline.json`: the
   5-hour/weekly windows and each session's context %. Add this one line to your status-line script, before it prints:
-  - Windows (`statusline.ps1`): `$raw | & node "$env:USERPROFILE\.claude\herdr-statusline-cache.mjs" 2>$null | Out-Null`
-    (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`).
+  - Windows (`statusline.ps1`): `try { $raw | & node "$env:USERPROFILE\.claude\herdr-statusline-cache.mjs" 2>$null | Out-Null } catch {}`
+    (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`). The `try` keeps the status
+    line working on a PC without Node.
   - macOS / Linux (a shell script): `printf '%s' "$input" | node ~/.claude/herdr-statusline-cache.mjs >/dev/null 2>&1`
     (with `input=$(cat)` read first).
 
   Without it, the Claude block doesn't show and agent rows show no context figure.
-- **Codex:** read from Codex's own session logs, `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (the newest one with
-  rate limits, from the last 8 days). Nothing to set up: use Codex once. A custom `CODEX_HOME` isn't followed (mods
+- **Codex:** read from Codex's own session logs, `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`: the latest rate limits
+  among the most recently written logs of the last 8 days (only their `rate_limits` lines are read, so big logs are
+  fine; checked every 30 s, every 5 min while there's no `~/.codex/sessions`). A limit whose reset time has passed
+  shows as "reset". Nothing to set up: use Codex once. A custom `CODEX_HOME` isn't followed (mods
   can't read environment variables).
 - **Gemini / Antigravity:** not shown. It keeps no usage record on disk; its quota comes from Google's servers, and
   herdr-dock won't use your Google login to fetch it.

@@ -33,6 +33,19 @@ export function listFilesCommand(platform, dir) {
   return { command: "ls", args: ["-1", "-p", dir] };
 }
 
+// The command that lists the files in `dir`, most recently modified first (parse with parseFileListing).
+export function listFilesByTimeCommand(platform, dir) {
+  if (platform === "windows") return { command: "cmd", args: ["/c", "dir", "/b", "/a-d", "/o-d", "/t:w", dir.replaceAll("/", "\\")] };
+  return { command: "ls", args: ["-1", "-t", "-p", dir] };
+}
+
+// The command that prints only the lines of `file` containing "rate_limits" (a Codex session log can be
+// many MB; Herdr's readTextFile stops at 1 MiB, exec output at 8 MiB). Exit 1 means no such line.
+export function rateLimitLinesCommand(platform, file) {
+  if (platform === "windows") return { command: "findstr", args: ["/l", "/c:rate_limits", file.replaceAll("/", "\\")] };
+  return { command: "grep", args: ["-F", "rate_limits", file] };
+}
+
 // listFilesCommand's stdout -> file names (macOS/Linux: entries ending in "/" are folders, dropped).
 export function parseFileListing(platform, stdout) {
   const names = String(stdout ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);

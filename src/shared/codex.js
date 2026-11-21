@@ -56,8 +56,17 @@ export function parseCodexUsage(text, nowMs) {
       })
       .filter(Boolean);
     if (!found.length) continue;
-    const fetchedMs = isNum(eventMs) ? eventMs : nowMs;
-    return { windows: found, fetchedMs, stale: nowMs - fetchedMs > STALE_MS };
+    // An unreadable timestamp: show it, but as stale (its age is unknown).
+    if (!isNum(eventMs)) return { windows: found, fetchedMs: nowMs, stale: true };
+    return { windows: found, fetchedMs: eventMs, stale: nowMs - eventMs > STALE_MS };
   }
   return null;
+}
+
+// The reading with the latest event among candidates (a resumed or long session may live in an older
+// folder than a newer short one), or null.
+export function pickNewestUsage(readings) {
+  let best = null;
+  for (const r of readings ?? []) if (r && (!best || r.fetchedMs > best.fetchedMs)) best = r;
+  return best;
 }

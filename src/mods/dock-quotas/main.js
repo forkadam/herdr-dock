@@ -5,12 +5,14 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, props, checking, home, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
-import { codexSessionDirs, newestRollout, parseCodexUsage } from "../../shared/codex.js";
-import { listFilesCommand, parseFileListing } from "../../shared/platform.js";
+import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
+import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 import { quotaGroups, iconBadge, barLevel } from "./view.js";
 
 const REFRESH_MS = 30000;
+// No ~/.codex/sessions: look again after this long (a few processes per check on Windows).
+const CODEX_ABSENT_MS = 300000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
 const WARN = "#d29922";
@@ -28,9 +30,12 @@ export default class Quotas extends View {
         cx.notify();
       } catch (e) { console.log(`dock-quotas: agent icons unavailable: ${e}`); }
     });
-    cx.timer.every(REFRESH_MS, (cx) => this.reload(cx));
+    this.codexNextAt = 0;
+    // Claude reloads on every status-line write (the watch below) and on the timer; Codex only on the timer.
+    cx.timer.every(REFRESH_MS, (cx) => { this.reload(cx); this.reloadCodex(cx); });
     const dir = slashPath(home()) + "/.claude/statusline-cache";
     this.reload(cx);
+    this.reloadCodex(cx);
     cx.spawn(async (cx) => {
       try {
         for (;;) {
@@ -54,7 +59,6 @@ export default class Quotas extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
-          this.codex = await this.readCodex();
           cx.notify();
         } while (this.again);
       } catch (e) {
@@ -67,25 +71,54 @@ export default class Quotas extends View {
     });
   }
 
-  // Codex's newest session log with rate limits, from the last 8 days' folders (~/.codex/sessions).
-  // Folders that don't exist list nothing; the first log holding rate_limits wins (newest first).
+  reloadCodex(cx) {
+    if (this.codexReading || Date.now() < this.codexNextAt) return;
+    this.codexReading = true;
+    cx.spawn(async (cx) => {
+      try {
+        this.codex = await this.readCodex();
+      } catch (e) {
+        console.log(`dock-quotas: Codex read failed: ${e}`);
+        this.codex = null;
+      } finally {
+        this.codexReading = false;
+        cx.notify();
+      }
+    });
+  }
+
+  // Codex's latest rate limits: in each of the last 8 days' session folders (newest first), the most
+  // recently modified logs; only their "rate_limits" lines are read (logs can be many MB). The newest
+  // reading among the first 3 folders that have logs wins, so a long or resumed session in an older
+  // folder still counts. No ~/.codex/sessions: nothing, and no look again for 5 minutes.
   async readCodex() {
     const platform = window()?.platform;
     const now = Date.now();
-    for (const dir of codexSessionDirs(slashPath(home()) + "/.codex", now)) {
-      const { command, args } = listFilesCommand(platform, dir);
-      const r = await exec(command, args).catch(() => null);
+    const root = slashPath(home()) + "/.codex";
+    const probe = listDirCommand(platform, root + "/sessions");
+    const has = await exec(probe.command, probe.args).catch(() => null);
+    if (!has || has.code !== 0) {
+      this.codexNextAt = now + CODEX_ABSENT_MS;
+      return null;
+    }
+    const found = [];
+    let folders = 0;
+    for (const dir of codexSessionDirs(root, now)) {
+      if (folders >= 3) break;
+      const ls = listFilesByTimeCommand(platform, dir);
+      const r = await exec(ls.command, ls.args).catch(() => null);
       if (!r || r.code !== 0) continue;
-      let names = parseFileListing(platform, r.stdout);
-      for (let i = 0; i < 3; i++) { // a brand-new session may have no rate_limits yet: try two older ones
-        const name = newestRollout(names);
-        if (!name) break;
-        const usage = parseCodexUsage(await readTextFile(`${dir}/${name}`).catch(() => null), now);
-        if (usage) return usage;
-        names = names.filter((n) => n !== name);
+      const logs = parseFileListing(platform, r.stdout).filter((n) => /^rollout-.*\.jsonl$/.test(n));
+      if (!logs.length) continue;
+      folders++;
+      for (const name of logs.slice(0, 3)) { // a brand-new session may have no rate_limits yet
+        const g = rateLimitLinesCommand(platform, `${dir}/${name}`);
+        const lines = await exec(g.command, g.args).catch(() => null);
+        const usage = lines && lines.code === 0 ? parseCodexUsage(lines.stdout, now) : null;
+        if (usage) { found.push(usage); break; }
       }
     }
-    return null;
+    return pickNewestUsage(found);
   }
 
   groupHeader(t, g, i) {
@@ -124,7 +157,7 @@ export default class Quotas extends View {
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
-      const b = iconBadge([this.statusline, this.codex]);
+      const b = iconBadge([this.statusline, this.codex], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
       if (!b) return rail;
       const p = parseInt(b.text, 10);
@@ -140,11 +173,12 @@ export default class Quotas extends View {
     }
     const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
     let n = 0;
-    return v_flex().id("dock-quotas-list").size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).overflow_y_scrollbar()
+    return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
       .child(this.header(t, null))
+      .child(v_flex().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar()
       .when(!groups.length, (el) => el.child(div().px(16).py(4).text_size(12).text_color(t.dim)
         .tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.")
         .child("no usage recorded yet")))
-      .children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))]));
+      .children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 }

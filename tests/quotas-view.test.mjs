@@ -50,3 +50,15 @@ test("iconBadge: the highest used % across providers, stale with the reading it 
   assert.equal(iconBadge([S({ windows: [] })]), null);
   assert.deepEqual(iconBadge([S({ windows: [{ kind: "five_hour", usedPercent: NaN }, { kind: "weekly", usedPercent: null }, { kind: "weekly", usedPercent: 7 }] })]), { text: "7%", stale: false });
 });
+
+test("a window whose reset time has passed shows as reset, with no bar, and stays out of the badge", () => {
+  const now = 5_000_000;
+  const old = S({ fetchedMs: 1_000_000, stale: true, windows: [{ kind: "weekly", usedPercent: 95, resetsMs: 4_000_000 }] });
+  const [r] = quotaRows(old, now, CODEX);
+  assert.equal(r.value, "reset");
+  assert.equal(r.percent, null);
+  assert.match(r.detail, /^reset · /);
+  const fresh = S({ fetchedMs: now, windows: [{ kind: "five_hour", usedPercent: 40, resetsMs: now + 60_000 }] });
+  assert.deepEqual(iconBadge([fresh, old], now), { text: "40%", stale: false });
+  assert.equal(iconBadge([old], now), null);
+});

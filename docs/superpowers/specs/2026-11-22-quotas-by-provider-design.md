@@ -37,13 +37,13 @@ There is one sensible way to do this: local readers inside Quotas, plus a Node p
      everything else unchanged. On macOS/Omarchy the README gives the line to add.
    - The Python file is left on disk, unused.
 2. **Codex reader** (`src/shared/codex.js`, pure and tested):
-   - It reads the newest `rollout-*.jsonl` among today's and the previous 6 days' session folders, using a file
+   - It reads the newest `rollout-*.jsonl` among today's and the previous 7 days' session folders, using a file
      listing through `src/shared/platform.js`.
    - It takes the last `rate_limits` from that file.
    - Windows map as follows: 300 min → 5-hour and 10080 min → weekly. Otherwise primary → 5-hour and
      secondary → weekly.
    - Resets come from `resets_at` (epoch seconds) or `resets_in_seconds` relative to the event's timestamp.
-   - It honours `CODEX_HOME` when set.
+   - A custom `CODEX_HOME` is not followed (mods cannot read environment variables).
 3. **Grouped Quotas:**
    - One block per provider (Claude, then Codex), each with its icon from Herdr's agent table (`knownAgents()`,
      keys `claude` and `codex`), else a letter.

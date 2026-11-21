@@ -10,11 +10,18 @@ export const PROVIDERS = [
 ];
 const LABELS = { five_hour: "5-hour", weekly: "weekly" };
 
+const isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
+
 // One provider's reading -> rows { label, value, detail, stale, tooltip, percent }.
 export function quotaRows(usage, nowMs, provider) {
   const age = formatAge(nowMs - usage.fetchedMs);
   return usage.windows.map((w) => {
     const label = LABELS[w.kind] ?? w.kind;
+    // Past its reset time, an old reading's % no longer applies.
+    if (isReset(w, nowMs)) {
+      return { label, value: "reset", detail: `reset · ${age}`, stale: Boolean(usage.stale),
+        tooltip: `${provider.title} · ${label}: reset since this reading · source: ${provider.source}`, percent: null };
+    }
     return {
       label,
       value: formatPercent(w.usedPercent),
@@ -34,13 +41,13 @@ export function quotaGroups(byId, nowMs) {
     .map((p) => ({ id: p.id, title: p.title, agent: p.agent, rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 
-// Icon-rail badge: the highest finite used % (rounded) across readings, stale when the reading it came from
-// is. Null: nothing to show.
-export function iconBadge(readings) {
+// Icon-rail badge: the highest finite used % (rounded) across readings, leaving out windows past their reset,
+// stale when the reading it came from is. Null: nothing to show.
+export function iconBadge(readings, nowMs) {
   let best = null;
   for (const r of readings ?? []) {
     for (const w of r?.windows ?? []) {
-      if (!Number.isFinite(w.usedPercent)) continue;
+      if (!Number.isFinite(w.usedPercent) || isReset(w, nowMs)) continue;
       if (!best || w.usedPercent > best.p) best = { p: w.usedPercent, stale: Boolean(r.stale) };
     }
   }

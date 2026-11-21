@@ -36,7 +36,7 @@ function windowsFrom(limits) {
 
 function main() {
   // Windows PowerShell can prefix piped text with one or more UTF-8 byte-order marks.
-  const text = readFileSync(0, "utf8").slice(0, 1 << 20).replace(/^﻿+/, "");
+  const text = readFileSync(0, "utf8").slice(0, 1 << 20).replace(/^\uFEFF+/, "");
   const event = JSON.parse(text);
   if (!isObj(event)) return;
   const session = event.session_id;
