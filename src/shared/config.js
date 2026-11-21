@@ -1,4 +1,5 @@
 // Config parsing and per-host merge (pure; no Node built-ins).
+import { buildLayout } from "./layout.js";
 
 export const REGION_NAMES = ["top", "left", "right", "bottom"];
 const LEFT_MODES = ["expanded", "icons", "hidden"];
@@ -88,4 +89,16 @@ export function mergeForHost(config, hostname) {
     if (name === "left") regions[name].mode = r.mode ?? "expanded";
   }
   return { ...merged, regions };
+}
+
+// What to do with a (possibly half-saved) config: the layout text to write, or null when
+// nothing changed or the config is bad. A bad config keeps lastGood as merged, so the
+// window keeps its last good layout. Output matches deploy: pretty JSON + newline.
+export function planApply(configText, hostname, currentLayoutText, lastGood) {
+  if (typeof configText !== "string") return { write: null, error: "config file not found", merged: lastGood };
+  const parsed = parseConfig(configText);
+  if (!parsed.ok) return { write: null, error: parsed.error, merged: lastGood };
+  const merged = mergeForHost(parsed.config, hostname);
+  const text = JSON.stringify(buildLayout(merged), null, 2) + "\n";
+  return { write: text === currentLayoutText ? null : text, error: null, merged };
 }
