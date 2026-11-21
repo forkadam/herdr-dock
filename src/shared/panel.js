@@ -1,5 +1,5 @@
 // Left-panel mode helpers (pure; no Node built-ins).
-import { leftFeatureIds } from "./layout.js";
+import { leftFeatureIds, rightActiveOf } from "./layout.js";
 
 const ORDER = ["expanded", "icons", "hidden"];
 const LEFT = "dock-left";
@@ -141,59 +141,59 @@ export function planSync({ mode, focus, leftIds, applied }) {
   return { key, focus: f, clearFocus };
 }
 
-// ---- The right column: the right region's mods with Herdr's Files/Changes panel under them ----
+// ---- The right panel: one right mod at a time, switched from the rail ----
 
+export { rightActiveOf };
 const RIGHT = "dock-right";
-const PANEL = "panel";
-const PANEL_BODY = "panel-body";
-const show = (id) => ({ command: "layout.show", args: { id } });
-const hide = (id) => ({ command: "layout.hide", args: { id } });
+const RIGHT_STACK = "dock-right-stack";
 
-// The right column as the live tree (layout()) has it: { column, panel, active }.
+// The right panel as the live tree (layout()) has it: { column: shown?, active: block id }.
 export function liveRight(tree) {
   const col = findNode(tree, RIGHT);
-  const panel = findNode(tree, PANEL);
-  return {
-    column: Boolean(col && !col.hidden),
-    panel: Boolean(panel && !panel.hidden),
-    active: findNode(tree, PANEL_BODY)?.active ?? null,
-  };
+  return { column: Boolean(col && !col.hidden), active: findNode(tree, RIGHT_STACK)?.active ?? null };
 }
 
-// What to do for this PC's right column state. `shown` is dock.right.shown; `memory` is
-// dock.panel ({ shown, active }: whether Files/Changes was open, and on which tab, while the
-// column was last visible). `prev` is the live state dock-core saw last (null at first).
-// Invariant kept here: a hidden column has its panel hidden, so the tab bar's Files/Changes
-// buttons light up only when the panel is really on screen.
-// Returns { shown, memory, actions }.
-export function planRight({ shown, hasFeatures, live, prev, memory }) {
-  let s = shown;
-  // Only the tab bar opens the panel inside a hidden column: show the column for it.
-  if (live.panel && !live.column) s = true;
-  // Closing Files/Changes in a column with nothing else in it closes the column.
-  if (prev?.panel && !live.panel && live.column && !hasFeatures) s = false;
-  const mem = live.column
-    ? { shown: live.panel, active: live.active ?? memory?.active ?? "files" }
-    : { shown: memory?.shown === true, active: (live.panel ? live.active : memory?.active) ?? live.active ?? "files" };
-  const actions = [];
-  if (s) {
-    const wantPanel = live.column ? live.panel || !hasFeatures : live.panel || mem.shown || !hasFeatures;
-    if (wantPanel && !live.panel) {
-      actions.push({ command: "layout.select", args: { stack: PANEL_BODY, child: mem.active } }, show(PANEL));
-    }
-    if (!live.column) actions.push(show(RIGHT));
-  } else {
-    if (live.panel) actions.push(hide(PANEL));
-    if (live.column) actions.push(hide(RIGHT));
-  }
-  return { shown: s, memory: mem, actions };
+// Whether the right panel shows on this PC: its own choice, else the config default.
+// `applied` is the merged regions dock-core publishes (dock.config.applied).
+export function rightShownOf(sharedShown, applied) {
+  if (typeof sharedShown === "boolean") return sharedShown;
+  return applied?.right?.hidden === false;
 }
 
-// Whether a valid config's right.hidden should become this PC's column state (like
-// modeFromConfig). `lastConfigHidden` is dock.right.configHidden. Returns null, or
-// { record, shown } where shown null means "keep the person's choice".
+// A rail icon click: another mod shows it (opening the panel); the mod showing hides the panel.
+export function railClick(shown, active, mod) {
+  if (shown && active === mod) return { shown: false, active };
+  return { shown: true, active: mod };
+}
+
+// The layout commands that bring the live panel in line with this PC's state.
+export function planRight({ shown, active, features, live }) {
+  if (!features.length) return [];
+  const mod = rightActiveOf(active, features);
+  const child = `dock-right-${features.findIndex((f) => f.mod === mod)}-${mod}`;
+  if (!shown) return live.column ? [{ command: "layout.hide", args: { id: RIGHT } }] : [];
+  const out = [];
+  if (live.active !== child) out.push({ command: "layout.select", args: { stack: RIGHT_STACK, child } });
+  if (!live.column) out.push({ command: "layout.show", args: { id: RIGHT } });
+  return out;
+}
+
+// Whether a valid config's right.hidden should become this PC's state (like modeFromConfig).
+// `lastConfigHidden` is dock.right.configHidden. Returns null, or { record, shown } where shown
+// null keeps the person's choice.
 export function rightFromConfig(lastConfigHidden, sharedShown, configHidden) {
   if (lastConfigHidden === configHidden) return null;
   if (lastConfigHidden == null && typeof sharedShown === "boolean") return { record: configHidden, shown: null };
   return { record: configHidden, shown: !configHidden };
+}
+
+// This PC's right panel state from Herdr's shared state (shared.json), for building the layout
+// file (dock-core and deploy), with anything malformed left undefined.
+export function rightStateFromShared(shared) {
+  const shown = shared?.["dock.right.shown"];
+  const active = shared?.["dock.right.active"];
+  return {
+    rightShown: typeof shown === "boolean" ? shown : undefined,
+    active: typeof active === "string" ? active : undefined,
+  };
 }

@@ -27,10 +27,9 @@ test("buildLayout places features with ids, props and sizes", () => {
   assert.equal(left.children[0].content.props.dockRegion, "left");
   assert.equal(find(t, "dock-top").window_drag, true);
   assert.equal(find(t, "dock-main").content.tab, "active");
-  // No right mods and right hidden: the column only holds Herdr's Files/Changes panel, hidden.
-  const right = find(t, "dock-right");
-  assert.equal(right.hidden, true);
-  assert.deepEqual(right.children.map((c) => c.id), ["panel"]);
+  // No right mods: no right panel and no rail.
+  assert.equal(find(t, "dock-right"), undefined);
+  assert.equal(find(t, "dock-rail"), undefined);
 });
 test("left mode hidden sets hidden on the column", () => {
   const m = mergeForHost(parseConfig('{"v":1,"regions":{"top":{"features":[{"mod":"dock-core"}]},"left":{"mode":"hidden","features":[{"mod":"x"}]}}}').config, "h");
@@ -59,21 +58,23 @@ test("tree is aligned like Herdr's main layout", () => {
   assert.deepEqual(t.children.map((c) => c.id), ["dock-left", "dock-work"]);
   const work = t.children[1];
   assert.equal(work.type, "column");
-  assert.deepEqual(work.children.map((c) => c.id), ["dock-top", "dock-body", "dock-bottom"]);
-  const body = work.children[1];
+  assert.deepEqual(work.children.map((c) => c.id), ["dock-top", "dock-mid", "dock-bottom"]);
+  assert.deepEqual(find(t, "dock-mid").children.map((c) => c.id), ["dock-body", "dock-rail"]);
+  const body = find(t, "dock-body");
   assert.deepEqual(body.children.map((c) => c.id), ["dock-main", "dock-right"]);
-  assert.deepEqual(find(t, "dock-right").children.map((c) => c.id), ["dock-right-0-x", "panel"]);
+  assert.deepEqual(find(t, "dock-right-stack").children.map((c) => c.id), ["dock-right-0-x"]);
   assert.equal(body.padding, 8);
   assert.equal(body.gap, 8);
   assert.equal(find(t, "dock-main").padding, undefined);
 });
-test("default config shows workspace-status bottom and a 76px dock-core", () => {
+test("default config shows workspace-status bottom and a 44px dock-core and dock-tabs", () => {
   const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "h");
   const t = buildLayout(m);
   const bottom = find(t, "dock-bottom");
   assert.equal(bottom.hidden, undefined);
   assert.equal(bottom.children[0].content.mod, "workspace-status");
-  assert.deepEqual(find(t, "dock-top").children[0].size, { px: 76 });
+  assert.deepEqual(find(t, "dock-top").children[0].size, { px: 44 });
+  assert.equal(find(t, "dock-top").children[1].content.mod, "dock-tabs");
 });
 
 test("default left panel starts with dock-header (Herdr's header without its collapse button), which drags the window", () => {
@@ -95,38 +96,39 @@ test("default left panel ends with dock-footer (Settings, Add machine) on one 40
 });
 
 
-test("buildLayout puts Herdr's Files/Changes panel last in the right column", () => {
-  const m = mergeForHost(parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config, "nohost");
-  const t = buildLayout(m);
-  const panel = find(t, "dock-right").children.at(-1);
-  assert.equal(panel.id, "panel");
-  assert.equal(panel.type, "column");
-  assert.equal(panel.hidden, true);
-  assert.deepEqual(panel.size, { weight: 1 });
-  const stack = find(panel, "panel-body");
+
+test("the right panel is a stack showing one mod, with a rail on the far right", () => {
+  const cfg = parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config;
+  const m = mergeForHost({ ...cfg, regions: { ...cfg.regions, right: { size: 360, hidden: true, features: [{ mod: "g" }, { mod: "files" }, { mod: "changes" }] } } }, "h");
+  let t = buildLayout(m);
+  const right = find(t, "dock-right");
+  assert.equal(right.type, "column");
+  assert.deepEqual(right.size, { px: 360 });
+  assert.equal(right.min, 280);
+  assert.equal(right.max, 900);
+  assert.equal(right.hidden, true);
+  const stack = find(right, "dock-right-stack");
   assert.equal(stack.type, "stack");
-  assert.equal(stack.active, "files");
-  assert.deepEqual(stack.children.map((c) => [c.id, c.content.mod]), [["files", "files"], ["changes", "changes"]]);
+  assert.deepEqual(stack.children.map((c) => c.id), ["dock-right-0-g", "dock-right-1-files", "dock-right-2-changes"]);
+  assert.equal(stack.active, "dock-right-0-g");
+  const rail = find(t, "dock-rail");
+  assert.deepEqual(rail.size, { px: 40 });
+  assert.equal(rail.content.mod, "dock-rail");
+  // This PC's state: shown, on Files.
+  t = buildLayout(m, { rightShown: true, active: "files" });
+  assert.equal(find(t, "dock-right").hidden, undefined);
+  assert.equal(find(t, "dock-right-stack").active, "dock-right-1-files");
+  // An active mod no longer placed falls back to the first.
+  t = buildLayout(m, { rightShown: true, active: "gone" });
+  assert.equal(find(t, "dock-right-stack").active, "dock-right-0-g");
   const ids = allIds(t);
   assert.equal(new Set(ids).size, ids.length);
 });
 
-test("buildLayout applies this PC's right column state", () => {
-  const cfg = parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config;
-  const withMods = mergeForHost({ ...cfg, regions: { ...cfg.regions, right: { size: 360, features: [{ mod: "x" }] } } }, "h");
-  // No state: the config default (right shown), panel closed while the column has mods.
-  let t = buildLayout(withMods);
-  assert.equal(find(t, "dock-right").hidden, undefined);
-  assert.equal(find(t, "panel").hidden, true);
-  t = buildLayout(withMods, { rightShown: true, panel: { shown: true, active: "changes" } });
-  assert.equal(find(t, "panel").hidden, undefined);
-  assert.equal(find(t, "panel-body").active, "changes");
-  t = buildLayout(withMods, { rightShown: false, panel: { shown: true, active: "files" } });
+test("default config: Files and Changes are right mods, the panel starts hidden", () => {
+  const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "nohost");
+  const t = buildLayout(m);
+  assert.deepEqual(find(t, "dock-right-stack").children.map((c) => c.content.mod), ["files", "changes"]);
   assert.equal(find(t, "dock-right").hidden, true);
-  assert.equal(find(t, "panel").hidden, true);
-  // Shown with no mods: the panel opens so the column is never empty.
-  const noMods = mergeForHost({ ...cfg, regions: { ...cfg.regions, right: { size: 360, features: [] } } }, "h");
-  t = buildLayout(noMods, { rightShown: true, panel: { shown: false, active: "files" } });
-  assert.equal(find(t, "dock-right").hidden, undefined);
-  assert.equal(find(t, "panel").hidden, undefined);
+  assert.ok(find(t, "dock-rail"));
 });

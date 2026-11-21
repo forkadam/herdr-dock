@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { buildAll, ROOT } from "./build.mjs";
 import { parseConfig, mergeForHost } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
+import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
 import { mergeKeys } from "./keys.mjs";
 
@@ -27,7 +28,10 @@ const configPath = join(ROOT, "config/dock.json");
 const parsed = parseConfig(readFileSync(configPath, "utf8"));
 if (!parsed.ok) fail(`config/dock.json invalid: ${parsed.error}`);
 const host = hostname().toLowerCase();
-const layout = buildLayout(mergeForHost(parsed.config, host));
+// Build with this PC's right panel state (Herdr's shared.json) so a deploy keeps it.
+let sharedState = null;
+try { sharedState = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8").replace(/^\uFEFF/, "")); } catch { sharedState = null; }
+const layout = buildLayout(mergeForHost(parsed.config, host), rightStateFromShared(sharedState));
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");

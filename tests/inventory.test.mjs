@@ -12,6 +12,7 @@ test("placeability: reasons in order, null when placeable", () => {
   assert.equal(placeability("mission-control-github", { place: "right", overlay: {} }), null);
   assert.equal(placeability("confirm", { place: "none" }), "helper");
   assert.equal(placeability("dock-config", { place: "right" }), "self");
+  assert.equal(placeability("dock-rail", { place: "none" }), "self");
   assert.equal(placeability("_x", {}), "hidden-name");
   assert.equal(placeability(".git", {}), "hidden-name");
   assert.equal(placeability("weird", null), "broken");

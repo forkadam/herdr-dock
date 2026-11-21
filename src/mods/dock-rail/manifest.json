@@ -1,0 +1,1 @@
+{ "id": "dock-rail", "name": "Right rail", "icon": "icon.svg", "regions": ["rail"], "settings": {} }

@@ -3,15 +3,18 @@
 A configurable dock layout for [Herdr](https://herdr.app): a top bar, a left panel, and optional right and
 bottom regions around your main pane. It ships four mods:
 
-- **dock-core**: the two top-bar toggles. The first cycles the left panel between expanded, icons and hidden; the
-  second shows or hides the right column. It also
-  rewrites the layout when `config/dock.json` changes.
+- **dock-core**: the left-panel toggle at the start of the tab bar. It cycles the left panel between expanded,
+  icons and hidden, keeps the right panel in line with this PC's state, and rewrites the layout when
+  `config/dock.json` changes.
+- **dock-tabs**: the tab bar, a copy of Herdr's `tabs` with Herdr's Files/Changes buttons replaced by the
+  right-panel button (right beside "+").
+- **dock-rail**: the icon rail on the far right, one icon per right-region mod.
 - **dock-spaces**: your spaces. Click one to select it.
 - **dock-agents**: your agents. Click one to focus it. Each local Claude agent shows its context as "NN% used"
   (dimmed when the reading is older than 2 minutes).
 - **dock-quotas**: Claude 5-hour and weekly quota as "% used", with reset time, age, and a stale mark.
 
-Herdr's shipped `tabs` mod sits in the top bar. Only `config/dock.json` is meant to be synced between machines.
+Only `config/dock.json` is meant to be synced between machines.
 The generated `layouts/herdr-dock.json` is never committed.
 
 ## Install
@@ -58,20 +61,23 @@ Or press Ctrl+Shift+L and pick the layout.
 The keys section applies while the `herdr-dock` layout is active, so Ctrl+Alt+B works even when the left panel is
 hidden.
 
-## The right column
+## The right panel and rail
 
-The right column holds the right region's mods with Herdr's Files/Changes panel under them, so the right side is
-one column. The second button at the start of the tab bar, or Ctrl+Alt+N (`dock-core.right`), shows or hides it.
+The right panel shows one right-region mod at a time. The rail on the far right has one icon per right mod, in
+config order (it scrolls when there are many):
 
-- Herdr's Files and Changes buttons at the end of the tab bar open and close the Files/Changes part. Opening one
-  while the column is hidden shows the column.
-- With no mods in the right region, closing Files/Changes closes the column, and showing the column opens
-  Files/Changes on the last tab you used.
-- Whether the column is shown, and whether Files/Changes is open and on which tab, is remembered per PC in
-  Herdr's own state (`dock.right.shown`, `dock.panel`). It is never written to `config/dock.json`, and a
-  config save or restart keeps it.
+- Click an icon to show that mod in the panel. Click the icon of the mod that's showing to hide the panel.
+- The button right beside "+" in the tab bar, or Ctrl+Alt+N (`dock-core.right`), shows or hides the panel.
+- Files and Changes are ordinary right mods (the default right region has both). Add or remove them, and any
+  other mod, in the Dock layout dialog.
+- Icons: Files and Changes use Herdr's own, `dock-*` mods their manifest icon, other mods `mods/<id>/icon.svg`
+  when it exists, else the first letter of their name. Hover for the name.
+- Whether the panel is shown and which mod it shows are remembered per PC in Herdr's own state
+  (`dock.right.shown`, `dock.right.active`). They are never written to `config/dock.json`, and a config save,
+  a deploy or a restart keeps them. A mod newly placed in the right region opens in the panel.
 - The config's `right.hidden` (the dialog's right "shown" switch) is the default. Changing it applies once, the
   same way `left.mode` does.
+- With no right mods there is no panel and no rail.
 
 ## Panel modes
 
@@ -95,11 +101,11 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 {
   "v": 1,
   "regions": {
-    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 76 }, { "mod": "tabs" } ] },
+    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "dock-tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
                               { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
-    "right":  { "size": 360, "hidden": true, "features": [] },
+    "right":  { "size": 360, "hidden": true, "features": [ { "mod": "files" }, { "mod": "changes" } ] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
   },
   "machines": { "my-hostname": { "regions": { "left": { "size": 320 } } } }
@@ -125,14 +131,13 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 ### Add a third-party mod to a region
 
 Put the mod's id in a region's `features` and make sure the region is not hidden, or use the Dock layout dialog.
-For example, to show Mission Control's GitHub panel at the top of the right column:
+For example, to add Mission Control's GitHub panel to the right panel, next to Files and Changes:
 
 ```json
-"right": { "size": 360, "hidden": false, "features": [ { "mod": "mission-control-github" } ] }
+"right": { "size": 360, "features": [ { "mod": "mission-control-github" }, { "mod": "files" }, { "mod": "changes" } ] }
 ```
 
-Save the file. The panel appears with no other change. Files and Changes are already in the right column (see
-above), so they don't need to be placed.
+Save the file. GitHub gets a rail icon and opens in the right panel.
 
 ## Config UI
 

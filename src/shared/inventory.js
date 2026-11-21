@@ -8,7 +8,7 @@ export const HELPER_MODS = [
 
 // null when the mod can be placed in a region, else why not.
 export function placeability(id, modJson) {
-  if (id === "dock-config") return "self";
+  if (id === "dock-config" || id === "dock-rail") return "self";
   if (id.startsWith("_") || id.startsWith(".")) return "hidden-name";
   if (modJson === null || typeof modJson !== "object") return "broken";
   if (HELPER_MODS.includes(id)) return "helper";

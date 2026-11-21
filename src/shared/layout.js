@@ -43,25 +43,42 @@ function regionNode(merged, region, type, extra) {
   return node;
 }
 
-// Herdr's Files/Changes panel, as in its main layout, living at the bottom of the right column.
-// The shipped tabs mod's Files and Changes buttons run layout.select {stack: "panel-body"} and
-// layout.show/hide {id: "panel"}, so these ids must exist or the buttons error.
-function herdrPanel(shown, active) {
-  return {
-    id: "panel", type: "column", ...(shown ? {} : { hidden: true }), size: { weight: 1 },
-    children: [{
-      id: "panel-body", type: "stack", active: active === "changes" ? "changes" : "files",
-      children: [
-        { id: "files", type: "block", content: { mod: "files" } },
-        { id: "changes", type: "block", content: { mod: "changes" } },
-      ],
-    }],
-  };
+// The mod the right panel shows: this PC's choice when it is still placed, else the first.
+export function rightActiveOf(active, features) {
+  if (!features.length) return null;
+  return features.some((f) => f.mod === active) ? active : features[0].mod;
 }
 
-// `state` is this PC's right column state (shared keys, never in the config): { rightShown,
-// panel: { shown, active } }. Without it, the config's right.hidden is the default and the panel
-// is closed (opened when the column would otherwise be empty).
+// The right panel's block ids, in config order (the stack's children).
+export function rightFeatureIds(merged) {
+  return merged.regions.right.features.map((f, i) => blockId("right", i, f.mod));
+}
+
+// The right panel: a stack showing one right mod at a time, with the dock-rail block (one icon
+// per mod) on the far right. `state` is this PC's choice (shared keys, never in the config):
+// { rightShown, active }. Without it, the config's right.hidden is the default and the first mod
+// shows. No right mods: no panel and no rail.
+function rightNodes(regions, state) {
+  const r = regions.right;
+  if (!r.features.length) return { right: null, rail: null };
+  const shown = typeof state.rightShown === "boolean" ? state.rightShown : !r.hidden;
+  const active = rightActiveOf(state.active, r.features);
+  const index = r.features.findIndex((f) => f.mod === active);
+  const right = {
+    id: "dock-right", type: "column", size: { px: r.size }, min: 280, max: 900,
+    ...(shown ? {} : { hidden: true }),
+    children: [{
+      id: "dock-right-stack", type: "stack", active: blockId("right", index, active),
+      children: featureBlocks("right", r.features),
+    }],
+  };
+  const rail = {
+    id: "dock-rail", type: "block", size: { px: 40 }, background: "chrome",
+    content: { mod: "dock-rail", props: { dockRegion: "rail" } },
+  };
+  return { right, rail };
+}
+
 export function buildLayout(merged, state = {}) {
   const { regions } = merged;
   const top = regionNode(merged, "top", "row", { node: { window_drag: true }, hidden: regions.top.hidden });
@@ -70,14 +87,7 @@ export function buildLayout(merged, state = {}) {
     block: { min: 32 },
     hidden: regions.left.hidden || regions.left.mode === "hidden",
   });
-  const rightShown = typeof state.rightShown === "boolean" ? state.rightShown : !regions.right.hidden;
-  const hasRight = regions.right.features.length > 0;
-  const panelShown = rightShown && (!hasRight || state.panel?.shown === true);
-  const right = {
-    id: "dock-right", type: "column", size: { px: regions.right.size },
-    ...(rightShown ? {} : { hidden: true }),
-    children: [...featureBlocks("right", regions.right.features), herdrPanel(panelShown, state.panel?.active)],
-  };
+  const { right, rail } = rightNodes(regions, state);
   const bottom = regionNode(merged, "bottom", "row", { node: {}, hidden: regions.bottom.hidden });
   const main = { id: "dock-main", type: "block", content: { tab: "active", pane: MAIN_PANE } };
   const body = {
@@ -85,13 +95,14 @@ export function buildLayout(merged, state = {}) {
     type: "row",
     padding: 8,
     gap: 8,
-    children: [main, right],
+    children: [main, right].filter(Boolean),
   };
+  const mid = { id: "dock-mid", type: "row", resizable: false, children: [body, rail].filter(Boolean) };
   const work = {
     id: "dock-work",
     type: "column",
     resizable: false,
-    children: [top, body, bottom].filter(Boolean),
+    children: [top, mid, bottom].filter(Boolean),
   };
   return {
     id: "root",
