@@ -74,6 +74,10 @@ config order (it scrolls when there are many):
 - The button right beside "+" in the tab bar, or Ctrl+Alt+N (`dock-core.right`), shows or hides the panel.
 - Pipelines, Files and Changes are ordinary right mods (the default right region has all three). Add or remove them, and any
   other mod, in the Dock layout dialog.
+- Files and Changes are herdr-dock's own copies (`dock-files`, `dock-changes`) of Herdr's panels. They follow
+  the last thing you did: selecting a repo or worktree in Git projects shows that worktree (even with no terminal
+  open there, and on another machine); moving to a terminal in another folder shows that terminal's repo again.
+  Herdr's own `files` and `changes` always follow the focused terminal.
 - Icons: Files and Changes use Herdr's own, `dock-*` mods their manifest icon, other mods `mods/<id>/icon.svg`
   when it exists, else the first letter of their name. Hover for the name.
 - Whether the panel is shown and which mod it shows are remembered per PC in Herdr's own state
