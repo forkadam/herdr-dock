@@ -27,7 +27,9 @@ function regionControls(dlg, t, region) {
     .child(div().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase()))
     .child(label(t, "size")).child(sizeInput(dlg, t, region));
   if (region === "right" || region === "bottom") {
-    return row.child(label(t, "shown")).child(toggle(t, `dc-shown-${region}`, !r.hidden, on,
+    // The right panel is shown or hidden per PC (the top-bar button, Ctrl+Alt+N); this switch is the default.
+    const text = region === "right" ? "shown by default" : "shown";
+    return row.child(label(t, text)).child(toggle(t, `dc-shown-${region}`, !r.hidden, on,
       (shown, cx) => dlg.act(cx, { type: "hidden", region, value: !shown })));
   }
   if (region === "left") {

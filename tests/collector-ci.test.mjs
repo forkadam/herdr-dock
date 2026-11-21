@@ -674,3 +674,43 @@ test("fix 11: glab/gh CLI calls pass a 15 s exec timeout", async () => {
   assert.ok(cliCalls.length > 0);
   for (const x of cliCalls) assert.deepEqual(x.opts, { timeout: 15000 }, x.key);
 });
+
+test("leftover fix: a Retry error clears once the pipeline changes (a new run or status)", async () => {
+  let pipes = res(200, [pipeline()]);
+  const routes = {
+    [PIPES]: () => pipes, [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS),
+    [`${GL}/pipelines/48213/retry`]: res(403, { message: "403 Forbidden" }),
+  };
+  const { io } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  await c.retry();
+  assert.equal(detailOf(io).retryError, "HTTP 403");
+  pipes = res(200, [pipeline({ id: 48214, status: "running" })]); // retried elsewhere (e.g. in GitLab)
+  c.refresh();
+  await c.tick();
+  assert.equal(detailOf(io).retryError, null);
+});
+
+test("leftover fix: Retry on a canceled GitHub run re-runs that run (no failed jobs to re-run)", async () => {
+  const SHA = "bbbb000000000000000000000000000000000002";
+  const RUNS = "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20";
+  const RERUN = "https://api.github.com/repos/o/r/actions/runs/401/rerun";
+  const { io } = ciIo({
+    origin: "https://github.com/o/r.git",
+    st: status("main", { oid: SHA }),
+    routes: {
+      [RUNS]: res(200, { total_count: 1, workflow_runs: [{
+        id: 401, name: "ci", run_number: 7, head_sha: SHA, head_branch: "main", status: "completed", conclusion: "cancelled",
+        html_url: "https://github.com/o/r/actions/runs/401", created_at: "2026-11-22T10:00:00Z", updated_at: "2026-11-22T10:05:00Z" }] }),
+      [RERUN]: res(201, {}),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "canceled");
+  await c.select(WT);
+  assert.deepEqual(await c.retry(), { ok: true, error: null });
+  assert.deepEqual(io.fetches.filter((f) => f.init?.method === "POST").map((f) => f.url), [RERUN]);
+});

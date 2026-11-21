@@ -147,3 +147,19 @@ test("planSync clears focus when the mode changes away from a focused expanded p
   assert.deepEqual(planSync({ mode: "hidden", focus: ids[1], leftIds: ids, applied: `expanded|${ids[1]}` }),
     { key: "hidden|null", focus: null, clearFocus: true });
 });
+
+// A config size edit made while herdr-dock isn't shown (dock-core not running) must still apply when it
+// starts: dock-core keeps a snapshot of the last-applied left sizes in shared state and compares to it.
+import { sizesSnapshot } from "../src/shared/panel.js";
+test("sizesSnapshot keeps only what sizeChanges compares, and detects an edit made while away", () => {
+  const merged = (px, quotas) => ({ regions: { left: { size: px, mode: "expanded", hidden: false,
+    features: [{ mod: "dock-header", size: 46, drag: true, props: { a: 1 } }, { mod: "dock-spaces" }, { mod: "dock-quotas", size: quotas }] } } });
+  const snap = sizesSnapshot(merged(268, 150));
+  assert.deepEqual(snap, { regions: { left: { size: 268, features: [{ mod: "dock-header", size: 46 }, { mod: "dock-spaces" }, { mod: "dock-quotas", size: 150 }] } } });
+  // JSON round trip (shared state) and then an edit: left width and Quotas height changed.
+  const changes = sizeChanges(JSON.parse(JSON.stringify(snap)), merged(300, 180));
+  assert.equal(changes.px, 300);
+  assert.deepEqual(Object.values(changes.sizes), [{ px: 180 }]);
+  assert.equal(sizeChanges(snap, merged(268, 150)), null);
+  assert.equal(sizesSnapshot(null), null);
+});

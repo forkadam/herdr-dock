@@ -277,22 +277,27 @@ export function createCiClient(io, log) {
       if (j.ok) jobsByRunId[run.id] = j.data;
       else log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
-    return { ok: true, pipeline: githubLatest(r.data, jobsByRunId), runIds: failed.map((x) => x.id) };
+    const canceled = r.data.workflow_runs.filter((x) => x.head_sha === first.id && normalizeStatus("github", x) === "canceled");
+    return { ok: true, pipeline: githubLatest(r.data, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }
 
   // The latest pipeline of a worktree's branch (or detached sha): { ok, pipeline: Pipeline | null, runIds }.
   const latest = (host, provider, path, head) =>
     (provider === "github" ? githubLatestOf : gitlabLatest)(host, path, head);
 
-  // Retry: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed run of that commit.
-  async function retry(host, provider, path, pipeline, runIds) {
+  // Retry: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed run of that commit, and
+  // reruns each canceled run whole (a canceled run has no failed jobs to rerun).
+  async function retry(host, provider, path, pipeline, runIds, canceledRunIds) {
     let posts;
     if (provider === "gitlab") {
       posts = [`projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(pipeline.id)}/retry`];
     } else {
       const repo = path.split("/").map(encodeURIComponent).join("/");
-      posts = (runIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun-failed-jobs`);
-      if (!posts.length) return { ok: false, error: "no failed runs" };
+      posts = [
+        ...(runIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun-failed-jobs`),
+        ...(canceledRunIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun`),
+      ];
+      if (!posts.length) return { ok: false, error: "no failed or canceled runs" };
     }
     const results = await Promise.all(posts.map((p) => request(host, "POST", p)));
     const bad = results.find((r) => !r.ok);

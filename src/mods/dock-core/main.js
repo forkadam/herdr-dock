@@ -8,7 +8,7 @@ import { createCollector } from "../../shared/collector.js";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
-  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightConfigUpdate, rightShownOf,
+  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightConfigUpdate, rightShownOf, sizesSnapshot,
   sizeChanges,
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
@@ -32,6 +32,8 @@ const CONFIG_MODE_KEY = "dock.left.configMode";
 // This PC's right panel (never in the config): whether it is shown, which right mod it shows
 // (the rail and dock-tabs set these), and the config's right.hidden when last read (so an edit to
 // it applies once).
+// The left sizes last applied (sizesSnapshot): a config size edit made while dock-core wasn't running applies on start.
+const SIZES_KEY = "dock.left.appliedSizes";
 const RIGHT_KEY = "dock.right.shown";
 const ACTIVE_KEY = "dock.right.active";
 const RIGHT_CONFIG_KEY = "dock.right.configHidden";
@@ -178,9 +180,14 @@ export default class DockCore extends View {
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
-    const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
+    // Compare with the sizes last applied, which survive dock-core not running (another layout shown), so a
+    // config size edit made meanwhile still applies.
+    const before = this.merged ?? shared(SIZES_KEY) ?? null;
+    const changes = plan.error ? null : sizeChanges(before, plan.merged);
     this.merged = plan.merged;
     if (!plan.error && plan.merged) {
+      const snap = sizesSnapshot(plan.merged);
+      if (JSON.stringify(shared(SIZES_KEY) ?? null) !== JSON.stringify(snap)) setShared(SIZES_KEY, snap);
       const regions = JSON.parse(JSON.stringify(plan.merged.regions));
       regions.left.hidden = false;
       if (JSON.stringify(shared(APPLIED_KEY) ?? null) !== JSON.stringify(regions)) setShared(APPLIED_KEY, regions);

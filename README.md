@@ -24,7 +24,8 @@ The generated `layouts/herdr-dock.json` is never committed.
 
 ## Install
 
-Requires Node 22 or newer and the `herdr-app` CLI on your PATH.
+Requires Node 22 or newer and the `herdr-app` CLI on your PATH. Git projects also needs git 2.31 or newer (it uses
+`git rev-parse --path-format=absolute`), and `glab`/`gh` for CI badges (see Git projects and Pipelines).
 
 ```
 npm install

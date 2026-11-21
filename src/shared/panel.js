@@ -55,6 +55,14 @@ export function sizeChanges(before, after) {
   return "px" in out || Object.keys(out.sizes).length ? out : null;
 }
 
+// What sizeChanges compares, kept by dock-core in shared state (dock.left.appliedSizes) so a config size
+// edit made while herdr-dock wasn't shown still applies when it starts. Null for no config.
+export function sizesSnapshot(merged) {
+  const left = merged?.regions?.left;
+  if (!left) return null;
+  return { regions: { left: { size: left.size, features: (left.features ?? []).map((f) => (f.size ? { mod: f.mod, size: f.size } : { mod: f.mod })) } } };
+}
+
 // The person's sizes to keep while the panel is ours to size (icon rail, focus). A live
 // width at or under the rail is not theirs: the config sizes stand in for it.
 function snapshot(merged, live) {

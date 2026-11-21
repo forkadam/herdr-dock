@@ -210,7 +210,10 @@ export function createCollector(io) {
       // Another branch (or sha) is a different pipeline history: forget the last-seen pipeline.
       if (ci.target !== target) Object.assign(ci, { target, prev: undefined });
       const cur = got.pipeline;
-      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], error: null, hint: null, hostFailure: false, done: true });
+      // A different pipeline (a new run, or its status moved) makes the last Retry error old news.
+      const was = ci.pipeline;
+      if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? undefined;
     } finally {
@@ -504,7 +507,7 @@ export function createCollector(io) {
     const ci = wtRecs.get(selected)?.ci;
     const p = ci?.pipeline;
     if (!p || !ci.provider) return { ok: false, error: "no pipeline" };
-    const r = await client.retry(ci.host, ci.provider, ci.path, p, ci.runIds);
+    const r = await client.retry(ci.host, ci.provider, ci.path, p, ci.runIds, ci.canceledRunIds);
     ci.at = -Infinity; // re-query on the next tick
     ci.retryError = r.ok ? null : r.error ?? "retry failed";
     if (!r.ok) log(`CI: retry on ${ci.host}/${ci.path}: ${r.error}`);
