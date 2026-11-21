@@ -346,3 +346,50 @@ test("a transient remote get-url failure is retried; only exit 2 means no origin
   io.t = 120000; await c.tick();
   assert.equal(callsTo(io, "get-url"), 2, "a found origin is read once");
 });
+
+test("overlapping ticks: an older tick finishing after a newer one pruned (but before it published) stays quiet", async () => {
+  const hold = () => { let release; const p = new Promise((r) => { release = r; }); return { p, release }; };
+  let holdA = null; // gates /w/a status
+  let holdB = null; // gates /w/b status
+  let panes = [{ pane: "p1", tab: "t1", cwd: "/w/a" }];
+  const io = fakeIo({
+    platform: "linux",
+    spaces: [{ id: "s1", name: "x", machine: null, tabs: [{ id: "t1" }] }],
+    table: {
+      " -C /w/a rev-parse --show-toplevel --git-common-dir": ok("/w/a\n.git\n"),
+      " -C /w/b rev-parse --show-toplevel --git-common-dir": ok("/w/b\n.git\n"),
+      " -C /w/a remote get-url origin": NO_ORIGIN,
+      " -C /w/b remote get-url origin": NO_ORIGIN,
+      " -C /w/a status --porcelain=v2 --branch": () => (holdA ? holdA.p : Promise.resolve()).then(() => status("main")),
+      " -C /w/b status --porcelain=v2 --branch": () => (holdB ? holdB.p : Promise.resolve()).then(() => status("main")),
+    },
+  });
+  io.panes = () => panes;
+  const published = [];
+  const set = io.setShared;
+  io.setShared = (k, v) => { set(k, v); if (k === "dock.git.state") published.push(v.repos.map((r) => r.name).join(",")); };
+  const waitCall = async (frag, n) => {
+    while (callsTo(io, frag) < n) await new Promise((r) => setTimeout(r, 1));
+  };
+  const c = createCollector(io);
+  await c.tick(); // tick0 publishes "a"
+  // Tick A: pane b opens; b's status is held.
+  holdB = hold();
+  panes = [panes[0], { pane: "p2", tab: "t1", cwd: "/w/b" }];
+  io.t = 1000;
+  const tickA = c.tick();
+  await waitCall("/w/b status", 1);
+  // Tick B: pane b closes; B prunes b, and its due status for a is held.
+  holdA = hold();
+  panes = [panes[0]];
+  io.t = 15000;
+  const tickB = c.tick();
+  await waitCall("/w/a status", 2);
+  // A finishes after B pruned, before B published.
+  holdB.release();
+  await tickA;
+  holdA.release();
+  await tickB;
+  assert.deepEqual(published, ["a"]);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["a"]);
+});

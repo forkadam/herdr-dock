@@ -66,10 +66,13 @@ export function createCollector(io) {
   const wtRecs = new Map();
   let published = { repos: [], updatedAt: null };
   let publishedKey = null;
-  // Ticks may overlap (a slow git status outlives the 1 s timer). Each tick takes a generation; a tick never
-  // publishes over a newer tick's view, so an old tick finishing late can't republish a stale list.
+  // Ticks may overlap (a slow git status outlives the 1 s timer). Each tick takes a generation. The newest
+  // membership (built and pruned by the tick numbered viewGen) is kept in currentView, and publishing always
+  // reads currentView plus the current records, never a view captured earlier. A tick older than viewGen
+  // doesn't publish at all: the newer tick that rebuilt membership (or the next one) does.
   let tickGen = 0;
-  let publishedGen = 0;
+  let viewGen = 0;
+  let currentView = new Map();
 
   const readAdded = () => {
     const list = io.shared(REPOS_KEY);
@@ -195,8 +198,8 @@ export function createCollector(io) {
     return ordered;
   }
 
-  function publish(view, now) {
-    const repos = [...view.values()].map((r) => {
+  function publish(now) {
+    const repos = [...currentView.values()].map((r) => {
       const origin = repoRecs.get(r.id)?.origin ?? null;
       return {
         id: r.id,
@@ -264,6 +267,8 @@ export function createCollector(io) {
 
     // 2. Membership: sync per-repo and per-worktree records with the view.
     const view = buildView(addedList, paneList);
+    currentView = view;
+    viewGen = gen;
     const wtIds = new Set();
     for (const r of view.values()) {
       if (!repoRecs.has(r.id)) repoRecs.set(r.id, { origin: undefined, busy: false, tried: false });
@@ -296,9 +301,8 @@ export function createCollector(io) {
     }
     await Promise.all(polls);
 
-    if (gen < publishedGen) return; // a newer tick already published
-    publishedGen = gen;
-    publish(view, now);
+    if (gen < viewGen) return; // a newer tick rebuilt membership; it publishes
+    publish(now);
   }
 
   function refresh() {
