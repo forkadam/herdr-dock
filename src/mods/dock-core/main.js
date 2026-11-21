@@ -6,7 +6,7 @@ import {
 } from "herdr";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
-import { nextMode, panelActions } from "../../shared/panel.js";
+import { nextMode, panelActions, planSync } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 
 const MODES = ["expanded", "icons", "hidden"];
@@ -78,17 +78,34 @@ export default class DockCore extends View {
     if ((shared(ERROR_KEY) ?? null) !== plan.error) setShared(ERROR_KEY, plan.error);
     this.merged = plan.merged;
     if (plan.write) {
-      try {
-        await writeTextFile(this.layoutPath, plan.write, current);
-      } catch (e) {
-        // The file changed between read and write: the next batch retries.
-        console.log(`dock-core: layout write skipped: ${e}`);
-      }
+      const err = await this.writeLayout(plan.write, current);
+      if (err) setShared(ERROR_KEY, err);
       // A rewritten layout reloads its sizes and visibility: put the current mode back on it.
+      // Risk: if Herdr's layout reload takes longer than this wait, the mode is re-applied to the
+      // old tree and the reload then wins, leaving the panel out of sync with dock.left.mode until
+      // the next toggle or config change.
       await cx.sleep(RELOAD_SETTLE_MS);
       this.applied = null;
     }
     cx.notify();
+  }
+
+  // writeTextFile rejects when the file changed since `current` was read (a stale snapshot):
+  // re-read it and try once more. Returns an error message, or null when written.
+  async writeLayout(text, current) {
+    try {
+      await writeTextFile(this.layoutPath, text, current);
+      return null;
+    } catch (first) {
+      console.log(`dock-core: layout write failed, retrying: ${first}`);
+      try {
+        const fresh = await readTextFile(this.layoutPath).catch(() => null);
+        if (fresh !== text) await writeTextFile(this.layoutPath, text, fresh);
+        return null;
+      } catch (e) {
+        return `could not write layout: ${e}`;
+      }
+    }
   }
 
   mode() {
@@ -103,35 +120,33 @@ export default class DockCore extends View {
       return;
     }
     const mode = c === "cycle" ? nextMode(this.mode()) : MODES.includes(c) ? c : null;
-    if (mode) setShared(MODE_KEY, mode); // render notices and applies it
+    if (!mode) return;
+    // A mode change by the person ends any feature's focus request; render applies the result.
+    if ((shared(FOCUS_KEY) ?? null) !== null) setShared(FOCUS_KEY, null);
+    setShared(MODE_KEY, mode);
   }
 
   // Called from render: notice a mode or focus change (ours or a feature's) and apply it once.
+  // The focus stays in shared state while the panel is expanded (features read it to collapse).
   sync(cx) {
     if (!this.merged) return;
     const mode = this.mode();
-    const requested = shared(FOCUS_KEY) ?? null;
-    let focus = mode === "expanded" ? requested : null;
-    if (focus !== null && !leftFeatureIds(this.merged).includes(focus)) focus = null;
-    const key = `${mode}|${focus}`;
-    if (key === this.applied) return;
-    this.applied = key;
-    // A focus request is consumed only once the panel is expanded (a feature sets focus, then mode).
-    const clearFocus = mode === "expanded" && requested !== null;
-    cx.spawn(async (_cx) => this.apply(mode, focus, clearFocus));
+    const plan = planSync({
+      mode, focus: shared(FOCUS_KEY) ?? null, leftIds: leftFeatureIds(this.merged), applied: this.applied,
+    });
+    if (!plan) return;
+    this.applied = plan.key;
+    cx.spawn(async (_cx) => this.apply(plan.key, mode, plan.focus, plan.clearFocus));
   }
 
-  apply(mode, focus, clearFocus) {
-    if (!this.merged) return;
+  apply(key, mode, focus, clearFocus) {
+    // A newer change was planned before this task ran: its own task applies it.
+    if (!this.merged || this.applied !== key) return;
     for (const a of panelActions(mode, this.merged, focus)) {
       try { run(a.command, a.args); } catch (e) { console.log(`dock-core: ${a.command} failed: ${e}`); }
     }
     if (shared(MODE_KEY) !== mode) setShared(MODE_KEY, mode);
-    if (clearFocus) {
-      // Keep the focused arrangement: clearing the key must not re-apply plain "expanded".
-      this.applied = `${mode}|null`;
-      setShared(FOCUS_KEY, null);
-    }
+    if (clearFocus) setShared(FOCUS_KEY, null);
   }
 
   render(cx) {

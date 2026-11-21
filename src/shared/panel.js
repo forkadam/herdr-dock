@@ -34,3 +34,18 @@ export function panelActions(mode, merged, focusId) {
   });
   return out;
 }
+
+// What dock-core should apply for the current shared state, or null when `applied` already
+// matches. Focus only counts while expanded and only for a known left block id (an unknown id
+// is cleared). A focus left over when the panel leaves a focused "expanded" is cleared too;
+// a request made while icons/hidden waits (focus is set before mode by feature mods).
+export function planSync({ mode, focus, leftIds, applied }) {
+  let f = mode === "expanded" ? (focus ?? null) : null;
+  let clearFocus = false;
+  if (f !== null && !leftIds.includes(f)) { f = null; clearFocus = true; }
+  const key = `${mode}|${f}`;
+  if (key === applied) return null;
+  const appliedMode = typeof applied === "string" ? applied.split("|")[0] : null;
+  if (mode !== "expanded" && focus != null && appliedMode === "expanded" && applied !== "expanded|null") clearFocus = true;
+  return { key, focus: f, clearFocus };
+}
