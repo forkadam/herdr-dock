@@ -132,3 +132,11 @@ test("default config: Files and Changes are right mods, the panel starts hidden"
   assert.equal(find(t, "dock-right").hidden, true);
   assert.ok(find(t, "dock-rail"));
 });
+
+test("the default left panel lists Git projects after Agents", async () => {
+  const { DEFAULT_CONFIG } = await import("../src/shared/config.js");
+  assert.deepEqual(leftFeatureIds(mergeForHost(DEFAULT_CONFIG, "h")),
+    ["dock-left-0-dock-header", "dock-left-1-dock-spaces", "dock-left-2-dock-agents", "dock-left-3-dock-git", "dock-left-4-dock-quotas", "dock-left-5-dock-footer"]);
+  const shipped = parseConfig(readFileSync("config/dock.json", "utf8")).config.regions.left.features.map((f) => f.mod);
+  assert.deepEqual(shipped.slice(2, 4), ["dock-agents", "dock-git"]);
+});

@@ -18,7 +18,7 @@ test("allowedRegions and canTurnOff", () => {
 });
 
 test("allowedRegions agrees with parseConfig", () => {
-  const mods = ["dock-core", "dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-quotas", "files", "tabs"];
+  const mods = ["dock-core", "dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "files", "tabs"];
   for (const mod of mods) {
     for (const region of REGIONS) {
       const c = fixture();
