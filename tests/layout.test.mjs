@@ -72,11 +72,11 @@ test("default config shows workspace-status bottom and a 44px dock-core", () => 
   assert.deepEqual(find(t, "dock-top").children[0].size, { px: 44 });
 });
 
-test("default left panel starts with Herdr's header, which drags the window", () => {
+test("default left panel starts with dock-header (Herdr's header without its collapse button), which drags the window", () => {
   const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "nohost");
   const left = find(buildLayout(m), "dock-left");
   const header = left.children[0];
-  assert.equal(header.id, "dock-left-0-workspace-chrome");
+  assert.equal(header.id, "dock-left-0-dock-header");
   assert.deepEqual(header.size, { px: 46 });
   assert.equal(header.window_drag, true);
   assert.equal(left.children[1].window_drag, undefined);

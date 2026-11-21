@@ -84,3 +84,8 @@ test("feature drag must be a boolean", () => {
   assert.equal(parseConfig(cfg(true)).ok, true);
   assert.match(parseConfig(cfg("yes")).error, /drag/);
 });
+
+test("dock-header can only be placed in the left panel", () => {
+  const r = parseConfig(JSON.stringify({ v: 1, regions: { top: { features: [{ mod: "dock-core" }, { mod: "dock-header" }] } } }));
+  assert.match(r.error, /dock-header can only be placed in regions\.left/);
+});
