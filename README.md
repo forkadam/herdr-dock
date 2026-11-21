@@ -23,13 +23,13 @@ npm run deploy
 ```
 
 `npm run deploy` builds the `dock-*` mods, installs them into the Herdr app home, writes
-`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`), and runs
+`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`, Ctrl+Alt+, runs `dock-core.config`), and runs
 `herdr-app check` on each mod. It exits non-zero if any check fails. Run `npm test` for the unit tests.
 
 - **App home.** Deploy writes to `~/.config/herdr-app`, or to `$HERDR_APP_HOME` when that is set. Pass
   `--app-home <dir>` to pick another one: `node scripts/deploy.mjs --app-home <dir>`. Add `--dry-run` to list what
   it would do without writing anything.
-- **The key binding is skipped** (deploy still succeeds and says why) when `ctrl-alt-b` in `layout:herdr-dock` is
+- **A key binding is skipped** (deploy still succeeds and says why) when `ctrl-alt-b` or `ctrl-alt-,` in `layout:herdr-dock` is
   already bound to something else, or when `keys.json` doesn't exist yet. Herdr writes `keys.json` on its first
   start: start Herdr once, then re-run `npm run deploy`.
 - **Editing keys.json.** On upgrade, Herdr refreshes a `keys.json` you have never touched with its current default
@@ -100,8 +100,9 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
   brand and search, copied from Herdr's `workspace-chrome` without its collapse button. The left panel is
   toggled by the button at the start of the tab bar and by Ctrl+Alt+B. In icons mode the header shows the
   Herdr logo.
-- The left panel ends with `dock-footer` (40 px): the Settings gear on the left and + Add machine on the right, on one line. A dot on
-  the gear means an update is ready. In icons mode it shows the gear.
+- The left panel ends with `dock-footer` (40 px): the Settings gear and the Dock layout button on the left and
+  + Add machine on the right, on one line. A dot on the gear means an update is ready. In icons mode it shows the
+  gear.
 - `machines.<hostname>` deep-merges into the base config for that machine. Hostnames match case-insensitively.
   Objects merge key by key, arrays (`features`) replace whole, and scalars replace.
 
@@ -116,6 +117,28 @@ shipped Files panel on the right:
 
 Save the file. The panel appears with no other change.
 
+## Config UI
+
+The "Dock layout" dialog edits the config without hand-editing JSON. Open it any of these ways:
+
+- the layout button in the left panel footer (next to the Settings gear),
+- `herdr-app do dock-core.config`,
+- Ctrl+Alt+, while the `herdr-dock` layout is active.
+
+Run the command again to close it.
+
+- **Saves go to this PC only.** The dialog writes to `machines.<hostname>` in `config/dock.json`. The shared base
+  config is never changed by it, so other machines keep their own layout.
+- **Two views.** A structured editor for the regions and their features, and the raw JSON of this PC's section.
+- **Placement rules are enforced.** The same rules as in Config: the top bar keeps `dock-core`, and `dock-spaces`,
+  `dock-agents` and `dock-quotas` only go in the left region. A change that breaks them can't be saved.
+- **Reset this PC to shared** removes this PC's `machines.<hostname>` section, so it follows the shared config again.
+- **If `dock.json` changes on disk while the dialog is open** (a sync, or an edit in your editor), the dialog
+  reloads the file's version, re-applies your edits on top, and says "dock.json changed on disk; your edits were
+  re-applied, check and save again". Nothing is overwritten until you save.
+- **The first save may reformat `dock.json`.** The writer uses a stable format: 2-space indent, each feature
+  object on one line. Content and key order are unchanged, so later saves give small diffs.
+
 ## Prerequisite: the Claude status-line cache
 
 Context and quota numbers come from the Claude status-line cache,
@@ -127,7 +150,6 @@ no Python.
 
 ## Known limitations
 
-- No config UI yet. Edit `config/dock.json`.
 - macOS and Omarchy are untested. v1 was verified on Windows only.
 - Per-agent context is available only for local Claude agents. Other and remote agents show no number.
 - Third-party mods placed in the left panel are hidden in icons mode.

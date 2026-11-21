@@ -43,7 +43,7 @@ where. Features come in two kinds:
 
 ## Non-goals (for now)
 
-- A config UI (v1 is configured by editing the config file; the UI comes later on the same core).
+- A config UI (v1 is configured by editing the config file; the UI comes later on the same core; see `2026-11-21-dock-config-ui-design.md`).
 - An installer or first-run experience for other people.
 - Testing on macOS and Omarchy (the helper layer is designed for them from day one, but v1 is verified
   on Windows only).
