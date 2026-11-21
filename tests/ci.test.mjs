@@ -124,9 +124,13 @@ test("unknown statuses stay unknown and never alert", () => {
   assert.deepEqual(g.failedJobs, []);
 });
 
-test("finishedAt: GitLab finished_at, else updated_at; GitHub newest updated_at of the failed runs", () => {
+test("finishedAt: GitLab newest failed-job finished_at, else finished_at, never updated_at; GitHub newest updated_at of the failed runs", () => {
   assert.equal(gitlabPipeline({ id: 1, status: "failed", finished_at: "F", updated_at: "U" }, []).finishedAt, "F");
-  assert.equal(gitlabPipeline({ id: 1, status: "running", updated_at: "U" }, []).finishedAt, "U");
+  // Never updated_at: the list endpoint has no finished_at, and updated_at moves on a still-failed pipeline.
+  assert.equal(gitlabPipeline({ id: 1, status: "running", updated_at: "U" }, []).finishedAt, null);
+  const j = (id, status, fin, more = {}) => ({ id, name: `j${id}`, stage: "s", status, finished_at: fin, ...more });
+  assert.equal(gitlabPipeline({ id: 1, status: "failed", updated_at: "U" }, [j(1, "failed", "2026-11-22T10:05:00Z"), j(2, "failed", "2026-11-22T10:07:00Z"), j(3, "success", "2026-11-22T10:09:00Z"), j(4, "failed", "2026-11-22T10:08:00Z", { allow_failure: true })]).finishedAt, "2026-11-22T10:07:00Z");
+  assert.equal(gitlabPipeline({ id: 1, status: "failed", finished_at: "F" }, [j(1, "failed", "2026-11-22T10:05:00Z")]).finishedAt, "2026-11-22T10:05:00Z");
   assert.equal(gitlabPipeline({ id: 1, status: "running" }, []).finishedAt, null);
   const runs = fx("github-runs.json");
   const at = { 301: "2026-11-22T09:03:00Z", 302: "2026-11-22T09:09:00Z", 201: "2026-11-21T09:05:00Z" };

@@ -498,27 +498,35 @@ test("fix: auth status failing on the network, but a token in glab config: the t
   assert.equal(wtOf(c).pipeline.status, "passed");
 });
 
+// The pipelines LIST endpoint has no finished_at: the key comes from the failed jobs.
+const jobsDone = (fin) => JOBS.map((j) => (j.status === "failed" ? { ...j, finished_at: fin } : j));
+const listed = (o) => pipeline({ created_at: "2026-11-22T10:01:00Z", updated_at: "2026-11-22T10:06:00Z", ...o });
+
 test("fix (R4): a Retry that fails again alerts once more; a restart with the same key doesn't", async () => {
   const F1 = "2026-11-22T10:05:00Z", F2 = "2026-11-22T10:20:00Z";
-  let pl = pipeline({ status: "running", created_at: "2026-11-22T10:01:00Z" });
+  let pl = listed({ status: "running" });
+  let jobs = JOBS;
   const RETRY = `${GL}/pipelines/48213/retry`;
   const routes = {
-    [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS),
+    [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: () => res(200, jobs),
     [RETRY]: res(201, { id: 48213, status: "running" }),
   };
   const { io, shared } = ciIo({ routes });
   const c = createCollector(io);
   await c.tick();
-  pl = pipeline({ status: "failed", created_at: "2026-11-22T10:01:00Z", finished_at: F1 });
+  pl = listed({ status: "failed" });
+  jobs = jobsDone(F1);
   io.t += 30000; await c.tick();
   assert.equal(io.notes.length, 1);
   assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: `48213|${F1}` });
   await c.select(WT);
   assert.deepEqual(await c.retry(), { ok: true, error: null });
-  pl = pipeline({ status: "running", created_at: "2026-11-22T10:01:00Z", finished_at: null, updated_at: "2026-11-22T10:15:00Z" });
+  pl = listed({ status: "running", updated_at: "2026-11-22T10:15:00Z" });
+  jobs = JOBS.map((j) => (j.status === "failed" ? { ...j, status: "running" } : j));
   io.t += 1000; await c.tick();
   assert.equal(wtOf(c).pipeline.status, "running");
-  pl = pipeline({ status: "failed", created_at: "2026-11-22T10:01:00Z", finished_at: F2 });
+  pl = listed({ status: "failed", updated_at: "2026-11-22T10:21:00Z" });
+  jobs = jobsDone(F2);
   io.t += 30000; await c.tick();
   assert.equal(io.notes.length, 2);
   assert.deepEqual(io.sounds, ["blocked", "blocked"]);
@@ -530,4 +538,54 @@ test("fix (R4): a Retry that fails again alerts once more; a restart with the sa
   const c2 = createCollector(io2);
   await c2.tick();
   assert.equal(io2.notes.length, 0);
+});
+
+test("fix: a still-failed GitLab pipeline whose updated_at changes doesn't alert again", async () => {
+  let pl = listed({ status: "running" });
+  let jobs = JOBS;
+  const routes = { [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: () => res(200, jobs) };
+  const { io } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  pl = listed({ status: "failed" });
+  jobs = jobsDone("2026-11-22T10:05:00Z");
+  io.t += 30000; await c.tick();
+  assert.equal(io.notes.length, 1);
+  for (const u of ["2026-11-22T11:00:00Z", "2026-11-22T12:00:00Z"]) {
+    pl = listed({ status: "failed", updated_at: u });
+    io.t += 300000; await c.tick();
+  }
+  assert.equal(io.notes.length, 1);
+});
+
+test("fix: a success during an outage clears the window, so the next failure blocks again", async () => {
+  let t = 0;
+  let release;
+  const io = {
+    now: () => t,
+    shared: () => ({}),
+    exec: async (cmd, args) => (args[0] === "config" ? ok(`${TOKEN}\n`) : ok("")),
+    fetch: (url) => (url.endsWith("/late") ? new Promise((r) => { release = () => r(res(200, [])); }) : new Promise(() => {})),
+  };
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const flush = () => new Promise((r) => setTimeout(r, 5));
+  const a = c.request("gitlab.corp", "GET", "projects/hang");
+  await flush();
+  t = 5000; // b starts later, so its own deadline (20 s) isn't reached by the sweep at 15 s
+  const b = c.request("gitlab.corp", "GET", "projects/late");
+  await flush();
+  t = 15000; c.sweep(t);
+  assert.equal((await a).error, "timeout");
+  assert.equal(c.blocked("gitlab.corp", 15000), true);
+  release();
+  assert.equal((await b).ok, true); // started before the outage, succeeds during it
+  assert.equal(c.blocked("gitlab.corp", 15000), false);
+  t = 16000;
+  const d = c.request("gitlab.corp", "GET", "projects/hang");
+  await flush();
+  t = 31000; c.sweep(t);
+  await d;
+  assert.equal(c.blocked("gitlab.corp", 60999), true);
+  assert.equal(c.blocked("gitlab.corp", 61000), false);
 });

@@ -162,6 +162,7 @@ export function createCiClient(io, log) {
   const good = (h, data) => {
     h.failures = 0;
     h.blockedUntil = 0;
+    h.windowEnd = 0; // the outage is over: the next failure starts a new window
     return { ok: true, data };
   };
 

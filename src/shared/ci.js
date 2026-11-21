@@ -30,12 +30,14 @@ export function gitlabPipeline(p, jobs) {
   const list = Array.isArray(jobs) ? jobs : [];
   const byStage = new Map();
   const failedJobs = [];
+  let lastFail = null; // the newest finished_at of the failed (not allowed-to-fail) jobs
   for (const j of list) {
     const status = normalizeStatus("gitlab", j);
     if (!byStage.has(j.stage)) byStage.set(j.stage, []);
     byStage.get(j.stage).push(status);
     if (status === "failed" && j.allow_failure !== true) {
       failedJobs.push({ name: j.name, stage: j.stage, webUrl: j.web_url, duration: j.duration ?? null });
+      if (j.finished_at && (!lastFail || Date.parse(j.finished_at) > Date.parse(lastFail))) lastFail = j.finished_at;
     }
   }
   return {
@@ -45,7 +47,9 @@ export function gitlabPipeline(p, jobs) {
     sha: p.sha,
     webUrl: p.web_url,
     createdAt: p.created_at,
-    finishedAt: p.finished_at ?? p.updated_at ?? null,
+    // The alert key's finish time. The pipelines list endpoint has no finished_at, and updated_at moves on a
+    // still-failed pipeline, so it comes from the failed jobs (a retry that fails again moves it); never updated_at.
+    finishedAt: lastFail ?? p.finished_at ?? null,
     stages: [...byStage].map(([name, sts]) => ({ name, status: worst(sts) })),
     failedJobs,
   };
