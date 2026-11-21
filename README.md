@@ -14,6 +14,9 @@ dialog, dock-config):
 - **dock-agents**: your agents. Click one to focus it. Each local Claude agent shows its context as "NN% used"
   (dimmed when the reading is older than 2 minutes).
 - **dock-quotas**: Claude 5-hour and weekly quota as "% used", with reset time, age, and a stale mark.
+- **dock-git**: Git projects, your repos and worktrees with git status and a CI pipeline badge (see
+  [Git projects and Pipelines](#git-projects-and-pipelines)).
+- **dock-pipelines**: Pipelines, the selected worktree's pipeline: stages, failed jobs, Retry.
 
 Only `config/dock.json` is meant to be synced between machines.
 The generated `layouts/herdr-dock.json` is never committed.
@@ -69,7 +72,7 @@ config order (it scrolls when there are many):
 
 - Click an icon to show that mod in the panel. Click the icon of the mod that's showing to hide the panel.
 - The button right beside "+" in the tab bar, or Ctrl+Alt+N (`dock-core.right`), shows or hides the panel.
-- Files and Changes are ordinary right mods (the default right region has both). Add or remove them, and any
+- Pipelines, Files and Changes are ordinary right mods (the default right region has all three). Add or remove them, and any
   other mod, in the Dock layout dialog.
 - Icons: Files and Changes use Herdr's own, `dock-*` mods their manifest icon, other mods `mods/<id>/icon.svg`
   when it exists, else the first letter of their name. Hover for the name.
@@ -106,8 +109,10 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
     "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "dock-tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
-                              { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
-    "right":  { "size": 360, "hidden": true, "features": [ { "mod": "files" }, { "mod": "changes" } ] },
+                              { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-git" },
+                              { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
+    "right":  { "size": 360, "hidden": true,
+                "features": [ { "mod": "dock-pipelines" }, { "mod": "files" }, { "mod": "changes" } ] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
   },
   "machines": { "my-hostname": { "regions": { "left": { "size": 320 } } } }
@@ -117,7 +122,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 - Each region has a `size` in px, an optional `hidden`, and a list of `features`. The left region also has `mode`;
   `"hidden": true` on the left region means mode `hidden`. Changing `mode` in the config switches the panel to it.
 - The top bar must contain `dock-core` and can't be hidden (the toggle, Ctrl+Alt+B and config errors live there).
-  `dock-spaces`, `dock-agents` and `dock-quotas` can only be placed in the left region.
+  `dock-spaces`, `dock-agents`, `dock-git` and `dock-quotas` can only be placed in the left region.
 - A feature is `{ "mod": string, "props"?: object, "size"?: px, "drag"?: boolean }`. With no `size`, it gets
   weight 1 and shares the remaining space. With `"drag": true`, dragging the feature moves the window.
 - The left panel starts with `dock-header` (46 px), like the header in Herdr's `main` layout: the Herdr
@@ -167,6 +172,77 @@ Run the command again to close it.
   and save again.
 - **The first save may reformat `dock.json`.** The writer uses a stable format: 2-space indent, each feature
   object on one line. Content and key order are unchanged, so later saves give small diffs.
+
+## Git projects and Pipelines
+
+**Git projects** (`dock-git`, left panel) lists git repos and their worktrees:
+
+- A repo shows up when a terminal in Herdr is inside it (it disappears again when no terminal is), or when you add
+  it with **+** (an added repo always shows, with all its worktrees). Right-click a repo for Remove repo (added
+  repos only), Open in GitLab/GitHub and Copy path. **⟳** re-checks every repo and pipeline now.
+- Each worktree row shows its branch, ↑ahead ↓behind, a dim "no upstream", • for uncommitted changes, a green dot
+  when it is open in a space, and the CI badge: ✓ passed, ✕ failed, ⟳ running or pending, – none or canceled,
+  ⚠ unknown (hover for why). Click a row to select it (and its space). Click the badge to open Pipelines.
+- The icon rail and the Git projects icon get a red dot while any pipeline has failed.
+
+**Pipelines** (`dock-pipelines`) shows the selected worktree's latest pipeline: `<repo> · <branch>` with
+"↗ GitLab" (or GitHub) to open it in the browser, the pipeline number, status, age and short sha, the stages,
+each failed job with its duration and "open job ↗", and **Retry** (GitLab retries the pipeline; GitHub re-runs the
+failed jobs). "(older commit than local HEAD)" means the pipeline is for an older commit than the one checked out
+(not pushed yet, or CI hasn't started). "via glab" (or "via gh") means requests for that host go through the CLI
+(see below). It sits in the default right region. If this PC's right region doesn't have it, clicking a badge or
+an alert opens it as a dialog instead; add it to the right region in the Dock layout dialog to keep it there.
+
+### Install and log in
+
+`git` must be on PATH. CI badges also need the provider's CLI, logged in:
+
+- **GitLab** (any host other than github.com): `winget install GLab.GLab`, then
+  `glab auth login --hostname <host>`, for example `glab auth login --hostname gitlab.example.com`.
+- **GitHub**: `winget install GitHub.cli`, then `gh auth login`.
+- **Restart Herdr after installing `gh` or `glab`.** Herdr reads PATH when it starts, so a CLI installed while it
+  runs isn't found and the badge stays ⚠ with the login hint. After a login (no install), press ⟳ in Git projects.
+
+The token is read from the CLI (`glab config get token`, or `gh auth token`) once per host per session and kept
+in memory only. Nothing is stored in git: the repo list, the pipeline state and the alerts already sent are in
+Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
+
+### Which host is which
+
+- `github.com` is GitHub. Any other host is treated as GitLab, so a host with no CI there (for example
+  bitbucket.org) shows ⚠ with a glab hint until you turn it off.
+- The shared key `dock.git.hosts` overrides this per host: `"gitlab"` or `"github"` forces the provider (a
+  GitHub Enterprise host uses `https://<host>/api/v3/`), and `"none"` turns CI off for that host (no badge, no
+  ⚠). It has no UI yet: quit Herdr, add it to `~/.config/herdr-app/shared.json`, and start Herdr again:
+
+  ```json
+  "dock.git.hosts": { "bitbucket.org": "none", "git.example.com": "github" }
+  ```
+
+### How often, and alerts
+
+- A running or pending pipeline is checked every 30 s, every 15 s for 2 minutes after a push, and every 5 minutes
+  otherwise. Git status is read every 15 s for worktrees open in a space and every minute for the rest. ⟳ checks
+  everything now.
+- At most 4 requests run at once, each with a 15 s timeout. A host that fails backs off (30 s up to 5 minutes)
+  and shows ⚠ with the error on hover.
+- When a pipeline turns failed (or a new failed pipeline appears that was created after Herdr started), you get a
+  notification "<repo> · <branch>: Pipeline failed: <first failed job> (+N more)" with a sound. Clicking it opens
+  Pipelines for that worktree. Each failure alerts once, also across restarts; a retried pipeline that fails again
+  alerts again. Every listed worktree alerts, including added repos' worktrees with no terminal open.
+- **"via glab" fallback.** Requests go straight to the host's API first. If that fails with a network or
+  certificate error (for example a company GitLab with its own certificate), that host switches to
+  `glab api` (or `gh api`) for the rest of the session. That route uses the OS certificate store and the CLI's
+  own login, and Pipelines shows "via glab".
+
+### Limits
+
+- Checks run only while Herdr is open; there is no background service. A pipeline that failed while Herdr was
+  closed shows ✕ when it starts but doesn't alert.
+- No auto-fetch: ↑/↓ compare with the last `git fetch` you ran. Pipelines are read from the server, so they are
+  current either way.
+- Only the latest pipeline of the branch (or of the commit, when detached) is shown. GitHub runs of several
+  workflows for the same commit are combined, with the worst status.
 
 ## Prerequisite: the Claude status-line cache
 

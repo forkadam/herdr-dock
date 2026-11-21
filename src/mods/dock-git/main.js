@@ -40,6 +40,7 @@ export default class Git extends View {
     const repo = this.repoById(id);
     if (repo) setShared(REPOS_KEY, removeRepoPaths(shared(REPOS_KEY), repo, window()?.platform));
     this.menu = null;
+    gitCommand("git.refresh");
   }
 
   openWeb(url) {
@@ -106,7 +107,7 @@ export default class Git extends View {
       .when(w.selected, (el) => el.bg(t.selected ?? t.hover))
       .hover((s) => s.bg(t.hover))
       .on_click(() => select())
-      .child(div().size(6).flex_none().rounded_full().bg(w.open ? tones.ok : (t.dim + "00")))
+      .child(div().size(6).flex_none().rounded_full().bg(w.open ? tones.ok : "#00000000"))
       .child(div().id(`git-branch-${i}`).flex_1().min_w(0).truncate().text_color(w.open ? t.foreground : t.muted)
         .tooltip(w.tooltip).child(w.branch))
       .when(Boolean(w.badge.glyph), (el) => el.child(div().id(`git-badge-${i}`).flex_none().w(18).h(18).rounded(4)

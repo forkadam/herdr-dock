@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG = {
       mode: "expanded",
       features: [{ mod: "dock-header", size: 46, drag: true }, { mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-git" }, { mod: "dock-quotas", size: 150 }, { mod: "dock-footer", size: 40 }],
     },
-    right: { size: 360, hidden: true, features: [{ mod: "files" }, { mod: "changes" }] },
+    right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "files" }, { mod: "changes" }] },
     bottom: { size: 28, features: [{ mod: "workspace-status" }] },
   },
 };

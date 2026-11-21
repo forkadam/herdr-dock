@@ -125,10 +125,12 @@ test("the right panel is a stack showing one mod, with a rail on the far right",
   assert.equal(new Set(ids).size, ids.length);
 });
 
-test("default config: Files and Changes are right mods, the panel starts hidden", () => {
+test("default config: Pipelines, Files and Changes are right mods, the panel starts hidden", async () => {
   const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "nohost");
   const t = buildLayout(m);
-  assert.deepEqual(find(t, "dock-right-stack").children.map((c) => c.content.mod), ["files", "changes"]);
+  assert.deepEqual(find(t, "dock-right-stack").children.map((c) => c.content.mod), ["dock-pipelines", "files", "changes"]);
+  const { DEFAULT_CONFIG } = await import("../src/shared/config.js");
+  assert.deepEqual(DEFAULT_CONFIG.regions.right.features, [{ mod: "dock-pipelines" }, { mod: "files" }, { mod: "changes" }]);
   assert.equal(find(t, "dock-right").hidden, true);
   assert.ok(find(t, "dock-rail"));
 });
