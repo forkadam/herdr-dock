@@ -4,7 +4,7 @@ import { buildLayout } from "./layout.js";
 export const REGION_NAMES = ["top", "left", "right", "bottom"];
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 // Core features that draw the left panel modes (icon rail, collapsed header).
-const LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-quotas"];
+export const LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-quotas"];
 const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 
 export const DEFAULT_CONFIG = {
