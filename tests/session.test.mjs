@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { loadSession, saveSession, resetSession, isDirty } from "../src/mods/dock-config/session.js";
-import { applyEdit } from "../src/shared/edit.js";
+import { applyEdit, draftFromConfig } from "../src/shared/edit.js";
 
 const HOST = "forkadam-pc";
 const CFG = "C:/repo/config/dock.json";
@@ -109,5 +109,16 @@ test("reset removes the machine section", async () => {
   let s = await saveSession(sized(await loadSession(io), 300), io);
   s = await resetSession(s, io);
   assert.equal(JSON.parse(files.get(CFG)).machines?.[HOST], undefined);
+  assert.equal(isDirty(s), false);
+});
+
+test("reset with no machine section and a dirty draft discards the edits", async () => {
+  const base = JSON.parse(text);
+  delete base.machines;
+  const { io } = fakeIo({ file: JSON.stringify(base, null, 2) });
+  let s = sized(await loadSession(io), 300);
+  assert.equal(isDirty(s), true);
+  s = await resetSession(s, io);
+  assert.deepEqual(s.draft, draftFromConfig(base, HOST));
   assert.equal(isDirty(s), false);
 });

@@ -89,7 +89,7 @@ export async function saveSession(session, io) {
 export async function resetSession(session, io) {
   if (session.readOnly) return session;
   const next = await commit(session, io, planReset(session.opened, session.host));
-  if (next.opened === session.opened || next.notice) return next;
+  if (next.error || next.notice) return next;
   const parsed = parseConfig(next.opened);
   return parsed.ok ? withInventory(next, draftFromConfig(parsed.config, session.host)) : next;
 }
