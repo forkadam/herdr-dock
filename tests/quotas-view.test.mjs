@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { quotaRows, topUsed, barLevel } from "../src/mods/dock-quotas/view.js";
+import { quotaRows, iconBadge, barLevel } from "../src/mods/dock-quotas/view.js";
 
 const S = (o = {}) => ({ fetchedMs: 1_000_000, stale: false, sessions: new Map(),
   windows: [{ kind: "five_hour", usedPercent: 5, resetsMs: 1_000_000 + 7_500_000 }], ...o });
@@ -24,7 +24,14 @@ test("a stale reading marks every row stale", () => {
   assert.ok(rows.every((r) => r.stale));
 });
 test("topUsed and barLevel", () => {
-  assert.equal(topUsed(null), null);
-  assert.equal(topUsed(S({ windows: [{ kind: "five_hour", usedPercent: 14 }, { kind: "weekly", usedPercent: 62.4 }] })), 62);
   assert.equal(barLevel(69.9), "ok"); assert.equal(barLevel(70), "warn"); assert.equal(barLevel(89.9), "warn"); assert.equal(barLevel(90), "high");
+});
+test("iconBadge", () => {
+  const w = [{ kind: "five_hour", usedPercent: 14 }, { kind: "weekly", usedPercent: 62.4 }];
+  assert.deepEqual(iconBadge(S({ windows: w })), { text: "62%", stale: false });
+  assert.deepEqual(iconBadge(S({ windows: w, stale: true })), { text: "62%", stale: true });
+  assert.equal(iconBadge(null), null);
+  assert.equal(iconBadge(S({ windows: [] })), null);
+  assert.deepEqual(iconBadge(S({ windows: [{ kind: "five_hour", usedPercent: NaN }, { kind: "weekly", usedPercent: null }, { kind: "weekly", usedPercent: 7 }] })), { text: "7%", stale: false });
+  assert.equal(iconBadge(S({ windows: [{ kind: "weekly", usedPercent: NaN }] })), null);
 });

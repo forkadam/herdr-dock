@@ -16,10 +16,12 @@ export function quotaRows(statusline, nowMs) {
   }));
 }
 
-// The highest used % across windows, rounded, or null.
-export function topUsed(statusline) {
-  if (!statusline || !statusline.windows.length) return null;
-  return Math.round(Math.max(...statusline.windows.map((w) => w.usedPercent)));
+// Icon-rail badge: highest finite used % (rounded), marked stale with the cache. Null: nothing to show.
+export function iconBadge(statusline) {
+  if (!statusline) return null;
+  const ps = statusline.windows.map((w) => w.usedPercent).filter((p) => Number.isFinite(p));
+  if (!ps.length) return null;
+  return { text: `${Math.round(Math.max(...ps))}%`, stale: Boolean(statusline.stale) };
 }
 
 export const barLevel = (p) => (p >= 90 ? "high" : p >= 70 ? "warn" : "ok");

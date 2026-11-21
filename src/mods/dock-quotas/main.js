@@ -5,7 +5,7 @@ import { theme, shared, props, checking, home, readTextFile, watchFolder } from 
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
-import { quotaRows, topUsed, barLevel } from "./view.js";
+import { quotaRows, iconBadge, barLevel } from "./view.js";
 
 const REFRESH_MS = 30000;
 const WARN = "#d29922";
@@ -79,9 +79,15 @@ export default class Quotas extends View {
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId);
     if (face === "icon") {
-      const top = topUsed(this.statusline);
+      const b = iconBadge(this.statusline);
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
-      return top == null ? rail : rail.child(div().text_size(10).text_color(barLevel(top) === "ok" ? t.muted : barLevel(top) === "warn" ? WARN : (t.blocked ?? HIGH)).child(`${top}%`));
+      if (!b) return rail;
+      const p = parseInt(b.text, 10);
+      const color = barLevel(p) === "ok" ? t.muted : barLevel(p) === "warn" ? WARN : (t.blocked ?? HIGH);
+      return rail.child(div().id("quota-badge").text_size(10).text_color(color)
+        .when(b.stale, (el) => el.opacity(0.55))
+        .tooltip(b.stale ? `${p}% used · stale` : `${p}% used`)
+        .child(b.text));
     }
     if (face === "collapsed") {
       return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
