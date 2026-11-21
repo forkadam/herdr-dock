@@ -6,7 +6,7 @@ import {
 } from "herdr";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
-import { liveSizes, nextMode, planPanel, planSync, sizeChanges } from "../../shared/panel.js";
+import { liveSizes, modeFromConfig, nextMode, planPanel, planSync, sizeChanges } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 
 const MODES = ["expanded", "icons", "hidden"];
@@ -16,6 +16,8 @@ const ERROR_KEY = "dock.config.error";
 // The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
 // while the live tree holds them). Machine-local, like the drag-resizes it keeps.
 const RESTORE_KEY = "dock.left.restore";
+// The config's left mode when dock-core last read it, so an edit to it is noticed once.
+const CONFIG_MODE_KEY = "dock.left.configMode";
 // After writing the layout file, give Herdr time to reload it before re-applying the mode.
 const RELOAD_SETTLE_MS = 400;
 // Fallback when watchFolder rejects (too many watches, etc.).
@@ -82,6 +84,17 @@ export default class DockCore extends View {
     if ((shared(ERROR_KEY) ?? null) !== plan.error) setShared(ERROR_KEY, plan.error);
     const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
     this.merged = plan.merged;
+    if (!plan.error && plan.merged) {
+      // A changed regions.left.mode (or left.hidden) in a valid config becomes the panel mode.
+      const m = modeFromConfig(shared(CONFIG_MODE_KEY), shared(MODE_KEY), plan.merged.regions.left.mode);
+      if (m) {
+        setShared(CONFIG_MODE_KEY, m.record);
+        if (m.mode) {
+          if ((shared(FOCUS_KEY) ?? null) !== null) setShared(FOCUS_KEY, null);
+          setShared(MODE_KEY, m.mode);
+        }
+      }
+    }
     if (plan.write) {
       const err = await this.writeLayout(plan.write, current);
       if (err) setShared(ERROR_KEY, err);

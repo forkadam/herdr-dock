@@ -43,3 +43,9 @@ test("DEFAULT_CONFIG has no machines and the shipped config parses", async () =>
   const r = parseConfig(readFileSync(new URL("../config/dock.json", import.meta.url), "utf8"));
   assert.equal(r.ok, true);
 });
+test("mergeForHost treats left.hidden: true as mode hidden", () => {
+  const c = parseConfig(JSON.stringify({ v: 1, regions: { left: { hidden: true, mode: "expanded" } } })).config;
+  assert.equal(mergeForHost(c, "h").regions.left.mode, "hidden");
+  const d = parseConfig(JSON.stringify({ v: 1, regions: { left: { hidden: false, mode: "icons" } } })).config;
+  assert.equal(mergeForHost(d, "h").regions.left.mode, "icons");
+});

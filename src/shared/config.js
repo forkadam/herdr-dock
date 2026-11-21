@@ -86,7 +86,8 @@ export function mergeForHost(config, hostname) {
   for (const name of REGION_NAMES) {
     const r = merged.regions?.[name] ?? {};
     regions[name] = { ...r, features: r.features ?? [], hidden: r.hidden ?? false };
-    if (name === "left") regions[name].mode = r.mode ?? "expanded";
+    // left.hidden: true is the hidden mode (the mode is what dock-core applies and cycles).
+    if (name === "left") regions[name].mode = r.hidden === true ? "hidden" : (r.mode ?? "expanded");
   }
   return { ...merged, regions };
 }
