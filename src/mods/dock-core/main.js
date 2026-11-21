@@ -62,7 +62,8 @@ export default class DockCore extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        this.command(c, cx);
+        // No command, however malformed, may end this loop: dock-core would stop taking every command.
+        try { this.command(c, cx); } catch (e) { console.log(`dock-core: command ${c} failed: ${e?.message ?? e}`); }
         cx.notify();
       }
     });

@@ -41,18 +41,25 @@ export function b64urlDecode(s) {
     if (q.length > 2) bytes.push((n >> 8) & 255);
     if (q.length > 3) bytes.push(n & 255);
   }
+  // Strict UTF-8: no overlong forms, surrogates or code points past U+10FFFF. Total: never throws.
+  const MIN = [0, 0, 0x80, 0x800, 0x10000];
   let out = "";
-  for (let i = 0; i < bytes.length;) {
-    const b = bytes[i];
-    const len = b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 0;
-    if (!len || i + len > bytes.length) return null;
-    let c = len === 1 ? b : b & (0xff >> (len + 1));
-    for (let j = 1; j < len; j++) {
-      if ((bytes[i + j] & 0xc0) !== 0x80) return null;
-      c = (c << 6) | (bytes[i + j] & 63);
+  try {
+    for (let i = 0; i < bytes.length;) {
+      const b = bytes[i];
+      const len = b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 0;
+      if (!len || i + len > bytes.length) return null;
+      let c = len === 1 ? b : b & (0xff >> (len + 1));
+      for (let j = 1; j < len; j++) {
+        if ((bytes[i + j] & 0xc0) !== 0x80) return null;
+        c = (c << 6) | (bytes[i + j] & 63);
+      }
+      if ((len > 1 && c < MIN[len]) || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff)) return null;
+      out += String.fromCodePoint(c);
+      i += len;
     }
-    out += String.fromCodePoint(c);
-    i += len;
+  } catch {
+    return null;
   }
   return out;
 }

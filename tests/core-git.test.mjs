@@ -45,6 +45,23 @@ test("parseGitCommand decodes what gitCommandName builds", () => {
   assert.equal(parseGitCommand(undefined), null);
 });
 
+test("parseGitCommand never throws on undecodable worktree suffixes", () => {
+  // U+110000 (past Unicode), 0xf5/0xf7 leads, a stray continuation, overlong, a surrogate, 0xff bytes.
+  for (const s of ["9JCAgA", "9ZCAgA", "94CAgA", "gA", "wIA", "7aCA", "_w", "____", "A"]) {
+    assert.doesNotThrow(() => parseGitCommand(`git.select.${s}`), s);
+    assert.equal(parseGitCommand(`git.select.${s}`), null, s);
+    assert.equal(parseGitCommand(`git.show.${s}`), null, s);
+    assert.equal(b64urlDecode(s), null, s);
+  }
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  for (let i = 0; i < 2000; i++) {
+    let s = "";
+    const n = 1 + Math.floor(Math.random() * 12);
+    for (let j = 0; j < n; j++) s += A[Math.floor(Math.random() * 64)];
+    assert.doesNotThrow(() => parseGitCommand(`git.select.${s}`), s);
+  }
+});
+
 test("showPlan: right-panel when dock-pipelines is placed there, else a dialog", () => {
   const placed = { regions: { right: { features: [{ mod: "dock-quotas" }, { mod: "dock-pipelines" }] } } };
   assert.deepEqual(showPlan(placed), { set: { "dock.right.active": "dock-pipelines", "dock.right.shown": true } });
