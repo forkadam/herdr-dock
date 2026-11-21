@@ -7,9 +7,10 @@ import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { gitCommand } from "../_git-command.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { gitRows, gitSummary, addRepoPath, removeRepoPaths } from "./view.js";
+import { gitRows, gitSummary, addRepoPath, removeRepoPaths, skipAfterRemove } from "./view.js";
 
 const REPOS_KEY = "dock.git.repos";
+const SKIPPED_KEY = "dock.git.skipped";
 const WARN = "#d29922";
 
 export default class Git extends View {
@@ -38,7 +39,12 @@ export default class Git extends View {
 
   removeRepo(id) {
     const repo = this.repoById(id);
-    if (repo) setShared(REPOS_KEY, removeRepoPaths(shared(REPOS_KEY), repo, window()?.platform));
+    if (repo) {
+      setShared(REPOS_KEY, removeRepoPaths(shared(REPOS_KEY), repo, window()?.platform));
+      // A terminal still in it would add it straight back: skip it until its terminals leave.
+      const skipped = skipAfterRemove(shared(SKIPPED_KEY), repo);
+      if (skipped) setShared(SKIPPED_KEY, skipped);
+    }
     this.menu = null;
     gitCommand("git.refresh");
   }
@@ -83,7 +89,7 @@ export default class Git extends View {
 
   menuFor(t, r, i) {
     const items = [];
-    if (r.added) items.push(["remove", "Remove repo", (cx) => { this.removeRepo(r.id); cx.notify(); }]);
+    items.push(["remove", "Remove repo", (cx) => { this.removeRepo(r.id); cx.notify(); }]);
     if (r.webUrl) items.push(["web", r.webLabel, () => this.openWeb(r.webUrl)]);
     if (r.mainPath) items.push(["copy", "Copy path", (cx) => cx.write_to_clipboard(r.mainPath)]);
     if (!items.length) items.push(["none", "No actions", () => {}]);

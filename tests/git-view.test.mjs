@@ -118,3 +118,13 @@ test("fix 8: removeRepoPaths drops the added paths that produced the repo (an ad
   assert.deepEqual(removeRepoPaths([{ path: "/srv/api/sub", machine: "devbox" }, { path: "/srv/api/sub", machine: null }], remote, "windows"),
     [{ path: "/srv/api/sub", machine: null }]);
 });
+
+test("skipAfterRemove: a repo removed while a terminal is in it is skipped; otherwise unchanged", async () => {
+  const { skipAfterRemove } = await import("../src/mods/dock-git/view.js");
+  const open = { id: "r1", worktrees: [{ id: "w1", open: false }, { id: "w2", open: true }] };
+  const closed = { id: "r2", worktrees: [{ id: "w3", open: false }] };
+  assert.deepEqual(skipAfterRemove(undefined, open), ["r1"]);
+  assert.deepEqual(skipAfterRemove(["r9"], open), ["r9", "r1"]);
+  assert.deepEqual(skipAfterRemove(["r1"], open), ["r1"]);
+  assert.equal(skipAfterRemove(["r9"], closed), null);
+});

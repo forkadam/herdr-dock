@@ -15,7 +15,7 @@ const status = (branch, { ab = "+0 -0", dirty = false, oid = "b".repeat(40) } = 
   ].join("\n"));
 
 // A fake host. `table` answers exec calls keyed by `${on ?? ""} ${args.join(" ")}`.
-function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "windows" } = {}) {
+function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "windows", autoAdd = false } = {}) {
   const store = new Map([["dock.git.repos", repos]]);
   const io = {
     t: 0,
@@ -24,6 +24,7 @@ function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "w
     active: 0,
     maxActive: 0,
     platform,
+    autoAdd,
     now: () => io.t,
     panes: () => panes,
     spaces: () => spaces,
@@ -519,4 +520,59 @@ test("fix 8: each repo publishes the added paths that produced it (a subfolder, 
   assert.equal(api.id, "|d:/work/api/.git");
   assert.deepEqual(api.addedPaths, [{ path: "D:/work/api/src", machine: null }]);
   assert.deepEqual(gone.addedPaths, [{ path: "D:/gone", machine: null }]);
+});
+
+// --- auto-add (docs/superpowers/specs/2026-11-22-auto-add-repos-design.md) ---
+const TOOL = {
+  "devbox -C /home/me/tool/lib rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/home/me/tool\n/home/me/tool/.git\n"),
+  "devbox -C /home/me/tool rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("/home/me/tool\n/home/me/tool/.git\n"),
+  "devbox -C /home/me/tool worktree list --porcelain": wtList(["/home/me/tool", "main"]),
+  "devbox -C /home/me/tool remote get-url origin": NO_ORIGIN,
+  "devbox --no-optional-locks -C /home/me/tool status --porcelain=v2 --branch": status("main"),
+};
+const TOOL_SPACE = [{ id: "s1", name: "dev", machine: "devbox", tabs: [{ id: "t1" }] }];
+
+test("auto-add: a repo a terminal works in is added (with its machine) and stays after the terminal closes", async () => {
+  const panes = [{ pane: "p1", tab: "t1", cwd: "/home/me/tool/lib" }];
+  const io = fakeIo({ spaces: TOOL_SPACE, panes, table: TOOL, autoAdd: true });
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/home/me/tool", machine: "devbox" }]);
+  io.t += 1000; await c.tick();
+  io.t += 1000; await c.tick();
+  // Exactly one entry, never appended twice.
+  assert.equal(io.shared("dock.git.repos").length, 1);
+  panes.length = 0; // the terminal closes
+  io.t += 61000; await c.tick();
+  const s = c.state();
+  assert.equal(s.repos.length, 1);
+  assert.equal(s.repos[0].added, true);
+  assert.equal(s.repos[0].worktrees[0].open, false);
+});
+
+test("auto-add: a terminal in a repo already added adds nothing", async () => {
+  const io = fakeIo({
+    repos: [{ path: "/home/me/tool", machine: "devbox" }],
+    spaces: TOOL_SPACE, panes: [{ pane: "p1", tab: "t1", cwd: "/home/me/tool/lib" }], table: TOOL, autoAdd: true,
+  });
+  const c = createCollector(io);
+  await c.tick(); io.t += 1000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/home/me/tool", machine: "devbox" }]);
+});
+
+test("skipped: a removed repo with a terminal in it is hidden and not re-added until its terminals leave", async () => {
+  const panes = [{ pane: "p1", tab: "t1", cwd: "/home/me/tool/lib" }];
+  const io = fakeIo({ spaces: TOOL_SPACE, panes, table: TOOL, autoAdd: true });
+  io.setShared("dock.git.skipped", ["devbox|/home/me/tool/.git"]);
+  const c = createCollector(io);
+  await c.tick(); io.t += 1000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.repos"), []);
+  assert.equal(c.state().repos.length, 0);
+  assert.deepEqual(io.shared("dock.git.skipped"), ["devbox|/home/me/tool/.git"]);
+  panes.length = 0; // every terminal leaves
+  io.t += 1000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.skipped"), []);
+  panes.push({ pane: "p2", tab: "t1", cwd: "/home/me/tool/lib" }); // a terminal comes back
+  io.t += 1000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/home/me/tool", machine: "devbox" }]);
 });

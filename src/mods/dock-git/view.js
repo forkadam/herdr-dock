@@ -96,3 +96,11 @@ export function removeRepoPaths(list, repo, platform) {
   return cur.filter((e) => !(e && typeof e.path === "string" && (e.machine ?? null) === machine
     && ids.has(idOf(machine, e.path, platform))));
 }
+
+// dock.git.skipped after removing this repo: when a terminal is still in it, it is skipped (hidden,
+// not auto-added again) until its terminals leave; null when nothing changes.
+export function skipAfterRemove(skipped, repo) {
+  if (!(repo?.worktrees ?? []).some((w) => w.open)) return null;
+  const list = Array.isArray(skipped) ? skipped : [];
+  return list.includes(repo.id) ? list : [...list, repo.id];
+}

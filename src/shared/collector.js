@@ -16,6 +16,7 @@ const GIT_LIMIT = 4; // git processes at once
 const REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
 const REPOS_KEY = "dock.git.repos";
+const SKIPPED_KEY = "dock.git.skipped";
 const STATE_KEY = "dock.git.state";
 const SELECTED_KEY = "dock.git.selected";
 const DETAIL_KEY = "dock.git.detail";
@@ -326,6 +327,32 @@ export function createCollector(io) {
     return ordered;
   }
 
+  // Auto-add and skip (docs/superpowers/specs/2026-11-22-auto-add-repos-design.md):
+  // - a repo a terminal works in that isn't added is appended to dock.git.repos, so it stays after
+  //   its terminals close (waits while an added entry is still resolving, so nothing is added twice);
+  // - a repo in dock.git.skipped (removed while a terminal was in it) is hidden and never auto-added,
+  //   and leaves the list once no terminal is in it.
+  function applySkipAndAutoAdd(view, addedList) {
+    const raw = io.shared(SKIPPED_KEY);
+    const skipped = Array.isArray(raw) ? raw.filter((s) => typeof s === "string") : [];
+    const open = new Set([...view.values()].filter((r) => [...r.wts.values()].some((w) => w.open)).map((r) => r.id));
+    const keep = skipped.filter((id) => open.has(id));
+    if (keep.length !== skipped.length || !Array.isArray(raw)) {
+      if (raw !== undefined || keep.length) io.setShared(SKIPPED_KEY, keep);
+    }
+    for (const id of keep) view.delete(id);
+    if (io.autoAdd === false) return; // tests of other behaviour can turn it off; on in the app
+    const resolving = addedList.some((a) => !added.get(`${a.machine ?? ""}|${a.path}`)?.done);
+    if (resolving) return;
+    const extra = [];
+    for (const r of view.values()) {
+      if (r.added || r.error) continue;
+      const w = [...r.wts.values()].find((x) => x.open);
+      if (w) extra.push({ path: w.path, machine: r.machine ?? null });
+    }
+    if (extra.length) io.setShared(REPOS_KEY, [...(io.shared(REPOS_KEY) ?? []), ...extra]);
+  }
+
   function publish(now) {
     const repos = [...currentView.values()].map((r) => {
       const origin = repoRecs.get(r.id)?.origin ?? null;
@@ -398,6 +425,7 @@ export function createCollector(io) {
 
     // 2. Membership: sync per-repo and per-worktree records with the view.
     const view = buildView(addedList, paneList);
+    applySkipAndAutoAdd(view, addedList);
     currentView = view;
     viewGen = gen;
     const wtIds = new Set();

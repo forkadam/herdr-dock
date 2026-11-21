@@ -181,9 +181,13 @@ Run the command again to close it.
 
 **Git projects** (`dock-git`, left panel) lists git repos and their worktrees:
 
-- A repo shows up when a terminal in Herdr is inside it (it disappears again when no terminal is), or when you add
-  it with **+** (an added repo always shows, with all its worktrees). Right-click a repo for Remove repo (added
-  repos only), Open in GitLab/GitHub and Copy path. **⟳** re-checks every repo and pipeline now.
+- A repo shows up when you add it with **+**, or when a terminal in Herdr (yours or an agent's, in any space, on
+  any machine) works in it: that adds it automatically, so it stays, with its pipelines watched, after the terminal
+  closes. An added repo always shows all its worktrees, new ones included. Nothing removes a repo except you.
+- Right-click a repo for Remove repo, Open in GitLab/GitHub and Copy path. Removing a repo while a terminal is still
+  in it hides it until all its terminals have left; the next time a terminal works in it, it is added again.
+  **⟳** re-checks every repo and pipeline now. The list (`dock.git.repos`, `dock.git.skipped`) is per PC, never
+  in git.
 - Each worktree row shows its branch, ↑ahead ↓behind, a dim "no upstream", • for uncommitted changes, a green dot
   when it is open in a space, and the CI badge: ✓ passed, ✕ failed, ⟳ running or pending, – none or canceled,
   ⚠ unknown (hover for why). Click a row to select it (and its space). Click the badge to open Pipelines.
