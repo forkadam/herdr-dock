@@ -1,0 +1,415 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createCollector } from "../src/shared/collector.js";
+
+const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
+const ok = (stdout, stderr = "") => ({ code: 0, stdout, stderr });
+const T0 = Date.parse("2026-11-22T10:00:00Z");
+const TOKEN = "glpat-secret123";
+const WT = "|d:/work/api";
+const GL = "https://gitlab.corp/api/v4/projects/grp%2Fapi";
+const PIPES = `${GL}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`;
+
+const status = (branch, { ab = "+0 -0", oid = "c".repeat(40) } = {}) =>
+  ok([`# branch.oid ${oid}`, `# branch.head ${branch}`, `# branch.upstream origin/${branch}`, `# branch.ab ${ab}`].join("\n"));
+const res = (status, body) => ({
+  status, ok: status >= 200 && status < 300,
+  json: async () => body, text: async () => JSON.stringify(body),
+});
+const pipeline = (o = {}) => ({
+  id: 48213, status: "failed", ref: "main", sha: "c".repeat(40),
+  web_url: "https://gitlab.corp/grp/api/-/pipelines/48213", created_at: "2026-11-22T09:00:00Z", ...o,
+});
+// Newest first, as GitLab may return them.
+const JOBS = [
+  { id: 903, name: "release", stage: "deploy", status: "skipped", web_url: "https://gitlab.corp/grp/api/-/jobs/903" },
+  { id: 902, name: "unit", stage: "test", status: "failed", duration: 93.5, web_url: "https://gitlab.corp/grp/api/-/jobs/902" },
+  { id: 901, name: "compile", stage: "build", status: "success", web_url: "https://gitlab.corp/grp/api/-/jobs/901" },
+];
+
+// One added repo D:/work/api with one worktree. `routes` answers fetch by exact URL (a value, or a function of
+// (url, init, n) where n counts calls to that URL). `cli` answers glab/gh by `${cmd} ${args.join(" ")}`.
+function ciIo({
+  origin = "git@gitlab.corp:grp/api.git", branch = "main", st, routes = {}, cli = {}, store,
+} = {}) {
+  const shared = store ?? new Map();
+  if (!shared.has("dock.git.repos")) shared.set("dock.git.repos", [{ path: "D:/work/api", machine: null }]);
+  const io = {
+    t: T0, platform: "windows", calls: [], fetches: [], logs: [], notes: [], sounds: [], sets: [],
+    st: st ?? status(branch),
+    now: () => io.t,
+    panes: () => [],
+    spaces: () => [],
+    shared: (k) => shared.get(k),
+    setShared: (k, v) => { shared.set(k, v); io.sets.push([k, v]); },
+    notify: (n) => io.notes.push(n),
+    playSound: (s) => io.sounds.push(s),
+    log: (m) => io.logs.push(String(m)),
+    async fetch(url, init) {
+      io.fetches.push({ url, init });
+      const n = io.fetches.filter((f) => f.url === url).length;
+      const r = routes[url];
+      if (r === undefined) return res(404, { message: "404 Not found" });
+      return typeof r === "function" ? r(url, init, n) : r;
+    },
+    async exec(cmd, args) {
+      const key = `${cmd} ${args.join(" ")}`;
+      io.calls.push({ cmd, args, key });
+      await new Promise((r) => setTimeout(r, 1));
+      if (cmd === "git") {
+        const git = {
+          "-C D:/work/api rev-parse --show-toplevel --git-common-dir": ok("D:/work/api\n.git\n"),
+          "-C D:/work/api worktree list --porcelain": ok(`worktree D:/work/api\nHEAD ${"c".repeat(40)}\nbranch refs/heads/${branch}\n`),
+          "-C D:/work/api remote get-url origin": ok(`${origin}\n`),
+          "-C D:/work/api status --porcelain=v2 --branch": io.st,
+        };
+        return git[args.join(" ")] ?? { code: 128, stdout: "", stderr: "fatal" };
+      }
+      const table = {
+        "glab auth status --hostname gitlab.corp": ok("", "✓ Logged in to gitlab.corp as me"),
+        "glab config get token --host gitlab.corp": ok(`${TOKEN}\n`),
+        "gh auth token --hostname github.com": ok("gho_tok123\n"),
+        ...cli,
+      };
+      const a = table[key];
+      if (a === undefined) return { code: 1, stdout: "", stderr: `no answer for ${key}` };
+      return typeof a === "function" ? a(args) : a;
+    },
+  };
+  return { io, shared };
+}
+
+const wtOf = (c) => c.state().repos[0].worktrees[0];
+const detailOf = (io) => [...io.sets].reverse().find(([k]) => k === "dock.git.detail")?.[1];
+const until = async (cond) => {
+  for (let i = 0; i < 1000 && !cond(); i++) await new Promise((r) => setTimeout(r, 2));
+  assert.ok(cond(), "condition not reached");
+};
+const noToken = (io, c, token = TOKEN) => {
+  const all = JSON.stringify([c.state(), io.sets, io.logs, io.notes]);
+  assert.ok(!all.includes(token), "token leaked");
+};
+
+test("(a) GitLab failed pipeline: state, detail, token header, no token anywhere; jobs sorted by id", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline()]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS) } });
+  const c = createCollector(io);
+  await c.tick();
+  const repo = c.state().repos[0];
+  assert.equal(repo.provider, "gitlab");
+  const w = wtOf(c);
+  assert.equal(w.pipeline.status, "failed");
+  assert.equal(w.pipeline.id, 48213);
+  assert.equal(w.pipeline.webUrl, "https://gitlab.corp/grp/api/-/pipelines/48213");
+  assert.equal(w.pipeline.stale, false);
+  assert.equal(w.pipeline.error, null);
+  assert.equal(io.fetches[0].url, PIPES);
+  assert.equal(io.fetches[0].init.headers["PRIVATE-TOKEN"], TOKEN);
+
+  await c.select(WT);
+  assert.equal(io.shared("dock.git.selected"), WT);
+  const d = detailOf(io);
+  assert.equal(d.worktree, WT);
+  assert.equal(d.repo, "api");
+  assert.equal(d.branch, "main");
+  assert.equal(d.provider, "gitlab");
+  assert.equal(d.via, "fetch");
+  assert.equal(d.olderThanHead, false);
+  assert.equal(d.error, null);
+  assert.equal(d.hint, null);
+  assert.deepEqual(d.pipeline.stages.map((s) => s.name), ["build", "test", "deploy"]);
+  assert.equal(d.pipeline.failedJobs[0].name, "unit");
+  assert.equal(c.urlFor("pipeline"), "https://gitlab.corp/grp/api/-/pipelines/48213");
+  assert.equal(c.urlFor({ job: 0 }), "https://gitlab.corp/grp/api/-/jobs/902");
+  assert.equal(c.urlFor({ job: 5 }), null);
+  noToken(io, c);
+});
+
+test("(b) nested group path and an awkward branch are URL-encoded", async () => {
+  const { io } = ciIo({ origin: "git@gitlab.corp:grp/sub/proj.git", branch: "feature/a b#c+d" });
+  const c = createCollector(io);
+  await c.tick();
+  const u = io.fetches[0].url;
+  assert.ok(u.includes("projects/grp%2Fsub%2Fproj/"), u);
+  assert.ok(u.includes("ref=feature%2Fa%20b%23c%2Bd"), u);
+});
+
+for (const [name, cli] of [
+  ["glab missing", { "glab auth status --hostname gitlab.corp": () => { throw new Error("spawn glab ENOENT"); } }],
+  ["auth status exit 1", { "glab auth status --hostname gitlab.corp": { code: 1, stdout: "", stderr: "not logged in" } }],
+]) {
+  test(`(c) ${name}: unknown with a login hint, git fields still filled`, async () => {
+    const { io } = ciIo({ cli, st: status("main", { ab: "+2 -1" }) });
+    const c = createCollector(io);
+    await c.tick();
+    const w = wtOf(c);
+    assert.equal(w.pipeline.status, "unknown");
+    assert.equal(w.pipeline.error, "not logged in");
+    assert.equal(w.branch, "main");
+    assert.equal(w.ahead, 2);
+    assert.equal(w.behind, 1);
+    assert.equal(io.fetches.length, 0);
+    await c.select(WT);
+    const d = detailOf(io);
+    assert.equal(d.error, "not logged in");
+    assert.equal(d.hint, "glab auth login --hostname gitlab.corp");
+    assert.equal(d.pipeline, null);
+  });
+}
+
+test("(d) a keyring login: the token comes from auth status --show-token", async () => {
+  const { io } = ciIo({
+    cli: {
+      "glab config get token --host gitlab.corp": ok("\n"),
+      "glab auth status --hostname gitlab.corp --show-token": ok("", "gitlab.corp\n  ✓ Logged in\n  ✓ Token: glpat-xyz\n"),
+    },
+    routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].init.headers["PRIVATE-TOKEN"], "glpat-xyz");
+  assert.equal(wtOf(c).pipeline.status, "passed");
+  noToken(io, c, "glpat-xyz");
+});
+
+test("(e) a TLS error switches the host to glab api for the session", async () => {
+  const path = "projects/grp%2Fapi/pipelines?ref=main&per_page=1&order_by=id&sort=desc";
+  const { io } = ciIo({
+    routes: {
+      [PIPES]: () => { throw new TypeError("fetch failed", { cause: { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" } }); },
+    },
+    cli: {
+      [`glab api --hostname gitlab.corp ${path}`]: ok(JSON.stringify([pipeline()])),
+      "glab api --hostname gitlab.corp projects/grp%2Fapi/pipelines/48213/jobs?per_page=100": ok(JSON.stringify(JOBS)),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  const api = io.calls.filter((x) => x.cmd === "glab" && x.args[0] === "api");
+  assert.deepEqual(api[0].args, ["api", "--hostname", "gitlab.corp", path]);
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  await c.select(WT);
+  assert.equal(detailOf(io).via, "glab");
+  assert.equal(detailOf(io).pipeline.failedJobs[0].name, "unit");
+  // The next poll for that host goes straight to glab.
+  const fetched = io.fetches.length;
+  io.t += 300000;
+  await c.tick();
+  assert.equal(io.fetches.length, fetched);
+  assert.equal(io.calls.filter((x) => x.cmd === "glab" && x.args[0] === "api").length, 4);
+  noToken(io, c);
+});
+
+test("(f) a 401 re-reads the token once and retries once", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: (u, i, n) => (n === 1 ? res(401, { message: "401 Unauthorized" }) : res(200, [pipeline({ status: "success" })])) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.calls.filter((x) => x.key === "glab config get token --host gitlab.corp").length, 2);
+  assert.equal(io.fetches.filter((f) => f.url === PIPES).length, 2);
+  assert.equal(wtOf(c).pipeline.status, "passed");
+});
+
+test("(f2) a second 401 is 'not logged in', with the hint", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(401, { message: "401 Unauthorized" }) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches.length, 2);
+  assert.equal(wtOf(c).pipeline.status, "unknown");
+  assert.equal(wtOf(c).pipeline.error, "not logged in");
+});
+
+test("(g) a request that never resolves times out after 15 s of fake time", async () => {
+  let signal;
+  const { io } = ciIo({ routes: { [PIPES]: (u, init) => { signal = init.signal; return new Promise(() => {}); } } });
+  const c = createCollector(io);
+  const first = c.tick();
+  await until(() => io.fetches.length === 1);
+  io.t += 14999;
+  await c.tick();
+  assert.equal(wtOf(c).pipeline, null);
+  io.t += 1;
+  await c.tick();
+  await first;
+  const w = wtOf(c);
+  assert.equal(w.pipeline.status, "unknown");
+  assert.equal(w.pipeline.error, "timeout");
+  assert.equal(signal?.aborted, true);
+  // The host backs off 30 s before the next try.
+  io.t += 29000;
+  await c.tick();
+  assert.equal(io.fetches.length, 1);
+  io.t += 1000;
+  c.tick();
+  await until(() => io.fetches.length === 2);
+});
+
+test("(h) alerts: running -> failed alerts once; no repeat on the next tick or after a restart", async () => {
+  let pl = pipeline({ status: "running", created_at: "2026-11-22T10:01:00Z" });
+  const routes = { [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS) };
+  const { io, shared } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 0);
+  pl = pipeline({ status: "failed", created_at: "2026-11-22T10:01:00Z" });
+  io.t += 30000;
+  await c.tick();
+  assert.equal(io.notes.length, 1);
+  assert.deepEqual(io.notes[0], {
+    title: "api · main", body: "Pipeline failed: unit", level: "error",
+    action: { name: "dock-core.git.show", args: { worktree: WT } },
+  });
+  assert.deepEqual(io.sounds, ["blocked"]);
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: 48213 });
+  // alerted is written before notify.
+  const iAlerted = io.sets.findIndex(([k]) => k === "dock.git.alerted");
+  assert.ok(iAlerted >= 0);
+  io.t += 300000;
+  await c.tick();
+  assert.equal(io.notes.length, 1);
+
+  // Restart: a new collector (started before the pipeline was created) over the same shared store.
+  const { io: io2 } = ciIo({ routes, store: shared });
+  const c2 = createCollector(io2);
+  await c2.tick();
+  assert.equal(wtOf(c2).pipeline.status, "failed");
+  assert.equal(io2.notes.length, 0);
+  assert.equal(io2.sounds.length, 0);
+});
+
+test("(h2) a failure that already existed at startup doesn't alert", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline()]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 0);
+});
+
+test("(i) cadence: running every 30 s, passed every 5 min, 15 s for 2 min after a push", async () => {
+  let pl = pipeline({ status: "running" });
+  const { io } = ciIo({ routes: { [PIPES]: () => res(200, [pl]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, []) } });
+  const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
+  const at = async (dt) => { io.t = T0 + dt; await c.tick(); };
+  await at(0);
+  assert.equal(n(), 1);
+  await at(29000); assert.equal(n(), 1);
+  await at(30000); assert.equal(n(), 2);
+  pl = pipeline({ status: "success" });
+  await at(60000); assert.equal(n(), 3); // passed now
+  await at(359000); assert.equal(n(), 3);
+  await at(360000); assert.equal(n(), 4);
+  // A push: ahead goes 1 -> 0 between two status polls (the worktree isn't open: git every 60 s).
+  io.st = status("main", { ab: "+1 -0" });
+  await at(420000); assert.equal(n(), 4);
+  io.st = status("main", { ab: "+0 -0" });
+  await at(480000); assert.equal(n(), 5); // upstream changed: due now
+  await at(494000); assert.equal(n(), 5);
+  await at(495000); assert.equal(n(), 6);
+  for (let s = 496; s <= 600; s++) await at(s * 1000);
+  assert.equal(n(), 12); // 510, 525, ..., 585; at 600 the 2 min are over: back to 5 min
+  await at(615000); assert.equal(n(), 12);
+  await at(885000); assert.equal(n(), 13);
+});
+
+test("(j) retry() on GitLab posts to .../pipelines/48213/retry", async () => {
+  const RETRY = `${GL}/pipelines/48213/retry`;
+  const { io } = ciIo({ routes: {
+    [PIPES]: res(200, [pipeline()]), [`${GL}/pipelines/48213/jobs?per_page=100`]: res(200, JOBS),
+    [RETRY]: res(201, { id: 48213, status: "running" }),
+  } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  const r = await c.retry();
+  assert.deepEqual(r, { ok: true, error: null });
+  const post = io.fetches.find((f) => f.url === RETRY);
+  assert.equal(post.init.method, "POST");
+  assert.equal(post.init.headers["PRIVATE-TOKEN"], TOKEN);
+});
+
+test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for the failed run", async () => {
+  const RUNS = "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20";
+  const RERUN = "https://api.github.com/repos/o/r/actions/runs/301/rerun-failed-jobs";
+  const { io } = ciIo({
+    origin: "https://github.com/o/r.git",
+    st: status("main", { oid: "bbbb000000000000000000000000000000000002" }),
+    routes: {
+      [RUNS]: res(200, fx("github-runs.json")),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+      [RERUN]: res(201, {}),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(c.state().repos[0].provider, "github");
+  const w = wtOf(c);
+  assert.equal(w.pipeline.status, "failed");
+  assert.equal(w.pipeline.id, "bbbb000000000000000000000000000000000002");
+  assert.equal(io.fetches[0].init.headers.Authorization, "Bearer gho_tok123");
+  assert.equal(io.fetches[0].init.headers.Accept, "application/vnd.github+json");
+  // Only the failed run's jobs are fetched.
+  assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs"]);
+  await c.select(WT);
+  assert.deepEqual(detailOf(io).pipeline.failedJobs.map((j) => j.name), ["test"]);
+  assert.deepEqual(await c.retry(), { ok: true, error: null });
+  assert.deepEqual(io.fetches.filter((f) => f.init?.method === "POST").map((f) => f.url), [RERUN]);
+  noToken(io, c, "gho_tok123");
+});
+
+test("detached HEAD queries by sha, and an older pipeline is marked stale", async () => {
+  const head = "d".repeat(40);
+  const url = `${GL}/pipelines?sha=${head}&per_page=1&order_by=id&sort=desc`;
+  const { io } = ciIo({
+    st: ok([`# branch.oid ${head}`, "# branch.head (detached)"].join("\n")),
+    routes: { [url]: res(200, [pipeline({ status: "success", sha: "e".repeat(40) })]) },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].url, url);
+  assert.equal(wtOf(c).pipeline.stale, true);
+  await c.select(WT);
+  assert.equal(detailOf(io).olderThanHead, true);
+});
+
+test("no pipelines -> none; dock.git.hosts can turn a host off", async () => {
+  const { io, shared } = ciIo({ routes: { [PIPES]: res(200, []) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "none");
+  shared.set("dock.git.hosts", { "gitlab.corp": "none" });
+  const { io: io2 } = ciIo({ store: shared });
+  const c2 = createCollector(io2);
+  await c2.tick();
+  assert.equal(c2.state().repos[0].provider, null);
+  assert.equal(wtOf(c2).pipeline, null);
+  assert.equal(io2.calls.filter((x) => x.cmd === "glab").length, 0);
+});
+
+test("at most 4 HTTP requests at once", async () => {
+  const repos = Array.from({ length: 8 }, (_, i) => ({ path: `D:/w/r${i}`, machine: null }));
+  let active = 0, max = 0;
+  const { io } = ciIo();
+  io.shared = ((orig) => (k) => (k === "dock.git.repos" ? repos : orig(k)))(io.shared);
+  io.exec = async (cmd, args) => {
+    await new Promise((r) => setTimeout(r, 1));
+    const a = args.join(" ");
+    let m;
+    if ((m = /^-C (\S+) rev-parse/.exec(a))) return ok(`${m[1]}\n.git\n`);
+    if ((m = /^-C (\S+) worktree list/.exec(a))) return ok(`worktree ${m[1]}\nHEAD ${"c".repeat(40)}\nbranch refs/heads/main\n`);
+    if ((m = /^-C D:\/w\/(r\d) remote/.exec(a))) return ok(`git@gitlab.corp:grp/${m[1]}.git\n`);
+    if (/status --porcelain/.test(a)) return status("main");
+    if (cmd === "glab" && args[1] === "status") return ok("");
+    if (cmd === "glab") return ok(`${TOKEN}\n`);
+    return { code: 1, stdout: "", stderr: "" };
+  };
+  io.fetch = async () => {
+    active++; max = Math.max(max, active);
+    await new Promise((r) => setTimeout(r, 5));
+    active--;
+    return res(200, [pipeline({ status: "success" })]);
+  };
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(max, 4);
+  assert.ok(c.state().repos.every((r) => r.worktrees[0].pipeline.status === "passed"));
+});

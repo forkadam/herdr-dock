@@ -1,32 +1,22 @@
 // The git/CI collector: discovers repos and worktrees (added repos + terminals), polls git status, and
-// publishes `dock.git.state`. Host-independent: all I/O goes through the injected `io`, and there are no
-// timers here — the host calls tick() every second and scheduling compares io.now() on each tick.
+// publishes `dock.git.state`; polls each worktree's latest CI pipeline, raises failure alerts, and publishes
+// the selected worktree's `dock.git.detail`. Host-independent: all I/O goes through the injected `io`, and
+// there are no timers here — the host calls tick() every second and scheduling (and request timeouts)
+// compare io.now() on each tick. The HTTP/CLI route lives in ci-client.js.
 // (No Node built-ins: bundled into Herdr mods.)
 import { parseWorktrees, parseStatus, parseRevParse, parseRemote, worktreeId } from "./git.js";
-import { gitInterval } from "./ci.js";
+import { gitInterval, ciInterval, alertFor } from "./ci.js";
+import { createCiClient } from "./ci-client.js";
+import { limiter } from "./limiter.js";
 import { slashPath } from "./path.js";
 
 const GIT_LIMIT = 4; // git processes at once
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
 const REPOS_KEY = "dock.git.repos";
 const STATE_KEY = "dock.git.state";
-
-// Runs at most `n` async jobs at once; the rest wait in FIFO order.
-function limiter(n) {
-  let active = 0;
-  const queue = [];
-  const next = () => {
-    while (active < n && queue.length) {
-      const { fn, resolve, reject } = queue.shift();
-      active++;
-      Promise.resolve()
-        .then(fn)
-        .then(resolve, reject)
-        .finally(() => { active--; next(); });
-    }
-  };
-  return (fn) => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); next(); });
-}
+const SELECTED_KEY = "dock.git.selected";
+const DETAIL_KEY = "dock.git.detail";
+const ALERTED_KEY = "dock.git.alerted";
 
 const basename = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
 const errText = (r) => String(r.stderr || r.stdout || `git exited ${r.code}`).trim().split(/\r?\n/)[0];
@@ -37,7 +27,10 @@ const mainFromCommonDir = (commonDir) => (commonDir.endsWith("/.git") ? commonDi
 
 export function createCollector(io) {
   const git = limiter(GIT_LIMIT);
-  const log = (msg) => { try { io.log?.(msg); } catch { /* logging never breaks a tick */ } };
+  // Every log line passes through the client's redaction, so no token can reach io.log.
+  const log = (msg) => { try { io.log?.(client.redact(msg)); } catch { /* logging never breaks a tick */ } };
+  const client = createCiClient(io, log);
+  const startedAt = io.now();
 
   // Remote paths are POSIX unless they look like a Windows drive path.
   const platformOf = (machine, path) =>
@@ -61,11 +54,14 @@ export function createCollector(io) {
   const cwds = new Map();
   // Per repo (by repo id): { origin: undefined (unread) | { host, path } | null (no origin), busy, tried }.
   const repoRecs = new Map();
-  // Per worktree (by worktree id): { id, machine, path, gitAt, busy, git: parseStatus() | null, error }.
-  // Task 4 adds its CI schedule (nextCiAt, pipeline, ...) to this record.
+  // Per worktree (by worktree id): { id, machine, path, gitAt, busy, git: parseStatus() | null, error,
+  //   upstreamChangedAt, ci: { at, busy, done, host, path, provider, pipeline (full) | null, runIds, error,
+  //   hint, hostFailure, target, prev } } (see newCi()).
   const wtRecs = new Map();
   let published = { repos: [], updatedAt: null };
   let publishedKey = null;
+  let detailKey = null;
+  let selected = io.shared(SELECTED_KEY) ?? null;
   // Ticks may overlap (a slow git status outlives the 1 s timer). Each tick takes a generation. The newest
   // membership (built and pruned by the tick numbered viewGen) is kept in currentView, and publishing always
   // reads currentView plus the current records, never a view captured earlier. A tick older than viewGen
@@ -140,14 +136,124 @@ export function createCollector(io) {
     w.busy = true;
     try {
       const r = await run(w.machine, ["-C", w.path, "status", "--porcelain=v2", "--branch"]);
-      if (r.code === 0) Object.assign(w, { git: parseStatus(r.stdout), error: null });
-      else {
+      if (r.code === 0) {
+        const g = parseStatus(r.stdout);
+        // A push: ahead drops from >0 to 0 between two polls. CI then polls fast for a while (ciInterval).
+        if (w.git?.ahead > 0 && g.ahead === 0) w.upstreamChangedAt = now;
+        Object.assign(w, { git: g, error: null });
+      } else {
         w.error = errText(r);
         log(`git status failed in ${w.path}: ${w.error}`);
       }
     } finally {
       Object.assign(w, { gitAt: now, busy: false });
     }
+  }
+
+  // --- CI ---------------------------------------------------------------------------------------
+  const newCi = () => ({
+    at: -Infinity, busy: false, done: false, host: null, path: null, provider: null, pipeline: null, runIds: [],
+    error: null, hint: null, hostFailure: false, target: null, prev: undefined,
+  });
+  const headOf = (wt, w) => (wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head });
+  const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
+
+  function maybeAlert(wt, repo, cur, head) {
+    const alerted = io.shared(ALERTED_KEY);
+    const a = alertFor({
+      prev: wt.ci.prev, cur, alerted: alerted?.[wt.id], startedAt, repo: repoName(repo.mainPath, repo.machine), branch: branchLabel(head),
+    });
+    if (!a) return;
+    // Recorded before notifying, so a crash or restart mid-alert can't alert twice.
+    io.setShared(ALERTED_KEY, { ...(alerted && typeof alerted === "object" ? alerted : {}), [wt.id]: cur.id });
+    try {
+      io.notify({ ...a, level: "error", action: { name: "dock-core.git.show", args: { worktree: wt.id } } });
+      io.playSound("blocked");
+    } catch (e) {
+      log(`CI: alert failed: ${e?.message ?? e}`);
+    }
+  }
+
+  async function pollCi(wt, repo, origin, w, now) {
+    const ci = wt.ci;
+    ci.busy = true;
+    try {
+      const login = await client.resolve(origin.host);
+      Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
+      if (!login.provider) return Object.assign(ci, { error: null, hint: null, hostFailure: false, done: false });
+      if (login.error) return Object.assign(ci, { error: login.error, hint: login.hint, hostFailure: false, done: true });
+      const head = headOf(wt, w);
+      if (!head.branch && !head.sha) return;
+      const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
+      const got = await client.latest(origin.host, login.provider, origin.path, head);
+      if (!got.ok) {
+        log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
+        return Object.assign(ci, { error: got.error, hint: got.hint ?? null, hostFailure: got.hostFailure, done: true });
+      }
+      // Another branch (or sha) is a different pipeline history: forget the last-seen pipeline.
+      if (ci.target !== target) Object.assign(ci, { target, prev: undefined });
+      const cur = got.pipeline;
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], error: null, hint: null, hostFailure: false, done: true });
+      if (cur) maybeAlert(wt, repo, cur, head);
+      ci.prev = cur ?? undefined;
+    } finally {
+      Object.assign(ci, { at: now, busy: false });
+      publish(io.now()); // from current membership and records, never a captured view
+    }
+  }
+
+  function ciDue(wt, host, now) {
+    if (wt.ci.busy || client.blocked(host, now)) return false;
+    if (wt.ci.hostFailure) return true; // the host's backoff is over
+    return now - wt.ci.at >= ciInterval({ status: wt.ci.pipeline?.status, upstreamChangedAt: wt.upstreamChangedAt, now });
+  }
+
+  // The published summary of a worktree's pipeline (full details only in dock.git.detail).
+  function pipelineSummary(wt) {
+    const ci = wt?.ci;
+    if (!ci?.provider || !ci.done) return null;
+    const p = ci.pipeline;
+    const head = wt.git?.oid ?? null;
+    return {
+      status: ci.error ? "unknown" : p ? p.status : "none",
+      id: p?.id ?? null,
+      sha: p?.sha ?? null,
+      webUrl: p?.webUrl ?? null,
+      createdAt: p?.createdAt ?? null,
+      stale: !!(p && head && p.sha && p.sha !== head),
+      error: ci.error,
+      hint: ci.hint,
+    };
+  }
+
+  // The view repo and worktree entry holding a worktree id.
+  function locate(id) {
+    for (const r of currentView.values()) if (r.wts.has(id)) return { repo: r, w: r.wts.get(id) };
+    return null;
+  }
+
+  function publishDetail() {
+    if (selected == null) return;
+    const wt = wtRecs.get(selected);
+    const at = locate(selected);
+    const ci = wt?.ci;
+    const head = wt && at ? headOf(wt, at.w) : { branch: null, sha: null };
+    const p = ci?.pipeline ?? null;
+    const detail = {
+      worktree: selected,
+      repo: at ? repoName(at.repo.mainPath, at.repo.machine) : null,
+      branch: head.branch ?? null,
+      provider: ci?.provider ?? null,
+      via: ci?.provider ? client.via(ci.host) : null,
+      pipeline: p,
+      olderThanHead: !!(p && head.sha && p.sha && p.sha !== head.sha),
+      error: ci?.error ?? null,
+      hint: ci?.hint ?? null,
+    };
+    const key = JSON.stringify(detail);
+    if (key === detailKey) return;
+    detailKey = key;
+    io.setShared(DETAIL_KEY, detail);
   }
 
   // --- discovery view ---------------------------------------------------------------------------
@@ -205,7 +311,7 @@ export function createCollector(io) {
         id: r.id,
         name: repoName(r.mainPath, r.machine),
         machine: r.machine,
-        provider: null, // Task 4
+        provider: origin ? client.providerOf(origin.host) : null,
         host: origin?.host ?? null,
         path: origin?.path ?? null, // the origin's remote path (e.g. "grp/api"), not a folder
         added: r.added,
@@ -224,11 +330,12 @@ export function createCollector(io) {
             dirty: g?.dirty ?? false,
             open: w.open,
             space: w.space,
-            pipeline: null, // Task 4
+            pipeline: pipelineSummary(wtRecs.get(id)),
           };
         }),
       };
     });
+    publishDetail();
     const key = JSON.stringify(repos);
     if (key === publishedKey) return;
     publishedKey = key;
@@ -240,6 +347,7 @@ export function createCollector(io) {
   async function tick() {
     const gen = ++tickGen;
     const now = io.now();
+    client.sweep(now); // time out requests past their 15 s
     const addedList = readAdded();
     const paneList = readPanes();
 
@@ -274,7 +382,7 @@ export function createCollector(io) {
       if (!repoRecs.has(r.id)) repoRecs.set(r.id, { origin: undefined, busy: false, tried: false });
       for (const [id, w] of r.wts) {
         wtIds.add(id);
-        if (!wtRecs.has(id)) wtRecs.set(id, { id, machine: r.machine, path: w.path, gitAt: -Infinity, busy: false, git: null, error: null });
+        if (!wtRecs.has(id)) wtRecs.set(id, { id, machine: r.machine, path: w.path, gitAt: -Infinity, busy: false, git: null, error: null, upstreamChangedAt: -Infinity, ci: newCi() });
       }
     }
     for (const id of repoRecs.keys()) if (!view.has(id)) repoRecs.delete(id);
@@ -300,16 +408,65 @@ export function createCollector(io) {
       }
     }
     await Promise.all(polls);
+    if (gen < viewGen) return; // a newer tick rebuilt membership; it polls CI and publishes
 
-    if (gen < viewGen) return; // a newer tick rebuilt membership; it publishes
+    // 4. CI, after git so the branch and sha are fresh. Each CI poll also publishes when it ends.
+    const ciJobs = [];
+    for (const r of currentView.values()) {
+      const origin = repoRecs.get(r.id)?.origin;
+      if (!origin) continue;
+      for (const [id, w] of r.wts) {
+        const wt = wtRecs.get(id);
+        if (wt && ciDue(wt, origin.host, now)) ciJobs.push(pollCi(wt, r, origin, w, now));
+      }
+    }
     publish(now);
+    await Promise.all(ciJobs);
   }
 
   function refresh() {
     for (const e of added.values()) e.at = -Infinity;
     for (const e of cwds.values()) if (!e.busy) e.done = false;
-    for (const w of wtRecs.values()) w.gitAt = -Infinity;
+    for (const w of wtRecs.values()) {
+      w.gitAt = -Infinity;
+      w.ci.at = -Infinity;
+      w.ci.hostFailure = false;
+    }
+    client.reset();
   }
 
-  return { tick, refresh, state: () => published };
+  // Selects a worktree for the Pipelines panel and publishes its detail; polls its CI first if it never was.
+  async function select(id) {
+    selected = id ?? null;
+    io.setShared(SELECTED_KEY, selected);
+    publishDetail();
+    const wt = wtRecs.get(selected);
+    const at = locate(selected);
+    const origin = at ? repoRecs.get(at.repo.id)?.origin : null;
+    if (wt && origin && !wt.ci.busy && wt.ci.at === -Infinity) await pollCi(wt, at.repo, origin, at.w, io.now());
+    publishDetail();
+  }
+
+  // Retries the selected pipeline: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed
+  // run of that commit.
+  async function retry() {
+    const ci = wtRecs.get(selected)?.ci;
+    const p = ci?.pipeline;
+    if (!p || !ci.provider) return { ok: false, error: "no pipeline" };
+    const r = await client.retry(ci.host, ci.provider, ci.path, p, ci.runIds);
+    ci.at = -Infinity; // re-query on the next tick
+    if (!r.ok) log(`CI: retry on ${ci.host}/${ci.path}: ${r.error}`);
+    return r;
+  }
+
+  // The selected pipeline's web URL, or one of its failed jobs' (by index into failedJobs).
+  function urlFor(target) {
+    const p = wtRecs.get(selected)?.ci.pipeline;
+    if (!p) return null;
+    if (target === "pipeline") return p.webUrl ?? null;
+    const job = Number.isInteger(target?.job) ? p.failedJobs?.[target.job] : null;
+    return job?.webUrl ?? null;
+  }
+
+  return { tick, refresh, select, retry, urlFor, state: () => published };
 }

@@ -34,7 +34,7 @@ function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "w
     log() {},
     fetch: async () => { throw new Error("no fetch in git tests"); },
     async exec(cmd, args, opts) {
-      assert.equal(cmd, "git");
+      if (cmd !== "git") throw new Error(`spawn ${cmd} ENOENT`); // no glab/gh here: CI shows "not logged in"
       const key = `${opts?.on ?? ""} ${args.join(" ")}`;
       io.calls.push({ key, on: opts?.on });
       io.active++;
@@ -80,7 +80,7 @@ test("(a) an added repo with two worktrees, plus a terminal repo on a second mac
   assert.equal(api.machine, null);
   assert.equal(api.added, true);
   assert.equal(api.error, null);
-  assert.equal(api.provider, null);
+  assert.equal(api.provider, "gitlab"); // assumed for a non-github host, with a login hint (no glab here)
   assert.equal(api.host, "gitlab.corp");
   assert.equal(api.path, "grp/api");
   assert.deepEqual(api.worktrees.map((w) => [w.path, w.branch, w.ahead, w.behind, w.dirty, w.open]), [
@@ -90,7 +90,8 @@ test("(a) an added repo with two worktrees, plus a terminal repo on a second mac
   assert.equal(api.worktrees[0].id, "|d:/work/api");
   assert.equal(api.worktrees[0].sha, "b".repeat(40));
   assert.equal(api.worktrees[0].upstream, "origin/main");
-  assert.equal(api.worktrees[0].pipeline, null);
+  assert.equal(api.worktrees[0].pipeline.status, "unknown");
+  assert.equal(api.worktrees[0].pipeline.error, "not logged in");
 
   assert.equal(tool.name, "tool · devbox");
   assert.equal(tool.machine, "devbox");
