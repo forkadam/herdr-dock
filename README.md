@@ -260,7 +260,7 @@ No Python is needed anywhere; everything runs on Node.
 - **Claude:** your Claude Code status line pipes its JSON to `~/.claude/herdr-statusline-cache.mjs` (installed by
   `npm run deploy` when `~/.claude` exists), which writes `~/.claude/statusline-cache/claude-statusline.json`: the
   5-hour/weekly windows and each session's context %. Add this one line to your status-line script, before it prints:
-  - Windows (`statusline.ps1`): `$raw | & node "$env:USERPROFILE.claudeherdr-statusline-cache.mjs" 2>$null | Out-Null`
+  - Windows (`statusline.ps1`): `$raw | & node "$env:USERPROFILE\.claude\herdr-statusline-cache.mjs" 2>$null | Out-Null`
     (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`).
   - macOS / Linux (a shell script): `printf '%s' "$input" | node ~/.claude/herdr-statusline-cache.mjs >/dev/null 2>&1`
     (with `input=$(cat)` read first).
