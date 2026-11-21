@@ -82,7 +82,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
     "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
-                              { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 } ] },
+                              { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 69 } ] },
     "right":  { "size": 360, "hidden": true, "features": [] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
   },
@@ -100,6 +100,8 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
   brand and search, copied from Herdr's `workspace-chrome` without its collapse button. The left panel is
   toggled by the button at the start of the tab bar and by Ctrl+Alt+B. In icons mode the header shows the
   Herdr logo.
+- The left panel ends with `dock-footer` (69 px): Settings and Add machine, as in Herdr's `main`. A dot by
+  Settings means an update is ready. In icons mode they become icon buttons.
 - `machines.<hostname>` deep-merges into the base config for that machine. Hostnames match case-insensitively.
   Objects merge key by key, arrays (`features`) replace whole, and scalars replace.
 

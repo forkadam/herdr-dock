@@ -89,3 +89,8 @@ test("dock-header can only be placed in the left panel", () => {
   const r = parseConfig(JSON.stringify({ v: 1, regions: { top: { features: [{ mod: "dock-core" }, { mod: "dock-header" }] } } }));
   assert.match(r.error, /dock-header can only be placed in regions\.left/);
 });
+
+test("dock-footer can only be placed in the left panel", () => {
+  const r = parseConfig(JSON.stringify({ v: 1, regions: { top: { features: [{ mod: "dock-core" }] }, bottom: { features: [{ mod: "dock-footer" }] } } }));
+  assert.match(r.error, /dock-footer can only be placed in regions\.left/);
+});
