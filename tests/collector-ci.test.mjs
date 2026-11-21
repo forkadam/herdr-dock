@@ -107,6 +107,7 @@ test("(a) GitLab failed pipeline: state, detail, token header, no token anywhere
   assert.equal(w.pipeline.error, null);
   assert.equal(io.fetches[0].url, PIPES);
   assert.equal(io.fetches[0].init.headers["PRIVATE-TOKEN"], TOKEN);
+  assert.equal(io.fetches[0].init.headers["User-Agent"], "herdr-dock");
 
   await c.select(WT);
   assert.equal(io.shared("dock.git.selected"), WT);
@@ -350,6 +351,8 @@ test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for th
   assert.equal(w.pipeline.id, "bbbb000000000000000000000000000000000002");
   assert.equal(io.fetches[0].init.headers.Authorization, "Bearer gho_tok123");
   assert.equal(io.fetches[0].init.headers.Accept, "application/vnd.github+json");
+  // GitHub refuses API requests with no User-Agent (HTTP 403), and Herdr's fetch sends none.
+  assert.equal(io.fetches[0].init.headers["User-Agent"], "herdr-dock");
   // Only the failed run's jobs are fetched.
   assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs"]);
   await c.select(WT);

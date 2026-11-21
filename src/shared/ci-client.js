@@ -139,10 +139,11 @@ export function createCiClient(io, log) {
     provider === "github"
       ? host === "github.com" ? "https://api.github.com/" : `https://${host}/api/v3/`
       : `https://${host}/api/v4/`;
+  // GitHub refuses API requests that have no User-Agent (HTTP 403), and Herdr's fetch sends none.
   const headers = (provider, token) =>
     provider === "github"
-      ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
-      : { "PRIVATE-TOKEN": token };
+      ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "herdr-dock" }
+      : { "PRIVATE-TOKEN": token, "User-Agent": "herdr-dock" };
 
   // Counts at most one failure per outage: only a request that started after the last backoff window ended,
   // and only while the host isn't already blocked. Requests in flight when the outage began don't add to it.
