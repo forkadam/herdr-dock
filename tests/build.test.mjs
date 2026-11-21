@@ -49,3 +49,45 @@ test("deploy skips a key already bound to something else", () => {
     assert.match(r.stdout, /other\.thing/);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
+
+test("invalid keys.json aborts before anything is written", () => {
+  const tmp = tmpHome();
+  try {
+    for (const bad of ["{not json", "[]", JSON.stringify({ "layout:herdr-dock": [] })]) {
+      writeFileSync(join(tmp, "keys.json"), bad);
+      const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+      assert.notEqual(r.status, 0, bad);
+      assert.match(r.stderr, /keys\.json/);
+      assert.deepEqual(readdirSync(tmp), ["keys.json"]);
+      assert.equal(readFileSync(join(tmp, "keys.json"), "utf8"), bad);
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("BOM-prefixed keys.json deploys and gets the binding", () => {
+  const tmp = tmpHome();
+  try {
+    writeFileSync(join(tmp, "keys.json"), "\uFEFF" + JSON.stringify({ global: { a: "b" } }));
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const keys = JSON.parse(readFileSync(join(tmp, "keys.json"), "utf8"));
+    assert.equal(keys["layout:herdr-dock"]["ctrl-alt-b"], "dock-core.cycle");
+    assert.equal(keys.global.a, "b");
+    assert.ok(!readdirSync(tmp).some((f) => f.includes(".tmp-")));
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("missing keys.json is created with the binding", () => {
+  const tmp = tmpHome();
+  try {
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(JSON.parse(readFileSync(join(tmp, "keys.json"), "utf8"))["layout:herdr-dock"]["ctrl-alt-b"], "dock-core.cycle");
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("--app-home without a value prints usage", () => {
+  const r = run(["--app-home"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /usage/);
+});
