@@ -1,7 +1,7 @@
 {
   "v": 1,
   "regions": {
-    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "tabs" } ] },
+    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 76 }, { "mod": "tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true }, { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
     "right":  { "size": 360, "hidden": true, "features": [] },

@@ -10,7 +10,7 @@ const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and s
 export const DEFAULT_CONFIG = {
   v: 1,
   regions: {
-    top: { size: 42, features: [{ mod: "dock-core", size: 44 }, { mod: "tabs" }] },
+    top: { size: 42, features: [{ mod: "dock-core", size: 76 }, { mod: "tabs" }] },
     left: {
       size: 268,
       mode: "expanded",
@@ -103,11 +103,11 @@ export function mergeForHost(config, hostname) {
 // What to do with a (possibly half-saved) config: the layout text to write, or null when
 // nothing changed or the config is bad. A bad config keeps lastGood as merged, so the
 // window keeps its last good layout. Output matches deploy: pretty JSON + newline.
-export function planApply(configText, hostname, currentLayoutText, lastGood) {
+export function planApply(configText, hostname, currentLayoutText, lastGood, state = {}) {
   if (typeof configText !== "string") return { write: null, error: "config file not found", merged: lastGood };
   const parsed = parseConfig(configText);
   if (!parsed.ok) return { write: null, error: parsed.error, merged: lastGood };
   const merged = mergeForHost(parsed.config, hostname);
-  const text = JSON.stringify(buildLayout(merged), null, 2) + "\n";
+  const text = JSON.stringify(buildLayout(merged, state), null, 2) + "\n";
   return { write: text === currentLayoutText ? null : text, error: null, merged };
 }

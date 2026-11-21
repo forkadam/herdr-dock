@@ -16,7 +16,7 @@ if (ai >= 0 && (!args[ai + 1] || args[ai + 1].startsWith("--"))) {
   process.exit(1);
 }
 const appHome = resolve(ai >= 0 ? args[ai + 1] : process.env.HERDR_APP_HOME || join(homedir(), ".config/herdr-app"));
-const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"]];
+const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"], ["ctrl-alt-n", "dock-core.right"]];
 const SECTION = "layout:herdr-dock";
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
 const fail = (msg) => { console.error(msg); process.exit(1); };

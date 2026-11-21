@@ -6,7 +6,9 @@ import {
 } from "herdr";
 import { planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
-import { liveSizes, modeFromConfig, nextMode, planPanel, planSync, sizeChanges } from "../../shared/panel.js";
+import {
+  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightFromConfig, sizeChanges,
+} from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 import { hostnameCommand } from "../../shared/platform.js";
 
@@ -24,6 +26,11 @@ const APPLIED_KEY = "dock.config.applied";
 const RESTORE_KEY = "dock.left.restore";
 // The config's left mode when dock-core last read it, so an edit to it is noticed once.
 const CONFIG_MODE_KEY = "dock.left.configMode";
+// This PC's right column (never in the config): whether it is shown, the config's right.hidden
+// when last read (so an edit to it applies once), and Files/Changes { shown, active }.
+const RIGHT_KEY = "dock.right.shown";
+const RIGHT_CONFIG_KEY = "dock.right.configHidden";
+const PANEL_KEY = "dock.panel";
 // After writing the layout file, give Herdr time to reload it before re-applying the mode.
 const RELOAD_SETTLE_MS = 400;
 // Fallback when watchFolder rejects (too many watches, etc.).
@@ -42,6 +49,7 @@ export default class DockCore extends View {
     this.hostError = null; // set when neither the hostname command nor source.json gave one
     this.configPath = null;
     this.layoutPath = null;
+    this.rightPrev = null; // the right column as last seen in layout(), for planRight
     if (checking() || !isTop()) return;
     cx.spawn(async (cx) => this.start(cx));
     cx.spawn(async (cx) => {
@@ -94,7 +102,7 @@ export default class DockCore extends View {
     if (!this.configPath || checking()) return;
     const configText = await readTextFile(this.configPath).catch(() => null);
     const current = await readTextFile(this.layoutPath).catch(() => null);
-    const plan = planApply(configText, this.host, current, this.merged);
+    const plan = planApply(configText, this.host, current, this.merged, this.rightState());
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
     const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
@@ -113,7 +121,15 @@ export default class DockCore extends View {
         }
       }
     }
+    if (!plan.error && plan.merged) {
+      const r = rightFromConfig(shared(RIGHT_CONFIG_KEY), shared(RIGHT_KEY), plan.merged.regions.right.hidden);
+      if (r) {
+        setShared(RIGHT_CONFIG_KEY, r.record);
+        if (r.shown !== null) setShared(RIGHT_KEY, r.shown);
+      }
+    }
     if (plan.write) {
+      this.rightPrev = null;
       const err = await this.writeLayout(plan.write, current);
       if (err) setShared(ERROR_KEY, err);
       // A rewritten layout reloads its sizes and visibility: put the current mode back on it.
@@ -148,6 +164,18 @@ export default class DockCore extends View {
     }
   }
 
+  rightShown() {
+    const v = shared(RIGHT_KEY);
+    if (typeof v === "boolean") return v;
+    return this.merged ? !this.merged.regions.right.hidden : undefined;
+  }
+
+  // What the layout file is built with, so a rewrite keeps this PC's right column as it is.
+  rightState() {
+    const panel = shared(PANEL_KEY);
+    return { rightShown: this.rightShown(), panel: panel && typeof panel === "object" ? panel : undefined };
+  }
+
   mode() {
     const m = shared(MODE_KEY);
     if (MODES.includes(m)) return m;
@@ -157,6 +185,10 @@ export default class DockCore extends View {
   command(c, cx) {
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));
+      return;
+    }
+    if (c === "right") {
+      setShared(RIGHT_KEY, !this.rightShown());
       return;
     }
     if (c === "config") {
@@ -184,6 +216,27 @@ export default class DockCore extends View {
     cx.spawn(async (_cx) => this.apply(plan.key, mode, plan.focus, plan.clearFocus));
   }
 
+  // Called from render: keep the right column and Files/Changes in line with dock.right.shown.
+  syncRight(cx) {
+    if (!this.merged) return;
+    let live;
+    try { live = liveRight(layout()); } catch (e) { console.log(`dock-core: layout() failed: ${e}`); return; }
+    const memory = shared(PANEL_KEY) ?? null;
+    const plan = planRight({
+      shown: this.rightShown() === true, hasFeatures: this.merged.regions.right.features.length > 0,
+      live, prev: this.rightPrev, memory,
+    });
+    this.rightPrev = live;
+    if (shared(RIGHT_KEY) !== plan.shown) setShared(RIGHT_KEY, plan.shown);
+    if (JSON.stringify(memory) !== JSON.stringify(plan.memory)) setShared(PANEL_KEY, plan.memory);
+    if (!plan.actions.length) return;
+    cx.spawn(async (_cx) => {
+      for (const a of plan.actions) {
+        try { run(a.command, a.args); } catch (e) { console.log(`dock-core: ${a.command} failed: ${e}`); }
+      }
+    });
+  }
+
   apply(key, mode, focus, clearFocus) {
     // A newer change was planned before this task ran: its own task applies it.
     if (!this.merged || this.applied !== key) return;
@@ -203,11 +256,13 @@ export default class DockCore extends View {
   render(cx) {
     if (!isTop()) return div();
     this.sync(cx);
+    this.syncRight(cx);
     const t = theme();
     const mode = this.mode();
+    const right = this.rightShown() === true;
     const err = shared(ERROR_KEY);
     const stop = (_e, cx) => cx.stop_propagation();
-    return h_flex().size_full().items_center().justify_center()
+    return h_flex().size_full().items_center().justify_center().gap(4)
       .child(div().relative().size(28).flex_none()
         .child(div().id("dock-toggle").size_full().flex().items_center().justify_center().rounded(6)
           .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
@@ -219,6 +274,13 @@ export default class DockCore extends View {
           div().id("dock-error").absolute().top(-2).right(-2).size(10).flex().items_center().justify_center()
             .tooltip(`Config error: ${err}`)
             .on_mouse_down("left", stop)
-            .child(div().size(8).rounded_full().bg(t.ansi1 ?? "#e5484d")))));
+            .child(div().size(8).rounded_full().bg(t.ansi1 ?? "#e5484d")))))
+      .child(div().id("dock-right-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(6)
+        .text_color(right ? t.foreground : t.muted).when(right, (el) => el.bg(t.selected ?? t.hover))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+        .tooltip(`Right panel: ${right ? "shown" : "hidden"} (Ctrl+Alt+N)`)
+        .on_mouse_down("left", stop)
+        .on_click((_e, cx) => { cx.stop_propagation(); this.command("right", cx); })
+        .child(svg("mods/dock-core/panel-right.svg").size(16)));
   }
 }

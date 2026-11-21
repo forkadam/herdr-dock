@@ -3,7 +3,8 @@
 A configurable dock layout for [Herdr](https://herdr.app): a top bar, a left panel, and optional right and
 bottom regions around your main pane. It ships four mods:
 
-- **dock-core**: the top-bar toggle. It cycles the left panel between expanded, icons and hidden, and it
+- **dock-core**: the two top-bar toggles. The first cycles the left panel between expanded, icons and hidden; the
+  second shows or hides the right column. It also
   rewrites the layout when `config/dock.json` changes.
 - **dock-spaces**: your spaces. Click one to select it.
 - **dock-agents**: your agents. Click one to focus it. Each local Claude agent shows its context as "NN% used"
@@ -23,7 +24,7 @@ npm run deploy
 ```
 
 `npm run deploy` builds the `dock-*` mods, installs them into the Herdr app home, writes
-`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`, Ctrl+Alt+, runs `dock-core.config`), and runs
+`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`, Ctrl+Alt+N runs `dock-core.right`, Ctrl+Alt+, runs `dock-core.config`), and runs
 `herdr-app check` on each mod. It exits non-zero if any check fails. Run `npm test` for the unit tests.
 
 - **App home.** Deploy writes to `~/.config/herdr-app`, or to `$HERDR_APP_HOME` when that is set. Pass
@@ -57,6 +58,21 @@ Or press Ctrl+Shift+L and pick the layout.
 The keys section applies while the `herdr-dock` layout is active, so Ctrl+Alt+B works even when the left panel is
 hidden.
 
+## The right column
+
+The right column holds the right region's mods with Herdr's Files/Changes panel under them, so the right side is
+one column. The second button at the start of the tab bar, or Ctrl+Alt+N (`dock-core.right`), shows or hides it.
+
+- Herdr's Files and Changes buttons at the end of the tab bar open and close the Files/Changes part. Opening one
+  while the column is hidden shows the column.
+- With no mods in the right region, closing Files/Changes closes the column, and showing the column opens
+  Files/Changes on the last tab you used.
+- Whether the column is shown, and whether Files/Changes is open and on which tab, is remembered per PC in
+  Herdr's own state (`dock.right.shown`, `dock.panel`). It is never written to `config/dock.json`, and a
+  config save or restart keeps it.
+- The config's `right.hidden` (the dialog's right "shown" switch) is the default. Changing it applies once, the
+  same way `left.mode` does.
+
 ## Panel modes
 
 The left panel has three modes. Ctrl+Alt+B (or the top-bar toggle) cycles through them:
@@ -79,7 +95,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 {
   "v": 1,
   "regions": {
-    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "tabs" } ] },
+    "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 76 }, { "mod": "tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
                               { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
@@ -108,14 +124,15 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 
 ### Add a third-party mod to a region
 
-Put the mod's id in a region's `features` and make sure the region is not hidden. For example, to show Herdr's
-shipped Files panel on the right:
+Put the mod's id in a region's `features` and make sure the region is not hidden, or use the Dock layout dialog.
+For example, to show Mission Control's GitHub panel at the top of the right column:
 
 ```json
-"right": { "size": 360, "hidden": false, "features": [ { "mod": "files" } ] }
+"right": { "size": 360, "hidden": false, "features": [ { "mod": "mission-control-github" } ] }
 ```
 
-Save the file. The panel appears with no other change.
+Save the file. The panel appears with no other change. Files and Changes are already in the right column (see
+above), so they don't need to be placed.
 
 ## Config UI
 
