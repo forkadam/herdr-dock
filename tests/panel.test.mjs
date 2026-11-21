@@ -5,7 +5,7 @@ import { parseConfig, mergeForHost } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
 import { nextMode, planPanel, planSync, liveSizes, sizeChanges, modeFromConfig } from "../src/shared/panel.js";
 
-const merged = () => mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "h");
+const merged = () => mergeForHost(parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config, "h");
 const S = "dock-left-0-dock-spaces", A = "dock-left-1-dock-agents", Q = "dock-left-2-dock-quotas";
 const resizes = (actions) => actions.filter((a) => a.command === "layout.resize");
 const resizeOf = (actions, id) => resizes(actions).find((a) => a.args.id === id)?.args;

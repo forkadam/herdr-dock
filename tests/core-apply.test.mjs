@@ -5,7 +5,7 @@ import { planApply, parseConfig, mergeForHost } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
 
 test("planApply writes only when changed and keeps last good on error", () => {
-  const good = readFileSync("config/dock.json", "utf8");
+  const good = readFileSync("tests/fixtures/dock.json", "utf8");
   const first = planApply(good, "h", null, null);
   assert.ok(first.write); assert.equal(first.error, null);
   assert.equal(planApply(good, "h", first.write, first.merged).write, null);
@@ -14,13 +14,13 @@ test("planApply writes only when changed and keeps last good on error", () => {
 });
 
 test("planApply output matches what deploy writes (pretty JSON + newline)", () => {
-  const good = readFileSync("config/dock.json", "utf8");
+  const good = readFileSync("tests/fixtures/dock.json", "utf8");
   const expected = JSON.stringify(buildLayout(mergeForHost(parseConfig(good).config, "h")), null, 2) + "\n";
   assert.equal(planApply(good, "h", null, null).write, expected);
 });
 
 test("planApply rewrites on a size change and reports schema errors", () => {
-  const good = readFileSync("config/dock.json", "utf8");
+  const good = readFileSync("tests/fixtures/dock.json", "utf8");
   const first = planApply(good, "h", null, null);
   const wider = JSON.parse(good); wider.regions.left.size = 300;
   const next = planApply(JSON.stringify(wider), "h", first.write, first.merged);

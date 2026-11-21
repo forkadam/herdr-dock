@@ -28,6 +28,7 @@ function featureBlocks(region, features, extra) {
       type: "block",
       size: f.size ? { px: f.size } : { weight: 1 },
       ...extra,
+      ...(f.drag ? { window_drag: true } : {}),
       content: { mod: f.mod, props: { ...f.props, dockFeature: id, dockRegion: region } },
     };
   });

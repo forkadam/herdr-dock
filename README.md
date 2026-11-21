@@ -81,7 +81,8 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
   "regions": {
     "top":    { "size": 42, "features": [ { "mod": "dock-core", "size": 44 }, { "mod": "tabs" } ] },
     "left":   { "size": 268, "mode": "expanded",
-                "features": [ { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 } ] },
+                "features": [ { "mod": "workspace-chrome", "size": 46, "drag": true },
+                              { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-quotas", "size": 150 } ] },
     "right":  { "size": 360, "hidden": true, "features": [] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
   },
@@ -93,8 +94,11 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
   `"hidden": true` on the left region means mode `hidden`. Changing `mode` in the config switches the panel to it.
 - The top bar must contain `dock-core` and can't be hidden (the toggle, Ctrl+Alt+B and config errors live there).
   `dock-spaces`, `dock-agents` and `dock-quotas` can only be placed in the left region.
-- A feature is `{ "mod": string, "props"?: object, "size"?: px }`. With no `size`, it gets weight 1 and shares the
-  remaining space.
+- A feature is `{ "mod": string, "props"?: object, "size"?: px, "drag"?: boolean }`. With no `size`, it gets
+  weight 1 and shares the remaining space. With `"drag": true`, dragging the feature moves the window.
+- The left panel starts with Herdr's own header (`workspace-chrome`, 46 px), like Herdr's `main` layout. Its
+  collapse button looks for Herdr's `sidebar` node, so it does nothing here. Use the panel toggle or
+  Ctrl+Alt+B instead. Like any third-party mod in the left panel, the header is hidden in icons mode.
 - `machines.<hostname>` deep-merges into the base config for that machine. Hostnames match case-insensitively.
   Objects merge key by key, arrays (`features`) replace whole, and scalars replace.
 

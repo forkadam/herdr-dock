@@ -77,3 +77,10 @@ test("parseConfig rejects a hidden top bar and a top bar without dock-core", () 
   // A machine section that leaves the top bar alone is fine.
   assert.equal(parseConfig(JSON.stringify({ v: 1, regions: { top: TOP }, machines: { pc: { regions: { left: { size: 300 } } } } })).ok, true);
 });
+
+test("feature drag must be a boolean", () => {
+  const cfg = (drag) => JSON.stringify({ v: 1, regions: { top: { features: [{ mod: "dock-core" }] },
+    left: { features: [{ mod: "workspace-chrome", drag }] } } });
+  assert.equal(parseConfig(cfg(true)).ok, true);
+  assert.match(parseConfig(cfg("yes")).error, /drag/);
+});

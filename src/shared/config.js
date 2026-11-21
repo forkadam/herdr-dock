@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG = {
     left: {
       size: 268,
       mode: "expanded",
-      features: [{ mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-quotas", size: 150 }],
+      features: [{ mod: "workspace-chrome", size: 46, drag: true }, { mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-quotas", size: 150 }],
     },
     right: { size: 360, hidden: true, features: [] },
     bottom: { size: 28, features: [{ mod: "workspace-status" }] },
@@ -45,6 +45,7 @@ function checkRegions(regions, where) {
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
         if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
+        if ("drag" in f && typeof f.drag !== "boolean") return `${fa}.drag: must be true or false`;
         if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
       }
       if (name === "top" && !r.features.some((f) => f.mod === "dock-core")) return `${at}.features: must include dock-core: ${NEEDS_CORE}`;
