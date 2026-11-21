@@ -14,6 +14,11 @@ const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
 const FOCUS_KEY = "dock.left.focus";
 const ERROR_KEY = "dock.config.error";
+// Read by the config dialog: where dock.json lives, this computer's host, and the last good
+// merged regions (what a read-only dialog shows when dock.json is invalid).
+const HOST_KEY = "dock.host";
+const PATH_KEY = "dock.config.path";
+const APPLIED_KEY = "dock.config.applied";
 // The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
 // while the live tree holds them). Machine-local, like the drag-resizes it keeps.
 const RESTORE_KEY = "dock.left.restore";
@@ -59,6 +64,7 @@ export default class DockCore extends View {
       return;
     }
     this.configPath = slashPath(src.config);
+    setShared(PATH_KEY, this.configPath);
     // The hostname picks the machines.<host> section: ask the OS, else use the one deploy saved.
     try {
       const { command, args } = hostnameCommand(window()?.platform);
@@ -67,6 +73,7 @@ export default class DockCore extends View {
       console.log(`dock-core: hostname failed, using source.json: ${e}`);
     }
     if (!this.host && typeof src.hostname === "string" && src.hostname.trim()) this.host = src.hostname.trim().toLowerCase();
+    setShared(HOST_KEY, this.host || null);
     if (!this.host) this.hostError = "could not read this computer's hostname: machines sections are ignored (re-run npm run deploy)";
     await this.reload(cx);
     const dir = this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/";
@@ -93,6 +100,9 @@ export default class DockCore extends View {
     const changes = plan.error ? null : sizeChanges(this.merged, plan.merged);
     this.merged = plan.merged;
     if (!plan.error && plan.merged) {
+      const regions = JSON.parse(JSON.stringify(plan.merged.regions));
+      regions.left.hidden = false;
+      if (JSON.stringify(shared(APPLIED_KEY) ?? null) !== JSON.stringify(regions)) setShared(APPLIED_KEY, regions);
       // A changed regions.left.mode (or left.hidden) in a valid config becomes the panel mode.
       const m = modeFromConfig(shared(CONFIG_MODE_KEY), shared(MODE_KEY), plan.merged.regions.left.mode);
       if (m) {
@@ -147,6 +157,10 @@ export default class DockCore extends View {
   command(c, cx) {
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));
+      return;
+    }
+    if (c === "config") {
+      run("mod.open", { name: "dock-config" });
       return;
     }
     // From a focused expanded panel, the cycle first goes back to plain expanded.

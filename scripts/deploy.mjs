@@ -6,6 +6,7 @@ import { buildAll, ROOT } from "./build.mjs";
 import { parseConfig, mergeForHost } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
 import { slashPath } from "../src/shared/path.js";
+import { mergeKeys } from "./keys.mjs";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
@@ -15,7 +16,8 @@ if (ai >= 0 && (!args[ai + 1] || args[ai + 1].startsWith("--"))) {
   process.exit(1);
 }
 const appHome = resolve(ai >= 0 ? args[ai + 1] : process.env.HERDR_APP_HOME || join(homedir(), ".config/herdr-app"));
-const KEY = "ctrl-alt-b", ACTION = "dock-core.cycle", SECTION = "layout:herdr-dock";
+const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"]];
+const SECTION = "layout:herdr-dock";
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
 const fail = (msg) => { console.error(msg); process.exit(1); };
 say(`app home: ${appHome}`);
@@ -80,18 +82,19 @@ if (!dry) {
   writeFileSync(join(appHome, "layouts/herdr-dock.json"), JSON.stringify(layout, null, 2) + "\n");
 }
 
-const section = keys[SECTION] ?? {};
 if (!hasKeys) {
-  console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B");
-} else if (section[KEY] !== undefined && section[KEY] !== ACTION) {
-  console.log(`keys.json: ${KEY} in ${SECTION} is already bound to "${section[KEY]}"; skipping`);
+  console.log("keys.json not found — start Herdr once, then re-run deploy to add Ctrl+Alt+B and Ctrl+Alt+,");
 } else {
-  say(`merge keys.json ${SECTION} ${KEY} -> ${ACTION}`);
-  if (!dry && section[KEY] !== ACTION) {
-    keys[SECTION] = { ...section, [KEY]: ACTION };
+  const merged = mergeKeys(keys, SECTION, BINDINGS);
+  for (const { key, reason } of merged.skipped) console.log(`keys.json: ${key} in ${SECTION} is ${reason}; skipping`);
+  for (const key of merged.added) say(`merge keys.json ${SECTION} ${key} -> ${BINDINGS.find((b) => b[0] === key)[1]}`);
+  for (const [key] of BINDINGS) {
+    if (!merged.added.includes(key) && !merged.skipped.some((x) => x.key === key)) say(`keys.json ${SECTION} ${key} already bound`);
+  }
+  if (!dry && merged.added.length) {
     // Keep the file's existing style (compact one-liner vs pretty).
     const tmp = `${keysPath}.tmp-${process.pid}`;
-    writeFileSync(tmp, keysText.includes("\n") ? JSON.stringify(keys, null, 2) + "\n" : JSON.stringify(keys));
+    writeFileSync(tmp, keysText.includes("\n") ? JSON.stringify(merged.keys, null, 2) + "\n" : JSON.stringify(merged.keys));
     renameSync(tmp, keysPath);
   }
 }
