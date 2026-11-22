@@ -1,0 +1,28 @@
+[
+ {
+  "id": "10100",
+  "name": "My open bugs",
+  "jql": "assignee = currentUser() AND resolution = Unresolved AND issuetype = Bug ORDER BY priority DESC",
+  "favourite": true,
+  "owner": {
+   "name": "me",
+   "key": "me",
+   "displayName": "Mock User",
+   "emailAddress": "me@example.com",
+   "active": true
+  }
+ },
+ {
+  "id": "10101",
+  "name": "API in progress",
+  "jql": "project = API AND statusCategory = \"In Progress\" ORDER BY updated DESC",
+  "favourite": true,
+  "owner": {
+   "name": "dana",
+   "key": "dana",
+   "displayName": "Dana Lee",
+   "emailAddress": "dana@example.com",
+   "active": true
+  }
+ }
+]

@@ -1,0 +1,2686 @@
+{
+ "users": {
+  "me": {
+   "name": "me",
+   "key": "me",
+   "displayName": "Mock User",
+   "emailAddress": "me@example.com",
+   "active": true
+  },
+  "dana": {
+   "name": "dana",
+   "key": "dana",
+   "displayName": "Dana Lee",
+   "emailAddress": "dana@example.com",
+   "active": true
+  },
+  "ravi": {
+   "name": "ravi",
+   "key": "ravi",
+   "displayName": "Ravi Patel",
+   "emailAddress": "ravi@example.com",
+   "active": true
+  },
+  "kim": {
+   "name": "kim",
+   "key": "kim",
+   "displayName": "Kim Ortiz",
+   "emailAddress": "kim@example.com",
+   "active": true
+  }
+ },
+ "issues": [
+  {
+   "id": "20000",
+   "key": "WEB-1",
+   "self": "http://jira.mock/rest/api/2/issue/20000",
+   "fields": {
+    "summary": "Search banner overlaps the filters on narrow screens",
+    "description": "h3. Context\nSearch banner overlaps the filters on narrow screens was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-18T19:00:00.000+0000",
+    "updated": "2026-11-18T21:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50000",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-19T00:00:00.000+0000",
+       "updated": "2026-11-19T00:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20001",
+   "key": "WEB-2",
+   "self": "http://jira.mock/rest/api/2/issue/20001",
+   "fields": {
+    "summary": "Daily search limit banner",
+    "description": "h3. Context\nDaily search limit banner was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-18T10:00:00.000+0000",
+    "updated": "2026-11-18T11:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50001",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-18T15:00:00.000+0000",
+       "updated": "2026-11-18T15:00:00.000+0000"
+      },
+      {
+       "id": "50002",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/103].",
+       "created": "2026-11-18T20:00:00.000+0000",
+       "updated": "2026-11-18T20:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20002",
+   "key": "WEB-3",
+   "self": "http://jira.mock/rest/api/2/issue/20002",
+   "fields": {
+    "summary": "Dark mode: chart tooltips unreadable",
+    "description": "h3. Context\nDark mode: chart tooltips unreadable was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": null,
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-18T01:00:00.000+0000",
+    "updated": "2026-11-18T02:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50003",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-18T06:00:00.000+0000",
+       "updated": "2026-11-18T06:00:00.000+0000"
+      },
+      {
+       "id": "50004",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/104].",
+       "created": "2026-11-18T11:00:00.000+0000",
+       "updated": "2026-11-18T11:00:00.000+0000"
+      },
+      {
+       "id": "50005",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/web/pull/105].",
+       "created": "2026-11-18T16:00:00.000+0000",
+       "updated": "2026-11-18T16:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20003",
+   "key": "WEB-4",
+   "self": "http://jira.mock/rest/api/2/issue/20003",
+   "fields": {
+    "summary": "Sign-in page loses the return URL",
+    "description": "h3. Context\nSign-in page loses the return URL was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-17T16:00:00.000+0000",
+    "updated": "2026-11-17T17:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50006",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-17T21:00:00.000+0000",
+       "updated": "2026-11-17T21:00:00.000+0000"
+      },
+      {
+       "id": "50007",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/105].",
+       "created": "2026-11-18T02:00:00.000+0000",
+       "updated": "2026-11-18T02:00:00.000+0000"
+      },
+      {
+       "id": "50008",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/web/pull/106].",
+       "created": "2026-11-18T07:00:00.000+0000",
+       "updated": "2026-11-18T07:00:00.000+0000"
+      },
+      {
+       "id": "50009",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/web/pull/107].",
+       "created": "2026-11-18T12:00:00.000+0000",
+       "updated": "2026-11-18T12:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20004",
+   "key": "WEB-5",
+   "self": "http://jira.mock/rest/api/2/issue/20004",
+   "fields": {
+    "summary": "Upgrade the date picker",
+    "description": null,
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-17T07:00:00.000+0000",
+    "updated": "2026-11-17T08:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70005",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "WEB-4"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20005",
+   "key": "WEB-6",
+   "self": "http://jira.mock/rest/api/2/issue/20005",
+   "fields": {
+    "summary": "Profile photo upload fails over 5 MB",
+    "description": "h3. Context\nProfile photo upload fails over 5 MB was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T22:00:00.000+0000",
+    "updated": "2026-11-16T23:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50010",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-17T03:00:00.000+0000",
+       "updated": "2026-11-17T03:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20006",
+   "key": "WEB-7",
+   "self": "http://jira.mock/rest/api/2/issue/20006",
+   "fields": {
+    "summary": "Keyboard focus lost after closing a dialog",
+    "description": "h3. Context\nKeyboard focus lost after closing a dialog was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T13:00:00.000+0000",
+    "updated": "2026-11-16T14:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50011",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-16T18:00:00.000+0000",
+       "updated": "2026-11-16T18:00:00.000+0000"
+      },
+      {
+       "id": "50012",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/108].",
+       "created": "2026-11-16T23:00:00.000+0000",
+       "updated": "2026-11-16T23:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20007",
+   "key": "WEB-8",
+   "self": "http://jira.mock/rest/api/2/issue/20007",
+   "fields": {
+    "summary": "Pagination resets when changing sort",
+    "description": "h3. Context\nPagination resets when changing sort was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T04:00:00.000+0000",
+    "updated": "2026-11-16T05:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50013",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-16T09:00:00.000+0000",
+       "updated": "2026-11-16T09:00:00.000+0000"
+      },
+      {
+       "id": "50014",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/109].",
+       "created": "2026-11-16T14:00:00.000+0000",
+       "updated": "2026-11-16T14:00:00.000+0000"
+      },
+      {
+       "id": "50015",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/web/pull/110].",
+       "created": "2026-11-16T19:00:00.000+0000",
+       "updated": "2026-11-16T19:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20008",
+   "key": "WEB-9",
+   "self": "http://jira.mock/rest/api/2/issue/20008",
+   "fields": {
+    "summary": "Add empty state to saved searches",
+    "description": "h3. Context\nAdd empty state to saved searches was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-15T19:00:00.000+0000",
+    "updated": "2026-11-19T01:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50016",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-16T00:00:00.000+0000",
+       "updated": "2026-11-16T00:00:00.000+0000"
+      },
+      {
+       "id": "50017",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/web/pull/110].",
+       "created": "2026-11-16T05:00:00.000+0000",
+       "updated": "2026-11-16T05:00:00.000+0000"
+      },
+      {
+       "id": "50018",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/web/pull/111].",
+       "created": "2026-11-16T10:00:00.000+0000",
+       "updated": "2026-11-16T10:00:00.000+0000"
+      },
+      {
+       "id": "50019",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/web/pull/112].",
+       "created": "2026-11-16T15:00:00.000+0000",
+       "updated": "2026-11-16T15:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70009",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "WEB-8"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20009",
+   "key": "WEB-10",
+   "self": "http://jira.mock/rest/api/2/issue/20009",
+   "fields": {
+    "summary": "Slow first paint on the dashboard",
+    "description": "h3. Context\nSlow first paint on the dashboard was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": null,
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-15T10:00:00.000+0000",
+    "updated": "2026-11-17T12:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20010",
+   "key": "WEB-11",
+   "self": "http://jira.mock/rest/api/2/issue/20010",
+   "fields": {
+    "summary": "Typo in the onboarding email",
+    "description": null,
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-15T01:00:00.000+0000",
+    "updated": "2026-11-15T23:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50020",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-15T06:00:00.000+0000",
+       "updated": "2026-11-15T06:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20011",
+   "key": "API-1",
+   "self": "http://jira.mock/rest/api/2/issue/20011",
+   "fields": {
+    "summary": "Rate limit headers missing on 429",
+    "description": "h3. Context\nRate limit headers missing on 429 was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-14T16:00:00.000+0000",
+    "updated": "2026-11-14T17:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50021",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-14T21:00:00.000+0000",
+       "updated": "2026-11-14T21:00:00.000+0000"
+      },
+      {
+       "id": "50022",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/113].",
+       "created": "2026-11-15T02:00:00.000+0000",
+       "updated": "2026-11-15T02:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20012",
+   "key": "API-2",
+   "self": "http://jira.mock/rest/api/2/issue/20012",
+   "fields": {
+    "summary": "Enforce daily search quota per account",
+    "description": "h3. Context\nEnforce daily search quota per account was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-14T07:00:00.000+0000",
+    "updated": "2026-11-14T08:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50023",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-14T12:00:00.000+0000",
+       "updated": "2026-11-14T12:00:00.000+0000"
+      },
+      {
+       "id": "50024",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/114].",
+       "created": "2026-11-14T17:00:00.000+0000",
+       "updated": "2026-11-14T17:00:00.000+0000"
+      },
+      {
+       "id": "50025",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/api/pull/115].",
+       "created": "2026-11-14T22:00:00.000+0000",
+       "updated": "2026-11-14T22:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70013",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "API-1"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20013",
+   "key": "API-3",
+   "self": "http://jira.mock/rest/api/2/issue/20013",
+   "fields": {
+    "summary": "v2 /candidates returns duplicates",
+    "description": "h3. Context\nv2 /candidates returns duplicates was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-13T22:00:00.000+0000",
+    "updated": "2026-11-13T23:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50026",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-14T03:00:00.000+0000",
+       "updated": "2026-11-14T03:00:00.000+0000"
+      },
+      {
+       "id": "50027",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/115].",
+       "created": "2026-11-14T08:00:00.000+0000",
+       "updated": "2026-11-14T08:00:00.000+0000"
+      },
+      {
+       "id": "50028",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/api/pull/116].",
+       "created": "2026-11-14T13:00:00.000+0000",
+       "updated": "2026-11-14T13:00:00.000+0000"
+      },
+      {
+       "id": "50029",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/api/pull/117].",
+       "created": "2026-11-14T18:00:00.000+0000",
+       "updated": "2026-11-14T18:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20014",
+   "key": "API-4",
+   "self": "http://jira.mock/rest/api/2/issue/20014",
+   "fields": {
+    "summary": "Document the webhook retry policy",
+    "description": "h3. Context\nDocument the webhook retry policy was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-13T13:00:00.000+0000",
+    "updated": "2026-11-13T14:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20015",
+   "key": "API-5",
+   "self": "http://jira.mock/rest/api/2/issue/20015",
+   "fields": {
+    "summary": "Timeout on bulk export over 10k rows",
+    "description": "h3. Context\nTimeout on bulk export over 10k rows was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-13T04:00:00.000+0000",
+    "updated": "2026-11-13T05:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50030",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-13T09:00:00.000+0000",
+       "updated": "2026-11-13T09:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20016",
+   "key": "API-6",
+   "self": "http://jira.mock/rest/api/2/issue/20016",
+   "fields": {
+    "summary": "Deprecate the v1 search endpoint",
+    "description": null,
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": null,
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-12T19:00:00.000+0000",
+    "updated": "2026-11-19T05:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50031",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-13T00:00:00.000+0000",
+       "updated": "2026-11-13T00:00:00.000+0000"
+      },
+      {
+       "id": "50032",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/118].",
+       "created": "2026-11-13T05:00:00.000+0000",
+       "updated": "2026-11-13T05:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70017",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "API-5"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20017",
+   "key": "API-7",
+   "self": "http://jira.mock/rest/api/2/issue/20017",
+   "fields": {
+    "summary": "Add ETag to /profiles",
+    "description": "h3. Context\nAdd ETag to /profiles was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-12T10:00:00.000+0000",
+    "updated": "2026-11-17T16:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50033",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-12T15:00:00.000+0000",
+       "updated": "2026-11-12T15:00:00.000+0000"
+      },
+      {
+       "id": "50034",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/119].",
+       "created": "2026-11-12T20:00:00.000+0000",
+       "updated": "2026-11-12T20:00:00.000+0000"
+      },
+      {
+       "id": "50035",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/api/pull/120].",
+       "created": "2026-11-13T01:00:00.000+0000",
+       "updated": "2026-11-13T01:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20018",
+   "key": "API-8",
+   "self": "http://jira.mock/rest/api/2/issue/20018",
+   "fields": {
+    "summary": "Validation error shape differs from the docs",
+    "description": "h3. Context\nValidation error shape differs from the docs was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-12T01:00:00.000+0000",
+    "updated": "2026-11-16T03:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50036",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-12T06:00:00.000+0000",
+       "updated": "2026-11-12T06:00:00.000+0000"
+      },
+      {
+       "id": "50037",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/api/pull/120].",
+       "created": "2026-11-12T11:00:00.000+0000",
+       "updated": "2026-11-12T11:00:00.000+0000"
+      },
+      {
+       "id": "50038",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/api/pull/121].",
+       "created": "2026-11-12T16:00:00.000+0000",
+       "updated": "2026-11-12T16:00:00.000+0000"
+      },
+      {
+       "id": "50039",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/api/pull/122].",
+       "created": "2026-11-12T21:00:00.000+0000",
+       "updated": "2026-11-12T21:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20019",
+   "key": "API-9",
+   "self": "http://jira.mock/rest/api/2/issue/20019",
+   "fields": {
+    "summary": "Search ranking ignores recent activity",
+    "description": "h3. Context\nSearch ranking ignores recent activity was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-11T16:00:00.000+0000",
+    "updated": "2026-11-14T14:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20020",
+   "key": "API-10",
+   "self": "http://jira.mock/rest/api/2/issue/20020",
+   "fields": {
+    "summary": "OAuth refresh token rotation",
+    "description": "h3. Context\nOAuth refresh token rotation was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10200",
+     "key": "API",
+     "name": "Public API"
+    },
+    "created": "2026-11-11T07:00:00.000+0000",
+    "updated": "2026-11-13T01:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50040",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-11T12:00:00.000+0000",
+       "updated": "2026-11-11T12:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70021",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "API-9"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20021",
+   "key": "OPS-1",
+   "self": "http://jira.mock/rest/api/2/issue/20021",
+   "fields": {
+    "summary": "Rotate the staging database credentials",
+    "description": "h3. Context\nRotate the staging database credentials was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-10T22:00:00.000+0000",
+    "updated": "2026-11-11T12:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50041",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-11T03:00:00.000+0000",
+       "updated": "2026-11-11T03:00:00.000+0000"
+      },
+      {
+       "id": "50042",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/123].",
+       "created": "2026-11-11T08:00:00.000+0000",
+       "updated": "2026-11-11T08:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20022",
+   "key": "OPS-2",
+   "self": "http://jira.mock/rest/api/2/issue/20022",
+   "fields": {
+    "summary": "Alert on disk usage over 85%",
+    "description": null,
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-10T13:00:00.000+0000",
+    "updated": "2026-11-10T14:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50043",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-10T18:00:00.000+0000",
+       "updated": "2026-11-10T18:00:00.000+0000"
+      },
+      {
+       "id": "50044",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/124].",
+       "created": "2026-11-10T23:00:00.000+0000",
+       "updated": "2026-11-10T23:00:00.000+0000"
+      },
+      {
+       "id": "50045",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/ops/pull/125].",
+       "created": "2026-11-11T04:00:00.000+0000",
+       "updated": "2026-11-11T04:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20023",
+   "key": "OPS-3",
+   "self": "http://jira.mock/rest/api/2/issue/20023",
+   "fields": {
+    "summary": "Nightly backup job failed twice",
+    "description": "h3. Context\nNightly backup job failed twice was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": null,
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-10T04:00:00.000+0000",
+    "updated": "2026-11-10T05:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50046",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-10T09:00:00.000+0000",
+       "updated": "2026-11-10T09:00:00.000+0000"
+      },
+      {
+       "id": "50047",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/125].",
+       "created": "2026-11-10T14:00:00.000+0000",
+       "updated": "2026-11-10T14:00:00.000+0000"
+      },
+      {
+       "id": "50048",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/ops/pull/126].",
+       "created": "2026-11-10T19:00:00.000+0000",
+       "updated": "2026-11-10T19:00:00.000+0000"
+      },
+      {
+       "id": "50049",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/ops/pull/127].",
+       "created": "2026-11-11T00:00:00.000+0000",
+       "updated": "2026-11-11T00:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20024",
+   "key": "OPS-4",
+   "self": "http://jira.mock/rest/api/2/issue/20024",
+   "fields": {
+    "summary": "Move CI runners to the new pool",
+    "description": "h3. Context\nMove CI runners to the new pool was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-09T19:00:00.000+0000",
+    "updated": "2026-11-19T09:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70025",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "OPS-3"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20025",
+   "key": "OPS-5",
+   "self": "http://jira.mock/rest/api/2/issue/20025",
+   "fields": {
+    "summary": "Grafana dashboard for search latency",
+    "description": "h3. Context\nGrafana dashboard for search latency was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10002",
+     "name": "Done",
+     "statusCategory": {
+      "id": 3,
+      "key": "done",
+      "colorName": "green",
+      "name": "Done"
+     }
+    },
+    "resolution": {
+     "id": "10000",
+     "name": "Done"
+    },
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-09T10:00:00.000+0000",
+    "updated": "2026-11-17T20:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50050",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-09T15:00:00.000+0000",
+       "updated": "2026-11-09T15:00:00.000+0000"
+      }
+     ],
+     "maxResults": 1,
+     "total": 1,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20026",
+   "key": "OPS-6",
+   "self": "http://jira.mock/rest/api/2/issue/20026",
+   "fields": {
+    "summary": "Renew the wildcard certificate",
+    "description": "h3. Context\nRenew the wildcard certificate was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10001",
+     "name": "In Review",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-09T01:00:00.000+0000",
+    "updated": "2026-11-16T07:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50051",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-09T06:00:00.000+0000",
+       "updated": "2026-11-09T06:00:00.000+0000"
+      },
+      {
+       "id": "50052",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/128].",
+       "created": "2026-11-09T11:00:00.000+0000",
+       "updated": "2026-11-09T11:00:00.000+0000"
+      }
+     ],
+     "maxResults": 2,
+     "total": 2,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20027",
+   "key": "OPS-7",
+   "self": "http://jira.mock/rest/api/2/issue/20027",
+   "fields": {
+    "summary": "Clean up old preview environments",
+    "description": "h3. Context\nClean up old preview environments was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "Highest",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-08T16:00:00.000+0000",
+    "updated": "2026-11-14T18:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50053",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-08T21:00:00.000+0000",
+       "updated": "2026-11-08T21:00:00.000+0000"
+      },
+      {
+       "id": "50054",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/129].",
+       "created": "2026-11-09T02:00:00.000+0000",
+       "updated": "2026-11-09T02:00:00.000+0000"
+      },
+      {
+       "id": "50055",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/ops/pull/130].",
+       "created": "2026-11-09T07:00:00.000+0000",
+       "updated": "2026-11-09T07:00:00.000+0000"
+      }
+     ],
+     "maxResults": 3,
+     "total": 3,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20028",
+   "key": "OPS-8",
+   "self": "http://jira.mock/rest/api/2/issue/20028",
+   "fields": {
+    "summary": "Log retention to 30 days",
+    "description": null,
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "Low",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-08T07:00:00.000+0000",
+    "updated": "2026-11-13T05:00:00.000+0000",
+    "comment": {
+     "comments": [
+      {
+       "id": "50056",
+       "author": {
+        "name": "me",
+        "key": "me",
+        "displayName": "Mock User",
+        "emailAddress": "me@example.com",
+        "active": true
+       },
+       "body": "Can reproduce on staging. *Logs* attached in the thread.",
+       "created": "2026-11-08T12:00:00.000+0000",
+       "updated": "2026-11-08T12:00:00.000+0000"
+      },
+      {
+       "id": "50057",
+       "author": {
+        "name": "ravi",
+        "key": "ravi",
+        "displayName": "Ravi Patel",
+        "emailAddress": "ravi@example.com",
+        "active": true
+       },
+       "body": "Update 1: looked into it, see [PR|https://git.example.com/ops/pull/130].",
+       "created": "2026-11-08T17:00:00.000+0000",
+       "updated": "2026-11-08T17:00:00.000+0000"
+      },
+      {
+       "id": "50058",
+       "author": {
+        "name": "kim",
+        "key": "kim",
+        "displayName": "Kim Ortiz",
+        "emailAddress": "kim@example.com",
+        "active": true
+       },
+       "body": "Update 2: looked into it, see [PR|https://git.example.com/ops/pull/131].",
+       "created": "2026-11-08T22:00:00.000+0000",
+       "updated": "2026-11-08T22:00:00.000+0000"
+      },
+      {
+       "id": "50059",
+       "author": {
+        "name": "dana",
+        "key": "dana",
+        "displayName": "Dana Lee",
+        "emailAddress": "dana@example.com",
+        "active": true
+       },
+       "body": "Update 3: looked into it, see [PR|https://git.example.com/ops/pull/132].",
+       "created": "2026-11-09T03:00:00.000+0000",
+       "updated": "2026-11-09T03:00:00.000+0000"
+      }
+     ],
+     "maxResults": 4,
+     "total": 4,
+     "startAt": 0
+    },
+    "issuelinks": [
+     {
+      "id": "70029",
+      "type": {
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "key": "OPS-7"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "20029",
+   "key": "OPS-9",
+   "self": "http://jira.mock/rest/api/2/issue/20029",
+   "fields": {
+    "summary": "Patch the bastion host",
+    "description": "h3. Context\nPatch the bastion host was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10300",
+     "key": "OPS",
+     "name": "Operations"
+    },
+    "created": "2026-11-07T22:00:00.000+0000",
+    "updated": "2026-11-11T16:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  }
+ ]
+}

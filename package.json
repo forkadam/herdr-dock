@@ -11,7 +11,8 @@
     "build": "node scripts/build.mjs",
     "build:app": "node scripts/build-app.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "update": "node scripts/update.mjs"
+    "update": "node scripts/update.mjs",
+    "mock:jira": "node scripts/mock-jira.mjs"
   },
   "devDependencies": {
     "esbuild": "0.24.0"

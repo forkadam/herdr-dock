@@ -1,0 +1,95 @@
+{
+ "categories": {
+  "new": {
+   "id": 2,
+   "key": "new",
+   "colorName": "blue-gray",
+   "name": "To Do"
+  },
+  "indeterminate": {
+   "id": 4,
+   "key": "indeterminate",
+   "colorName": "yellow",
+   "name": "In Progress"
+  },
+  "done": {
+   "id": 3,
+   "key": "done",
+   "colorName": "green",
+   "name": "Done"
+  }
+ },
+ "statuses": [
+  {
+   "id": "10000",
+   "name": "To Do",
+   "category": "new"
+  },
+  {
+   "id": "3",
+   "name": "In Progress",
+   "category": "indeterminate"
+  },
+  {
+   "id": "10001",
+   "name": "In Review",
+   "category": "indeterminate"
+  },
+  {
+   "id": "10002",
+   "name": "Done",
+   "category": "done"
+  }
+ ],
+ "transitions": [
+  {
+   "id": "11",
+   "name": "Start progress",
+   "from": [
+    "10000"
+   ],
+   "to": "3",
+   "hasScreen": false
+  },
+  {
+   "id": "21",
+   "name": "Send to review",
+   "from": [
+    "3"
+   ],
+   "to": "10001",
+   "hasScreen": false
+  },
+  {
+   "id": "31",
+   "name": "Resolve",
+   "from": [
+    "10001"
+   ],
+   "to": "10002",
+   "hasScreen": true,
+   "requires": [
+    "resolution"
+   ]
+  },
+  {
+   "id": "41",
+   "name": "Back to To Do",
+   "from": [
+    "3",
+    "10001"
+   ],
+   "to": "10000",
+   "hasScreen": false
+  },
+  {
+   "id": "51",
+   "name": "Reopen",
+   "from": [
+    "10002"
+   ],
+   "to": "10000",
+   "hasScreen": false
+  }
+ ]
+}
