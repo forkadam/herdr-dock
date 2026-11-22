@@ -3,13 +3,15 @@
 // (src/shared/jira/store.js); requests go through Herdr's fetch or curl (src/shared/jira/client.js). Everything that
 // decides something is pure and tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, InputState, Input, Popover } from "gpui-base";
+import { h_flex, v_flex, InputState, Input, Popover, TextareaState, Textarea } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, setShared, shared, theme, window, writeTextFile } from "herdr";
 import { pageShown } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
 import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
-import { PAGE_SIZE, badgeFor, countText, filterList, pageState, pickFilter, pollDue } from "../../shared/jira/page.js";
+import {
+  PAGE_SIZE, actionOutcome, badgeFor, canAssignToMe, commentReady, countText, filterList, pageState, pickFilter, pollDue, withComment,
+} from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken } from "../../shared/jira/store.js";
 import { openUrlCommand } from "../../shared/platform.js";
@@ -54,6 +56,11 @@ export default class Jira extends View {
     this.filterOpen = false;
     this.seq = latestOnly();
     this.detailSeq = latestOnly();
+    // Actions on the open issue.
+    this.transOpen = false;
+    this.transitions = null; // null (not asked), "loading", [transition], or { problem }
+    this.actionBusy = null; // "transition" | "assign" | "comment" while one runs
+    this.actionMsg = null; // actionOutcome(): { ok, message, link? }
 
     this.searchInput = InputState.new({ placeholder: "Search this filter…" });
     this.searchInput.on("submit", (_e, cx) => { this.query = this.searchInput.value().trim(); this.refresh(cx); });
@@ -62,6 +69,9 @@ export default class Jira extends View {
     this.tokenInput.set_masked(true);
     this.taskInput = InputState.new({ placeholder: "Work on Jira issue {key}: {summary}\\n{url}" });
     this.caInput = InputState.new({ placeholder: "Optional: path to the company CA file (curl)" });
+    this.commentInput = TextareaState.new({ placeholder: "Add a comment… (Ctrl+Enter sends)" });
+    this.commentInput.set_auto_grow(2, 6);
+    this.commentInput.on("submit", (e, cx) => { if (e?.secondary) this.sendComment(cx); });
     for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx) => this.saveForm(cx));
     this.transportChoice = "fetch";
 
@@ -81,8 +91,12 @@ export default class Jira extends View {
     });
   }
 
-  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close.
+  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, and on
+  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box).
   command(c, cx) {
+    if (c === "status") { if (this.detail) this.openTransitions(!this.transOpen, cx); return; }
+    if (c === "assign") { if (canAssignToMe(this.detail, this.me)) this.assignMe(cx); return; }
+    if (c === "comment") { if (this.detail) this.commentInput.focus(); return; }
     if (c === "list" || c === "board") setShared(VIEW_KEY, c);
     else if (c === "refresh") cx.spawn(async (cx) => this.reload(cx));
     else if (c === "settings") this.openSettings(cx);
@@ -210,6 +224,12 @@ export default class Jira extends View {
   }
 
   select(key, cx) {
+    if (key !== this.selected) {
+      this.actionMsg = null;
+      this.transitions = null;
+      this.transOpen = false;
+      this.commentInput.set_value("");
+    }
     this.selected = key;
     this.detail = null;
     this.detailProblem = null;
@@ -226,6 +246,62 @@ export default class Jira extends View {
     if (r.ok) { this.detail = issueDetail(r.data, this.jira.settings.baseUrl); this.detailProblem = null; }
     else this.detailProblem = r.problem;
     cx.notify();
+  }
+
+  // ---- actions (each guarded: one at a time, and its answer applied only to the issue it was for) ----
+
+  openTransitions(open, cx) {
+    this.transOpen = open;
+    if (!open || !this.selected) { cx.notify(); return; }
+    const key = this.selected;
+    this.transitions = "loading";
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.client(cx).transitions(key);
+      if (this.selected !== key) return;
+      this.transitions = r.ok ? r.data : { problem: r.problem };
+      cx.notify();
+    });
+  }
+
+  run(kind, cx, call, extra, after) {
+    if (this.actionBusy || !this.selected) return;
+    const key = this.selected;
+    this.actionBusy = kind;
+    this.actionMsg = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let r;
+      try { r = await call(this.client(cx), key); } finally { this.actionBusy = null; }
+      if (this.selected !== key) return;
+      this.actionMsg = actionOutcome(kind, r, extra);
+      cx.notify();
+      if (r.ok) await after(cx, key, r);
+    });
+  }
+
+  doTransition(tr, cx) {
+    this.transOpen = false;
+    this.transitions = null;
+    this.run("transition", cx, (c, key) => c.transition(key, tr.id), { to: tr.to?.name ?? tr.name, url: this.detail?.url },
+      async (cx, key) => { await this.loadDetail(cx, key); await this.refresh(cx); });
+  }
+
+  assignMe(cx) {
+    if (!this.me?.name) return;
+    this.run("assign", cx, (c, key) => c.assign(key, this.me.name), {},
+      async (cx, key) => { await this.loadDetail(cx, key); await this.refresh(cx); });
+  }
+
+  sendComment(cx) {
+    const text = this.commentInput.value();
+    if (!commentReady(text) || this.actionBusy) return;
+    this.run("comment", cx, (c, key) => c.comment(key, text.trim()), {}, async (cx, _key, r) => {
+      if (this.detail && r.data) this.detail = withComment(this.detail, r.data);
+      this.commentInput.set_value("");
+      cx.notify();
+      await this.refresh(cx); // its "updated" time moved
+    });
   }
 
   openUrl(url) {
@@ -484,10 +560,12 @@ export default class Jira extends View {
       .child(v_flex().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14)
         .child(div().text_size(16).font_semibold().child(d.summary))
         .child(h_flex().gap(8).items_center()
-          .child(div().px(8).py(2).rounded(6).text_size(11.5).bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border)
-            .text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).child(d.status ?? ""))
+          .child(this.statusMenu(t, d))
+          .when(canAssignToMe(d, this.me), (el) => el.child(this.button(t, "jira-assign", this.actionBusy === "assign" ? "Assigning…" : "Assign to me",
+            (cx) => this.assignMe(cx), { enabled: !this.actionBusy })))
           .child(div().flex_1())
           .child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url))))
+        .when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t)))
         .child(v_flex().gap(4).text_size(12.5)
           .child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned"))
           .child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null)))
@@ -504,7 +582,49 @@ export default class Jira extends View {
             .child(d.commentTotal > d.comments.length ? `Comments · last ${d.comments.length} of ${d.commentTotal}` : `Comments · ${d.commentTotal}`))
           .children(d.comments.map((c) => v_flex().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5)
             .child(h_flex().gap(6).child(div().font_medium().child(c.author)).child(div().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : "")))
-            .children(lines(c.bodyText))))));
+            .children(lines(c.bodyText))))
+          .child(v_flex().gap(6)
+            .child(div().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8)
+              .child(Textarea.new(this.commentInput).w_full().text_size(12.5).text_color(t.foreground)))
+            .child(h_flex().gap(8).items_center()
+              .child(div().flex_1().text_size(11).text_color(t.dim).child("Ctrl+Enter sends"))
+              .child(this.button(t, "jira-comment-send", this.actionBusy === "comment" ? "Sending…" : "Send", (cx) => this.sendComment(cx),
+                { primary: true, enabled: !this.actionBusy }))))));
+  }
+
+  // The status pill: a menu of the moves Jira allows from here (asked when it opens; workflows differ per issue).
+  statusMenu(t, d) {
+    const pill = h_flex().id("jira-status").h(24).px(8).gap(5).items_center().rounded(6).text_size(11.5).cursor_pointer()
+      .bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border)
+      .text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background)
+      .hover((st) => st.opacity(0.85)).tooltip("Change status")
+      .child(d.status ?? "").child(svg("mods/workspace-chrome/chevron-down.svg").size(11));
+    const list = this.transitions;
+    const rows = list === "loading" || list === null
+      ? [div().p(8).text_color(t.dim).child("Asking Jira…")]
+      : list.problem
+        ? [div().p(8).text_color(t.blocked).child(`${list.problem.message} ${list.problem.hint}`)]
+        : !list.length
+          ? [div().p(8).text_color(t.dim).child("No moves from this status.")]
+          : list.map((tr) => h_flex().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+            .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx))
+            .child(div().flex_1().min_w(0).truncate().child(tr.name))
+            .when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`→ ${tr.to.name}`))));
+    return Popover.new("jira-status-menu").open(this.transOpen)
+      .on_open_change((open, cx) => this.openTransitions(open, cx))
+      .trigger(pill)
+      .content(v_flex().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
+        .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+  }
+
+  // What the last action did, in place: green when it worked, red when not (with the browser link for a step
+  // Jira wants more for).
+  actionLine(t) {
+    const m = this.actionMsg;
+    if (!m) return div().text_size(12).text_color(t.dim).child("Moving…");
+    return h_flex().gap(8).items_center().text_size(12)
+      .child(div().flex_1().text_color(m.ok ? t.done : t.blocked).child(m.message))
+      .when(Boolean(m.link), (el) => el.child(this.button(t, "jira-action-link", "Open in browser", () => this.openUrl(m.link))));
   }
 
   render() {

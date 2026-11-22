@@ -1,5 +1,6 @@
 // The Jira page's decisions (pure; no host imports): which filters it offers, when it polls, what it shows.
 import { BUILTIN_FILTERS } from "./jql.js";
+import { wikiToText } from "./model.js";
 
 export const SHOWN_EVERY_MS = 2 * 60e3;
 export const HIDDEN_EVERY_MS = 10 * 60e3;
@@ -48,4 +49,33 @@ export function countText(shown, total) {
   if (!Number.isFinite(total)) return "";
   if (shown >= total) return `${total} issue${total === 1 ? "" : "s"}`;
   return `${shown} of ${total}`;
+}
+
+// ---- Actions ----
+
+// Assign to me: offered unless the issue is already mine (and only once Jira has said who I am).
+export function canAssignToMe(detail, me) {
+  if (!detail || !me?.name) return false;
+  return String(detail.assigneeName ?? "").toLowerCase() !== String(me.name).toLowerCase();
+}
+
+const DONE = { assign: "Assigned to you.", comment: "Comment added." };
+
+// An action's result -> { ok, message, link? } for the detail pane. `extra`: { to } (the transition's target
+// status), { url } (the issue in the browser, for a step Jira wants more for).
+export function actionOutcome(kind, result, extra = {}) {
+  if (result?.ok) return { ok: true, message: kind === "transition" ? `Moved to ${extra.to ?? "the new status"}.` : DONE[kind] ?? "Done." };
+  const p = result?.problem ?? { message: "Something went wrong.", hint: "" };
+  if (kind === "transition" && p.fields?.length) {
+    return { ok: false, message: `Jira wants more for this step (${p.fields.join(", ")}): open it in the browser.`, link: extra.url };
+  }
+  return { ok: false, message: [p.message, p.hint].filter(Boolean).join(" ") };
+}
+
+export const commentReady = (text) => String(text ?? "").trim().length > 0;
+
+// The detail with a comment Jira just created (POST /comment's answer) added, without fetching the issue again.
+export function withComment(detail, comment) {
+  const added = { id: comment.id, author: comment.author?.displayName ?? "you", bodyText: wikiToText(comment.body), createdMs: Date.parse(comment.created ?? "") || null };
+  return { ...detail, comments: [...detail.comments, added].slice(-5), commentTotal: (detail.commentTotal ?? detail.comments.length) + 1 };
 }

@@ -1,6 +1,6 @@
 // src/mods/dock-jira/main.js
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, InputState, Input, Popover } from "gpui-base";
+import { h_flex, v_flex, InputState, Input, Popover, TextareaState, Textarea } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, setShared as setShared2, shared as shared2, theme, window, writeTextFile } from "herdr";
 
 // src/mods/_page.js
@@ -339,6 +339,24 @@ function countText(shown, total) {
   if (shown >= total) return `${total} issue${total === 1 ? "" : "s"}`;
   return `${shown} of ${total}`;
 }
+function canAssignToMe(detail, me) {
+  if (!detail || !me?.name) return false;
+  return String(detail.assigneeName ?? "").toLowerCase() !== String(me.name).toLowerCase();
+}
+var DONE = { assign: "Assigned to you.", comment: "Comment added." };
+function actionOutcome(kind, result, extra = {}) {
+  if (result?.ok) return { ok: true, message: kind === "transition" ? `Moved to ${extra.to ?? "the new status"}.` : DONE[kind] ?? "Done." };
+  const p = result?.problem ?? { message: "Something went wrong.", hint: "" };
+  if (kind === "transition" && p.fields?.length) {
+    return { ok: false, message: `Jira wants more for this step (${p.fields.join(", ")}): open it in the browser.`, link: extra.url };
+  }
+  return { ok: false, message: [p.message, p.hint].filter(Boolean).join(" ") };
+}
+var commentReady = (text) => String(text ?? "").trim().length > 0;
+function withComment(detail, comment) {
+  const added = { id: comment.id, author: comment.author?.displayName ?? "you", bodyText: wikiToText(comment.body), createdMs: Date.parse(comment.created ?? "") || null };
+  return { ...detail, comments: [...detail.comments, added].slice(-5), commentTotal: (detail.commentTotal ?? detail.comments.length) + 1 };
+}
 
 // src/shared/path.js
 function slashPath(p) {
@@ -560,6 +578,10 @@ var Jira = class extends View {
     this.filterOpen = false;
     this.seq = latestOnly();
     this.detailSeq = latestOnly();
+    this.transOpen = false;
+    this.transitions = null;
+    this.actionBusy = null;
+    this.actionMsg = null;
     this.searchInput = InputState.new({ placeholder: "Search this filter\u2026" });
     this.searchInput.on("submit", (_e, cx2) => {
       this.query = this.searchInput.value().trim();
@@ -570,6 +592,11 @@ var Jira = class extends View {
     this.tokenInput.set_masked(true);
     this.taskInput = InputState.new({ placeholder: "Work on Jira issue {key}: {summary}\\n{url}" });
     this.caInput = InputState.new({ placeholder: "Optional: path to the company CA file (curl)" });
+    this.commentInput = TextareaState.new({ placeholder: "Add a comment\u2026 (Ctrl+Enter sends)" });
+    this.commentInput.set_auto_grow(2, 6);
+    this.commentInput.on("submit", (e, cx2) => {
+      if (e?.secondary) this.sendComment(cx2);
+    });
     for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx2) => this.saveForm(cx2));
     this.transportChoice = "fetch";
     if (checking()) return;
@@ -591,8 +618,21 @@ var Jira = class extends View {
       }
     });
   }
-  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close.
+  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, and on
+  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box).
   command(c, cx) {
+    if (c === "status") {
+      if (this.detail) this.openTransitions(!this.transOpen, cx);
+      return;
+    }
+    if (c === "assign") {
+      if (canAssignToMe(this.detail, this.me)) this.assignMe(cx);
+      return;
+    }
+    if (c === "comment") {
+      if (this.detail) this.commentInput.focus();
+      return;
+    }
     if (c === "list" || c === "board") setShared2(VIEW_KEY, c);
     else if (c === "refresh") cx.spawn(async (cx2) => this.reload(cx2));
     else if (c === "settings") this.openSettings(cx);
@@ -726,6 +766,12 @@ var Jira = class extends View {
     });
   }
   select(key, cx) {
+    if (key !== this.selected) {
+      this.actionMsg = null;
+      this.transitions = null;
+      this.transOpen = false;
+      this.commentInput.set_value("");
+    }
     this.selected = key;
     this.detail = null;
     this.detailProblem = null;
@@ -743,6 +789,79 @@ var Jira = class extends View {
       this.detailProblem = null;
     } else this.detailProblem = r.problem;
     cx.notify();
+  }
+  // ---- actions (each guarded: one at a time, and its answer applied only to the issue it was for) ----
+  openTransitions(open, cx) {
+    this.transOpen = open;
+    if (!open || !this.selected) {
+      cx.notify();
+      return;
+    }
+    const key = this.selected;
+    this.transitions = "loading";
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      const r = await this.client(cx2).transitions(key);
+      if (this.selected !== key) return;
+      this.transitions = r.ok ? r.data : { problem: r.problem };
+      cx2.notify();
+    });
+  }
+  run(kind, cx, call, extra, after) {
+    if (this.actionBusy || !this.selected) return;
+    const key = this.selected;
+    this.actionBusy = kind;
+    this.actionMsg = null;
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      let r;
+      try {
+        r = await call(this.client(cx2), key);
+      } finally {
+        this.actionBusy = null;
+      }
+      if (this.selected !== key) return;
+      this.actionMsg = actionOutcome(kind, r, extra);
+      cx2.notify();
+      if (r.ok) await after(cx2, key, r);
+    });
+  }
+  doTransition(tr, cx) {
+    this.transOpen = false;
+    this.transitions = null;
+    this.run(
+      "transition",
+      cx,
+      (c, key) => c.transition(key, tr.id),
+      { to: tr.to?.name ?? tr.name, url: this.detail?.url },
+      async (cx2, key) => {
+        await this.loadDetail(cx2, key);
+        await this.refresh(cx2);
+      }
+    );
+  }
+  assignMe(cx) {
+    if (!this.me?.name) return;
+    this.run(
+      "assign",
+      cx,
+      (c, key) => c.assign(key, this.me.name),
+      {},
+      async (cx2, key) => {
+        await this.loadDetail(cx2, key);
+        await this.refresh(cx2);
+      }
+    );
+  }
+  sendComment(cx) {
+    const text = this.commentInput.value();
+    if (!commentReady(text) || this.actionBusy) return;
+    this.run("comment", cx, (c, key) => c.comment(key, text.trim()), {}, async (cx2, _key, r) => {
+      if (this.detail && r.data) this.detail = withComment(this.detail, r.data);
+      this.commentInput.set_value("");
+      cx2.notify();
+      await this.refresh(cx2);
+    });
   }
   openUrl(url) {
     const c = openUrlCommand(window()?.platform, url);
@@ -939,7 +1058,33 @@ var Jira = class extends View {
     }
     const lines = (text) => (text ? text.split("\n") : []).map((l) => l.trim() ? div().child(l) : div().h(8));
     const meta = (label, value) => h_flex().gap(8).child(div().w(70).flex_none().text_color(t.dim).child(label)).child(div().flex_1().min_w(0).truncate().child(value ?? "\u2014"));
-    return pane.child(top).child(v_flex().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div().text_size(16).font_semibold().child(d.summary)).child(h_flex().gap(8).items_center().child(div().px(8).py(2).rounded(6).text_size(11.5).bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border).text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).child(d.status ?? "")).child(div().flex_1()).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).child(v_flex().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(v_flex().gap(4).text_size(12.8).text_color(t.foreground).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex().gap(4).text_size(12.5).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div().text_color(t.dim).child(l.label)).child(div().child(l.key)))))).child(v_flex().gap(10).child(div().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex().gap(6).child(div().font_medium().child(c.author)).child(div().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText))))));
+    return pane.child(top).child(v_flex().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div().text_size(16).font_semibold().child(d.summary)).child(h_flex().gap(8).items_center().child(this.statusMenu(t, d)).when(canAssignToMe(d, this.me), (el) => el.child(this.button(
+      t,
+      "jira-assign",
+      this.actionBusy === "assign" ? "Assigning\u2026" : "Assign to me",
+      (cx) => this.assignMe(cx),
+      { enabled: !this.actionBusy }
+    ))).child(div().flex_1()).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(v_flex().gap(4).text_size(12.8).text_color(t.foreground).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex().gap(4).text_size(12.5).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div().text_color(t.dim).child(l.label)).child(div().child(l.key)))))).child(v_flex().gap(10).child(div().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex().gap(6).child(div().font_medium().child(c.author)).child(div().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex().gap(6).child(div().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Textarea.new(this.commentInput).w_full().text_size(12.5).text_color(t.foreground))).child(h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child("Ctrl+Enter sends")).child(this.button(
+      t,
+      "jira-comment-send",
+      this.actionBusy === "comment" ? "Sending\u2026" : "Send",
+      (cx) => this.sendComment(cx),
+      { primary: true, enabled: !this.actionBusy }
+    ))))));
+  }
+  // The status pill: a menu of the moves Jira allows from here (asked when it opens; workflows differ per issue).
+  statusMenu(t, d) {
+    const pill = h_flex().id("jira-status").h(24).px(8).gap(5).items_center().rounded(6).text_size(11.5).cursor_pointer().bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border).text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).hover((st) => st.opacity(0.85)).tooltip("Change status").child(d.status ?? "").child(svg("mods/workspace-chrome/chevron-down.svg").size(11));
+    const list = this.transitions;
+    const rows = list === "loading" || list === null ? [div().p(8).text_color(t.dim).child("Asking Jira\u2026")] : list.problem ? [div().p(8).text_color(t.blocked).child(`${list.problem.message} ${list.problem.hint}`)] : !list.length ? [div().p(8).text_color(t.dim).child("No moves from this status.")] : list.map((tr) => h_flex().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx)).child(div().flex_1().min_w(0).truncate().child(tr.name)).when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`\u2192 ${tr.to.name}`))));
+    return Popover.new("jira-status-menu").open(this.transOpen).on_open_change((open, cx) => this.openTransitions(open, cx)).trigger(pill).content(v_flex().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+  }
+  // What the last action did, in place: green when it worked, red when not (with the browser link for a step
+  // Jira wants more for).
+  actionLine(t) {
+    const m = this.actionMsg;
+    if (!m) return div().text_size(12).text_color(t.dim).child("Moving\u2026");
+    return h_flex().gap(8).items_center().text_size(12).child(div().flex_1().text_color(m.ok ? t.done : t.blocked).child(m.message)).when(Boolean(m.link), (el) => el.child(this.button(t, "jira-action-link", "Open in browser", () => this.openUrl(m.link))));
   }
   render() {
     const t = theme();

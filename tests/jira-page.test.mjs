@@ -49,3 +49,50 @@ test("badgeFor and countText", () => {
   assert.equal(countText(50, 120), "50 of 120");
   assert.equal(countText(0, undefined), "");
 });
+
+// ---- Task 6: actions ----
+import { actionOutcome, canAssignToMe, commentReady, withComment } from "../src/shared/jira/page.js";
+
+test("canAssignToMe: hidden when it's already mine, or before Jira says who I am", () => {
+  const me = { name: "me", displayName: "Mock User" };
+  assert.equal(canAssignToMe({ assigneeName: null }, me), true);
+  assert.equal(canAssignToMe({ assigneeName: "dana" }, me), true);
+  assert.equal(canAssignToMe({ assigneeName: "Me" }, me), false);
+  assert.equal(canAssignToMe({ assigneeName: null }, null), false);
+  assert.equal(canAssignToMe(null, me), false);
+});
+
+test("actionOutcome: what each action says when it worked", () => {
+  assert.deepEqual(actionOutcome("transition", { ok: true }, { to: "In Review" }), { ok: true, message: "Moved to In Review." });
+  assert.deepEqual(actionOutcome("assign", { ok: true }), { ok: true, message: "Assigned to you." });
+  assert.deepEqual(actionOutcome("comment", { ok: true }), { ok: true, message: "Comment added." });
+});
+
+test("actionOutcome: a workflow step that wants fields points at the browser", () => {
+  const r = actionOutcome("transition", { ok: false, problem: { kind: "invalid", message: "Jira refused the request. Resolution is required.", hint: "x", fields: ["resolution"] } },
+    { to: "Done", url: "https://j/browse/A-1" });
+  assert.equal(r.ok, false);
+  assert.equal(r.message, "Jira wants more for this step (resolution): open it in the browser.");
+  assert.equal(r.link, "https://j/browse/A-1");
+});
+
+test("actionOutcome: any other failure gives Jira's message and the hint", () => {
+  const r = actionOutcome("comment", { ok: false, problem: { kind: "server", message: "Jira had a server error.", hint: "Try again in a minute." } });
+  assert.deepEqual(r, { ok: false, message: "Jira had a server error. Try again in a minute." });
+});
+
+test("commentReady: something to send", () => {
+  assert.equal(commentReady("  "), false);
+  assert.equal(commentReady(""), false);
+  assert.equal(commentReady(" ok "), true);
+});
+
+test("withComment: the new comment shows at once, last 5 kept, total counted", () => {
+  const d = { comments: [1, 2, 3, 4, 5].map((n) => ({ id: String(n), author: "a", bodyText: `c${n}`, createdMs: n })), commentTotal: 7 };
+  const next = withComment(d, { id: "9", author: { displayName: "Mock User" }, body: "*new*", created: "2026-11-22T10:00:00.000+0000" });
+  assert.equal(next.comments.length, 5);
+  assert.deepEqual(next.comments.at(-1), { id: "9", author: "Mock User", bodyText: "new", createdMs: Date.parse("2026-11-22T10:00:00.000+0000") });
+  assert.equal(next.comments[0].id, "2");
+  assert.equal(next.commentTotal, 8);
+  assert.equal(d.comments.length, 5); // not changed in place
+});
