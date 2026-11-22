@@ -62,3 +62,28 @@ test("a window whose reset time has passed shows as reset, with no bar, and stay
   assert.deepEqual(iconBadge([fresh, old], now), { text: "40%", stale: false });
   assert.equal(iconBadge([old], now), null);
 });
+
+// ---- Limits from the claude CLI: per-model rows, pace, plan, source ----
+test("quotaRows: a model's own weekly limit, the pace tick, the CLI as the source", () => {
+  const now = Date.parse("2026-11-22T14:00:00Z");
+  const cli = { source: "cli", plan: "team", fetchedMs: now, stale: false, windows: [
+    { kind: "five_hour", usedPercent: 14, resetsMs: now + 3600e3, durationMs: 5 * 3600e3 },
+    { kind: "model", label: "Fable", usedPercent: 3, resetsMs: now + 3.5 * 86400e3, durationMs: 7 * 86400e3 }] };
+  const [five, fable] = quotaRows(cli, now, CLAUDE);
+  assert.equal(five.pace, 0.8);
+  assert.equal(fable.label, "weekly · Fable");
+  assert.equal(fable.pace, 0.5);
+  assert.match(five.tooltip, /source: Claude Code \(\/usage\)$/);
+  assert.match(five.tooltip, /80% of the window has passed/);
+  // A status-line reading has no window length: no tick, and it names the status line.
+  const [sl] = quotaRows(S(), 1_000_000, CLAUDE);
+  assert.equal(sl.pace, null);
+  assert.match(sl.tooltip, /source: Claude status line$/);
+});
+
+test("quotaGroups: Claude's group carries the plan", () => {
+  const now = 1_000_000;
+  const cli = { source: "cli", plan: "claude_max_20x", fetchedMs: now, stale: false, windows: [{ kind: "weekly", usedPercent: 1, resetsMs: null, durationMs: 1 }] };
+  assert.equal(quotaGroups({ claude: cli }, now)[0].plan, "Max 20x");
+  assert.equal(quotaGroups({ claude: S() }, now)[0].plan, null);
+});

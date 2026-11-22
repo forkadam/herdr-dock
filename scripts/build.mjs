@@ -34,6 +34,7 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
       // The status-line writer Claude Code runs, and the setup that puts it in ~/.claude/settings.json (one file,
       // run with node from the installed mod: the Quotas panel's Set up button, the app install, deploy).
       copyFileSync(join(ROOT, "scripts/herdr-statusline-cache.mjs"), join(dest, "herdr-statusline-cache.mjs"));
+      copyFileSync(join(ROOT, "scripts/herdr-claude-usage.mjs"), join(dest, "herdr-claude-usage.mjs")); // Claude's limits from the CLI
       await build({
         entryPoints: [join(ROOT, "src/app/statusline-setup.js")], outfile: join(dest, "herdr-statusline-setup.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,

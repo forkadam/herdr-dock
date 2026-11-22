@@ -5,6 +5,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, setShared, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
+import { mergeClaude, parseUsageOutput } from "../../shared/claude-usage.js";
 import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
 import { scriptPaths, statuslinePlan } from "../../shared/statusline.js";
 import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
@@ -17,6 +18,8 @@ const CODEX_ABSENT_MS = 300000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
 const TOP_KEY = "dock.quotas.top";
+// Claude's limits from the claude CLI (get_usage, what /usage shows): asked this often. Cheap (~1 s), no model use.
+const CLI_EVERY_MS = 5 * 60e3;
 // dock.quotas.top's `at` is refreshed once it is this old (with the 30 s timer: at most ~60 s old).
 const TOP_REFRESH_MS = 55000;
 // With no Claude reading, the status-line self-check runs at most this often (and right after Set up).
@@ -26,7 +29,9 @@ const HIGH = "#f85149";
 
 export default class Quotas extends View {
   init(_props, cx) {
-    this.statusline = null;
+    this.statusline = null; // the status-line cache (5-hour and weekly, fresh on every Claude reply)
+    this.cli = null; // the claude CLI's reading (plan, per-model limits), every CLI_EVERY_MS
+    this.cliAt = 0;
     this.codex = null;
     this.icons = {}; // agent key -> { icon, tint } from Herdr's agent table
     this.setup = { state: null, busy: false, error: null, nextAt: 0 }; // the status-line self-check
@@ -39,7 +44,8 @@ export default class Quotas extends View {
     });
     this.codexNextAt = 0;
     // Claude reloads on every status-line write (the watch below) and on the timer; Codex only on the timer.
-    cx.timer.every(REFRESH_MS, (cx) => { this.reload(cx); this.reloadCodex(cx); });
+    cx.timer.every(REFRESH_MS, (cx) => { this.reload(cx); this.reloadCodex(cx); this.reloadCli(cx); });
+    this.reloadCli(cx);
     const dir = slashPath(home()) + "/.claude/statusline-cache";
     this.reload(cx);
     this.reloadCodex(cx);
@@ -72,7 +78,9 @@ export default class Quotas extends View {
         } while (this.again);
       } catch (e) {
         console.log(`dock-quotas: read failed: ${e}`);
-        this.statusline = null;
+        this.statusline = null; // the status-line cache (5-hour and weekly, fresh on every Claude reply)
+    this.cli = null; // the claude CLI's reading (plan, per-model limits), every CLI_EVERY_MS
+    this.cliAt = 0;
         this.publishTop();
         cx.notify();
       } finally {
@@ -80,6 +88,32 @@ export default class Quotas extends View {
       }
     });
   }
+
+  // Asks the claude CLI for your limits (scripts/herdr-claude-usage.mjs, shipped in this mod). No claude, not logged
+  // in, or no answer: the last reading stays and goes stale; the status line still works on its own.
+  reloadCli(cx) {
+    if (this.cliReading || Date.now() - this.cliAt < CLI_EVERY_MS) return;
+    this.cliReading = true;
+    this.cliAt = Date.now();
+    cx.spawn(async (cx) => {
+      try {
+        const helper = slashPath(appHome()) + "/mods/dock-quotas/herdr-claude-usage.mjs";
+        const r = await exec("node", [helper], { timeout: 40000 });
+        const reading = parseUsageOutput(r.stdout, Date.now());
+        if (reading) this.cli = reading;
+        else console.log(`dock-quotas: claude usage: ${(r.stdout || r.stderr || "").trim().slice(0, 200)}`);
+      } catch (e) {
+        console.log(`dock-quotas: claude usage failed: ${e}`);
+      } finally {
+        this.cliReading = false;
+        this.publishTop();
+        cx.notify();
+      }
+    });
+  }
+
+  // What Quotas shows for Claude: the CLI's reading, with a fresher status line's 5-hour and weekly numbers.
+  claude() { return mergeClaude(this.cli, this.statusline, Date.now()); }
 
   reloadCodex(cx) {
     if (this.codexReading || Date.now() < this.codexNextAt) return;
@@ -155,7 +189,7 @@ export default class Quotas extends View {
   }
 
   setupRow(t) {
-    const n = this.statusline ? null : setupNotice(this.setup.state, this.setup);
+    const n = this.claude() ? null : setupNotice(this.setup.state, this.setup);
     if (!n) return null;
     return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip)
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? (t.blocked ?? HIGH) : t.muted).child(n.text))
@@ -170,7 +204,7 @@ export default class Quotas extends View {
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
     const now = Date.now();
-    const b = iconBadge([this.statusline, this.codex], now);
+    const b = iconBadge([this.claude(), this.codex], now);
     const prev = shared(TOP_KEY) ?? null;
     if (!b) { if (prev !== null) setShared(TOP_KEY, null); return; }
     const p = parseInt(b.text, 10), stale = b.stale;
@@ -218,7 +252,8 @@ export default class Quotas extends View {
       ? (ic.tint ? svg(ic.icon).size(13).text_color(t.muted) : image(ic.icon).size(13))
       : div().size(13).flex().items_center().justify_center().text_size(10).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
     return h_flex().id(`quota-group-${i}`).px(16).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center()
-      .child(face).child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title));
+      .child(face).child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
+      .when(Boolean(g.plan), (el) => el.child(div().px(5).rounded(4).bg(t.border).text_size(10).text_color(t.muted).child(g.plan)));
   }
 
   header(t, onTitle) {
@@ -238,8 +273,10 @@ export default class Quotas extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label))
         .when(r.stale, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child("stale")))
         .child(div().flex_none().text_size(12).text_color(r.percent == null ? t.dim : t.muted).child(r.value)))
-      .when(r.percent != null, (el) => el.child(div().w_full().h(4).rounded(2).bg(t.border).overflow_hidden()
-        .child(div().w(`${pct}%`).h(4).rounded(2).bg(color))))
+      .when(r.percent != null, (el) => el.child(div().relative().w_full().h(4).rounded(2).bg(t.border)
+        .child(div().w(`${pct}%`).h(4).rounded(2).bg(color))
+        // The pace tick: how much of the window's time has passed. A bar past it is being used up too fast.
+        .when(r.pace != null, (bar) => bar.child(div().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7)))))
       .child(div().truncate().text_size(11).text_color(t.dim).child(r.detail));
   }
 
@@ -248,7 +285,7 @@ export default class Quotas extends View {
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
-      const b = iconBadge([this.statusline, this.codex], Date.now());
+      const b = iconBadge([this.claude(), this.codex], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
       if (!b) return rail;
       const p = parseInt(b.text, 10);
@@ -262,7 +299,7 @@ export default class Quotas extends View {
       return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
         .child(this.header(t, () => requestFocus(myId)));
     }
-    const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
+    const groups = quotaGroups({ claude: this.claude(), codex: this.codex }, Date.now());
     const setup = this.setupRow(t);
     let n = 0;
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)

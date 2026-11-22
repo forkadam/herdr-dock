@@ -1,7 +1,7 @@
 // src/mods/dock-quotas/main.js
 import { View, div as div2, svg as svg2, image } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { theme, shared, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
+import { theme, shared, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window as window2 } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -92,11 +92,60 @@ function formatReset(resetsMs, nowMs) {
   return `resets in ${m}m`;
 }
 
+// src/shared/claude-usage.js
+var HOUR = 36e5;
+var WEEK = 7 * 24 * HOUR;
+var CLI_STALE_MS = 15 * 6e4;
+var isNum2 = (v) => typeof v === "number" && Number.isFinite(v);
+function window(kind, l, durationMs, label) {
+  if (!l || !isNum2(l.utilization)) return null;
+  const t = Date.parse(l.resets_at ?? "");
+  return { kind, ...label ? { label } : {}, usedPercent: l.utilization, resetsMs: Number.isFinite(t) ? t : null, durationMs };
+}
+function parseUsageOutput(text, nowMs) {
+  let d;
+  try {
+    d = JSON.parse(String(text ?? "").trim().split("\n").pop());
+  } catch {
+    return null;
+  }
+  if (!d?.ok || !d.limits) return null;
+  const l = d.limits;
+  const windows = [
+    window("five_hour", l.five_hour, 5 * HOUR),
+    window("weekly", l.seven_day, WEEK),
+    window("model", l.seven_day_opus, WEEK, "Opus"),
+    window("model", l.seven_day_sonnet, WEEK, "Sonnet"),
+    ...Array.isArray(l.model_scoped) ? l.model_scoped.map((m) => window("model", m, WEEK, m.display_name || "model")) : []
+  ].filter(Boolean);
+  return { source: "cli", plan: typeof d.plan === "string" && d.plan ? d.plan : null, fetchedMs: nowMs, stale: false, windows };
+}
+function mergeClaude(cli, statusline, nowMs) {
+  if (!cli) return statusline ?? null;
+  const fresher = statusline && statusline.fetchedMs > cli.fetchedMs ? statusline : null;
+  const windows = cli.windows.map((w) => {
+    const s = fresher?.windows.find((x) => x.kind === w.kind && w.kind !== "model");
+    return s ? { ...w, usedPercent: s.usedPercent, resetsMs: s.resetsMs ?? w.resetsMs } : w;
+  });
+  const fetchedMs = fresher ? fresher.fetchedMs : cli.fetchedMs;
+  return { ...cli, windows, fetchedMs, stale: fresher ? Boolean(fresher.stale) && nowMs - cli.fetchedMs > CLI_STALE_MS : nowMs - cli.fetchedMs > CLI_STALE_MS };
+}
+function paceOf(w, nowMs) {
+  if (!isNum2(w?.durationMs) || !isNum2(w?.resetsMs)) return null;
+  const elapsed = w.durationMs - (w.resetsMs - nowMs);
+  return Math.max(0, Math.min(1, elapsed / w.durationMs));
+}
+function planLabel(plan) {
+  if (typeof plan !== "string" || !plan.trim()) return null;
+  const words = plan.replace(/^claude[_-]/i, "").split(/[_\s-]+/).filter(Boolean);
+  return words.map((w, i) => i === 0 ? w[0].toUpperCase() + w.slice(1) : w).join(" ");
+}
+
 // src/shared/codex.js
 var STALE_MS2 = 12e4;
 var pad = (n) => String(n).padStart(2, "0");
 var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-var isNum2 = (v) => typeof v === "number" && Number.isFinite(v);
+var isNum3 = (v) => typeof v === "number" && Number.isFinite(v);
 function codexSessionDirs(codexHome, nowMs) {
   const out = [];
   for (let d = 0; d <= 7; d++) {
@@ -109,11 +158,11 @@ function codexSessionDirs(codexHome, nowMs) {
   return out;
 }
 function windowOf(w, eventMs) {
-  if (!isObj2(w) || !isNum2(w.used_percent) || w.used_percent < 0 || w.used_percent > 100) return null;
+  if (!isObj2(w) || !isNum3(w.used_percent) || w.used_percent < 0 || w.used_percent > 100) return null;
   let resetsMs = null;
-  if (isNum2(w.resets_at)) resetsMs = w.resets_at > 1e12 ? w.resets_at : w.resets_at * 1e3;
-  else if (isNum2(w.resets_in_seconds) && isNum2(eventMs)) resetsMs = eventMs + w.resets_in_seconds * 1e3;
-  return { usedPercent: w.used_percent, minutes: isNum2(w.window_minutes) ? w.window_minutes : null, resetsMs };
+  if (isNum3(w.resets_at)) resetsMs = w.resets_at > 1e12 ? w.resets_at : w.resets_at * 1e3;
+  else if (isNum3(w.resets_in_seconds) && isNum3(eventMs)) resetsMs = eventMs + w.resets_in_seconds * 1e3;
+  return { usedPercent: w.used_percent, minutes: isNum3(w.window_minutes) ? w.window_minutes : null, resetsMs };
 }
 function parseCodexUsage(text, nowMs) {
   if (typeof text !== "string") return null;
@@ -136,7 +185,7 @@ function parseCodexUsage(text, nowMs) {
       return { kind: byLength, usedPercent: w.usedPercent, resetsMs: w.resetsMs };
     }).filter(Boolean);
     if (!found.length) continue;
-    if (!isNum2(eventMs)) return { windows: found, fetchedMs: nowMs, stale: true };
+    if (!isNum3(eventMs)) return { windows: found, fetchedMs: nowMs, stale: true };
     return { windows: found, fetchedMs: eventMs, stale: nowMs - eventMs > STALE_MS2 };
   }
   return null;
@@ -244,33 +293,39 @@ var PROVIDERS = [
   { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" }
 ];
 var LABELS = { five_hour: "5-hour", weekly: "weekly" };
+var sourceOf = (usage, provider) => usage.source === "cli" ? "Claude Code (/usage)" : provider.source;
+var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : LABELS[w.kind] ?? w.kind;
 var isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 function quotaRows(usage, nowMs, provider) {
   const age = formatAge(nowMs - usage.fetchedMs);
+  const source = sourceOf(usage, provider);
   return usage.windows.map((w) => {
-    const label = LABELS[w.kind] ?? w.kind;
+    const label = labelOf(w);
     if (isReset(w, nowMs)) {
       return {
         label,
         value: "reset",
         detail: `reset \xB7 ${age}`,
         stale: Boolean(usage.stale),
-        tooltip: `${provider.title} \xB7 ${label}: reset since this reading \xB7 source: ${provider.source}`,
-        percent: null
+        tooltip: `${provider.title} \xB7 ${label}: reset since this reading \xB7 source: ${source}`,
+        percent: null,
+        pace: null
       };
     }
+    const pace = paceOf(w, nowMs);
     return {
       label,
       value: formatPercent(w.usedPercent),
       detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} \xB7 ${age}`,
       stale: Boolean(usage.stale),
-      tooltip: `${provider.title} \xB7 ${label}: ${formatPercent(w.usedPercent)} \xB7 source: ${provider.source}`,
-      percent: w.usedPercent
+      tooltip: `${provider.title} \xB7 ${label}: ${formatPercent(w.usedPercent)}${pace == null ? "" : ` \xB7 ${Math.round(pace * 100)}% of the window has passed`} \xB7 source: ${source}`,
+      percent: w.usedPercent,
+      pace
     };
   });
 }
 function quotaGroups(byId, nowMs) {
-  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, rows: quotaRows(byId[p.id], nowMs, p) }));
+  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 function iconBadge(readings, nowMs) {
   let best = null;
@@ -323,6 +378,7 @@ var REFRESH_MS = 3e4;
 var CODEX_ABSENT_MS = 3e5;
 var EMPTY_WATCH_MS = 1e3;
 var TOP_KEY = "dock.quotas.top";
+var CLI_EVERY_MS = 5 * 6e4;
 var TOP_REFRESH_MS = 55e3;
 var SETUP_CHECK_MS = 6e4;
 var WARN = "#d29922";
@@ -330,6 +386,8 @@ var HIGH = "#f85149";
 var Quotas = class extends View {
   init(_props, cx) {
     this.statusline = null;
+    this.cli = null;
+    this.cliAt = 0;
     this.codex = null;
     this.icons = {};
     this.setup = { state: null, busy: false, error: null, nextAt: 0 };
@@ -346,7 +404,9 @@ var Quotas = class extends View {
     cx.timer.every(REFRESH_MS, (cx2) => {
       this.reload(cx2);
       this.reloadCodex(cx2);
+      this.reloadCli(cx2);
     });
+    this.reloadCli(cx);
     const dir = slashPath(home()) + "/.claude/statusline-cache";
     this.reload(cx);
     this.reloadCodex(cx);
@@ -385,12 +445,40 @@ var Quotas = class extends View {
       } catch (e) {
         console.log(`dock-quotas: read failed: ${e}`);
         this.statusline = null;
+        this.cli = null;
+        this.cliAt = 0;
         this.publishTop();
         cx2.notify();
       } finally {
         this.reading = false;
       }
     });
+  }
+  // Asks the claude CLI for your limits (scripts/herdr-claude-usage.mjs, shipped in this mod). No claude, not logged
+  // in, or no answer: the last reading stays and goes stale; the status line still works on its own.
+  reloadCli(cx) {
+    if (this.cliReading || Date.now() - this.cliAt < CLI_EVERY_MS) return;
+    this.cliReading = true;
+    this.cliAt = Date.now();
+    cx.spawn(async (cx2) => {
+      try {
+        const helper = slashPath(appHome()) + "/mods/dock-quotas/herdr-claude-usage.mjs";
+        const r = await exec("node", [helper], { timeout: 4e4 });
+        const reading = parseUsageOutput(r.stdout, Date.now());
+        if (reading) this.cli = reading;
+        else console.log(`dock-quotas: claude usage: ${(r.stdout || r.stderr || "").trim().slice(0, 200)}`);
+      } catch (e) {
+        console.log(`dock-quotas: claude usage failed: ${e}`);
+      } finally {
+        this.cliReading = false;
+        this.publishTop();
+        cx2.notify();
+      }
+    });
+  }
+  // What Quotas shows for Claude: the CLI's reading, with a fresher status line's 5-hour and weekly numbers.
+  claude() {
+    return mergeClaude(this.cli, this.statusline, Date.now());
   }
   reloadCodex(cx) {
     if (this.codexReading || Date.now() < this.codexNextAt) return;
@@ -419,7 +507,7 @@ var Quotas = class extends View {
         const text = await readTextFile(root + "/.claude/settings.json").catch(() => null);
         let state;
         if (text == null) {
-          const probe = listDirCommand(window()?.platform, root + "/.claude");
+          const probe = listDirCommand(window2()?.platform, root + "/.claude");
           const r = await exec(probe.command, probe.args).catch(() => null);
           state = r && r.code === 0 ? "missing" : "no-claude";
         } else {
@@ -465,7 +553,7 @@ var Quotas = class extends View {
     });
   }
   setupRow(t) {
-    const n = this.statusline ? null : setupNotice(this.setup.state, this.setup);
+    const n = this.claude() ? null : setupNotice(this.setup.state, this.setup);
     if (!n) return null;
     return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
   }
@@ -475,7 +563,7 @@ var Quotas = class extends View {
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
     const now = Date.now();
-    const b = iconBadge([this.statusline, this.codex], now);
+    const b = iconBadge([this.claude(), this.codex], now);
     const prev = shared(TOP_KEY) ?? null;
     if (!b) {
       if (prev !== null) setShared2(TOP_KEY, null);
@@ -490,7 +578,7 @@ var Quotas = class extends View {
   // reading among the first 3 folders that have logs wins, so a long or resumed session in an older
   // folder still counts. No ~/.codex/sessions: nothing, and no look again for 5 minutes.
   async readCodex() {
-    const platform = window()?.platform;
+    const platform = window2()?.platform;
     const now = Date.now();
     const root = slashPath(home()) + "/.codex";
     const probe = listDirCommand(platform, root + "/sessions");
@@ -524,7 +612,7 @@ var Quotas = class extends View {
   groupHeader(t, g, i) {
     const ic = this.icons[g.agent];
     const face = ic ? ic.tint ? svg2(ic.icon).size(13).text_color(t.muted) : image(ic.icon).size(13) : div2().size(13).flex().items_center().justify_center().text_size(10).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
-    return h_flex().id(`quota-group-${i}`).px(16).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center().child(face).child(div2().text_size(11.5).font_medium().text_color(t.muted).child(g.title));
+    return h_flex().id(`quota-group-${i}`).px(16).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center().child(face).child(div2().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).when(Boolean(g.plan), (el) => el.child(div2().px(5).rounded(4).bg(t.border).text_size(10).text_color(t.muted).child(g.plan)));
   }
   header(t, onTitle) {
     const title = div2().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
@@ -533,14 +621,14 @@ var Quotas = class extends View {
   row(t, r, i) {
     const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[barLevel(r.percent ?? 0)];
     const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return v_flex2().id(`quota-${i}`).px(16).py(4).gap(3).flex_none().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(h_flex().items_center().gap(6).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label)).when(r.stale, (el) => el.child(div2().flex_none().text_size(10.5).text_color(t.dim).child("stale"))).child(div2().flex_none().text_size(12).text_color(r.percent == null ? t.dim : t.muted).child(r.value))).when(r.percent != null, (el) => el.child(div2().w_full().h(4).rounded(2).bg(t.border).overflow_hidden().child(div2().w(`${pct}%`).h(4).rounded(2).bg(color)))).child(div2().truncate().text_size(11).text_color(t.dim).child(r.detail));
+    return v_flex2().id(`quota-${i}`).px(16).py(4).gap(3).flex_none().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(h_flex().items_center().gap(6).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label)).when(r.stale, (el) => el.child(div2().flex_none().text_size(10.5).text_color(t.dim).child("stale"))).child(div2().flex_none().text_size(12).text_color(r.percent == null ? t.dim : t.muted).child(r.value))).when(r.percent != null, (el) => el.child(div2().relative().w_full().h(4).rounded(2).bg(t.border).child(div2().w(`${pct}%`).h(4).rounded(2).bg(color)).when(r.pace != null, (bar) => bar.child(div2().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7))))).child(div2().truncate().text_size(11).text_color(t.dim).child(r.detail));
   }
   render(cx) {
     const t = theme();
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
-      const b = iconBadge([this.statusline, this.codex], Date.now());
+      const b = iconBadge([this.claude(), this.codex], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
       if (!b) return rail;
       const p = parseInt(b.text, 10);
@@ -550,7 +638,7 @@ var Quotas = class extends View {
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId)));
     }
-    const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
+    const groups = quotaGroups({ claude: this.claude(), codex: this.codex }, Date.now());
     const setup = this.setupRow(t);
     let n = 0;
     return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));

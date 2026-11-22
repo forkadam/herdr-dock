@@ -88,7 +88,7 @@
           "id": "dock-left-4-dock-quotas",
           "type": "block",
           "size": {
-            "px": 150
+            "px": 220
           },
           "min": 32,
           "content": {

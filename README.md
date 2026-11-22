@@ -250,7 +250,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
                               { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-git" },
-                              { "mod": "dock-quotas", "size": 150 }, { "mod": "dock-footer", "size": 40 } ] },
+                              { "mod": "dock-quotas", "size": 220 }, { "mod": "dock-footer", "size": 40 } ] },
     "right":  { "size": 360, "hidden": true,
                 "features": [ { "mod": "dock-pipelines" }, { "mod": "files" }, { "mod": "changes" } ] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
@@ -450,7 +450,14 @@ you can place it back there in the same dialog.
 
 No Python is needed anywhere; everything runs on Node.
 
-- **Claude:** Claude Code hands its 5-hour/weekly limits and each session's context % only to its status-line
+- **Claude's limits** (5-hour, weekly, per-model weekly like `weekly · Fable`, and your plan) come first from your own
+  `claude` CLI: every 5 minutes Quotas runs `mods/dock-quotas/herdr-claude-usage.mjs`, which asks it for usage the way
+  `/usage` does (its own sign-in, no token read, no model usage), in about a second. No setup. Each bar has a **pace
+  tick**: how much of the window's time has passed; a bar past its tick is being used up too fast. The idea comes from
+  [nozikov/herdr-usage-limits](https://github.com/nozikov/herdr-usage-limits) (MIT); this is a Node version, so it runs
+  on Windows too. Without `claude` (or signed out) Quotas falls back to the status line below.
+- **Claude's status line** adds two things: fresher 5-hour and weekly numbers between those checks (it reports on every
+  reply), and each agent's context %, which only the status line knows. Claude Code hands its 5-hour/weekly limits and each session's context % only to its status-line
   command, so herdr-dock's writer, `herdr-statusline-cache.mjs` (in `mods/dock-quotas/`), has to be in it. It
   writes `~/.claude/statusline-cache/claude-statusline.json`. You don't need a status line of your own: `npm run
   deploy`, the app install and the **Set up** button in Quotas run `herdr-statusline-setup.mjs`, which edits

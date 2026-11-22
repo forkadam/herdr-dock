@@ -2,6 +2,7 @@
 // Usage readings ({ windows: [{ kind, usedPercent, resetsMs }], fetchedMs, stale }) come from the Claude
 // status-line cache (src/shared/claude.js) and Codex's session logs (src/shared/codex.js).
 import { formatPercent, formatAge, formatReset } from "../../shared/claude.js";
+import { paceOf, planLabel } from "../../shared/claude-usage.js";
 
 // Group order and names. `agent` is the program key in Herdr's agent table (knownAgents), for the icon.
 export const PROVIDERS = [
@@ -10,25 +11,33 @@ export const PROVIDERS = [
 ];
 const LABELS = { five_hour: "5-hour", weekly: "weekly" };
 
+// Where a reading came from: the claude CLI (what /usage shows) overrides the provider's default source.
+const sourceOf = (usage, provider) => (usage.source === "cli" ? "Claude Code (/usage)" : provider.source);
+const labelOf = (w) => (w.kind === "model" ? `weekly · ${w.label}` : LABELS[w.kind] ?? w.kind);
+
 const isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 
-// One provider's reading -> rows { label, value, detail, stale, tooltip, percent }.
+// One provider's reading -> rows { label, value, detail, stale, tooltip, percent, pace }. `pace` (0..1, or null): how
+// much of the window's time has passed, drawn as a tick on the bar (a bar past it is being used up too fast).
 export function quotaRows(usage, nowMs, provider) {
   const age = formatAge(nowMs - usage.fetchedMs);
+  const source = sourceOf(usage, provider);
   return usage.windows.map((w) => {
-    const label = LABELS[w.kind] ?? w.kind;
+    const label = labelOf(w);
     // Past its reset time, an old reading's % no longer applies.
     if (isReset(w, nowMs)) {
       return { label, value: "reset", detail: `reset · ${age}`, stale: Boolean(usage.stale),
-        tooltip: `${provider.title} · ${label}: reset since this reading · source: ${provider.source}`, percent: null };
+        tooltip: `${provider.title} · ${label}: reset since this reading · source: ${source}`, percent: null, pace: null };
     }
+    const pace = paceOf(w, nowMs);
     return {
       label,
       value: formatPercent(w.usedPercent),
       detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`,
       stale: Boolean(usage.stale),
-      tooltip: `${provider.title} · ${label}: ${formatPercent(w.usedPercent)} · source: ${provider.source}`,
+      tooltip: `${provider.title} · ${label}: ${formatPercent(w.usedPercent)}${pace == null ? "" : ` · ${Math.round(pace * 100)}% of the window has passed`} · source: ${source}`,
       percent: w.usedPercent,
+      pace,
     };
   });
 }
@@ -38,7 +47,7 @@ export function quotaRows(usage, nowMs, provider) {
 export function quotaGroups(byId, nowMs) {
   return PROVIDERS
     .filter((p) => byId?.[p.id]?.windows?.length)
-    .map((p) => ({ id: p.id, title: p.title, agent: p.agent, rows: quotaRows(byId[p.id], nowMs, p) }));
+    .map((p) => ({ id: p.id, title: p.title, agent: p.agent, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 
 // Icon-rail badge: the highest finite used % (rounded) across readings, leaving out windows past their reset,
