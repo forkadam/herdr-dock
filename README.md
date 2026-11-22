@@ -21,15 +21,20 @@ dialog, dock-config):
 - **dock-notifications**: Notifications, the history of every toast (see [Notifications](#notifications)).
 - **dock-where, dock-attention, dock-warnings, dock-system**: the bottom bar (see [Bottom bar](#bottom-bar)).
 
-Only `config/dock.json` is meant to be synced between machines.
-The generated `layouts/herdr-dock.json` is never committed.
+Only `config/dock.json` is meant to be synced between machines. Per-PC edits live in
+`~/.config/herdr-app/herdr-dock/local.json`, never in git. The generated `layouts/herdr-dock.json` is never committed.
 
 ## Install
 
-Requires Node 22 or newer and the `herdr-app` CLI on your PATH. Git projects also needs git 2.31 or newer (it uses
+**With an agent:** tell your agent "clone forkadam/herdr-dock and follow INSTALL.md". It checks the
+prerequisites, clones, deploys, and asks before touching your status line or installing `gh`/`glab`.
+
+**By hand:** requires Node 22 or newer and the `herdr-app` CLI on your PATH. Git projects also needs git 2.31 or newer (it uses
 `git rev-parse --path-format=absolute`), and `glab`/`gh` for CI badges (see Git projects and Pipelines).
 
 ```
+gh repo clone forkadam/herdr-dock <dir>
+cd <dir>
 npm install
 npm run deploy
 ```
@@ -50,6 +55,28 @@ npm run deploy
 - **source.json.** Deploy writes `mods/dock-core/source.json`, which points dock-core at this repo's
   `config/dock.json` (and records this computer's hostname as a fallback). If you move or re-clone the repo, re-run
   `npm run deploy`.
+
+## Updating
+
+The top of the Dock layout dialog has an **Updates strip**:
+
+- `herdr-dock <sha> · up to date · checked 2h ago` with **Check now**.
+- `● Update available · 3 new commits (latest: "<subject>")` with **Update**.
+- `Updating… see the "Update herdr-dock" tab`, then `✓ Updated to <sha> · 3 commits`.
+- `Can't update: <reason>`: local changes in the repo, not on `main`, local commits, cannot fast-forward, or the
+  fetch failed (`Can't check: …`).
+
+How it works:
+
+- **Automatic check.** dock-core checks GitHub's `main` when it starts and every 6 hours. When there are new
+  commits it posts one notification, "herdr-dock update available · 3 new commits", once per new upstream commit.
+  Click it to open the Dock layout dialog. **Check now** runs the same check right away.
+- **Update** opens an "Update herdr-dock" tab running `npm run update` in the repo. The script refuses with local
+  changes or when the repo isn't on `main`, runs `git pull --ff-only`, runs `npm install` only if
+  `package.json` or `package-lock.json` changed, deploys, and reports back: the strip and a notification show
+  the result. If the tab is closed mid-run, the strip shows "Update failed: no result…" after 10 minutes.
+- **From any terminal.** `npm run update` works the same outside Herdr, for you or an agent.
+- Git uses whatever credentials it already has on that PC (the `gh` credential helper, or Git Credential Manager).
 
 ## Switching layouts
 
@@ -140,8 +167,15 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 - The left panel ends with `dock-footer` (40 px): the Settings gear and the Dock layout button on the left and
   + Add machine on the right, on one line. A dot on the gear means an update is ready. In icons mode it shows the
   gear.
-- `machines.<hostname>` deep-merges into the base config for that machine. Hostnames match case-insensitively.
-  Objects merge key by key, arrays (`features`) replace whole, and scalars replace.
+- **Per-PC overrides** live in `~/.config/herdr-app/herdr-dock/local.json` (or `$HERDR_APP_HOME/herdr-dock/local.json`),
+  never in git, so they survive pulls and re-clones. The Dock layout dialog writes it. It deep-merges into the base
+  config: objects merge key by key, arrays (`features`) replace whole, and scalars replace.
+- **One-time move.** When this PC has no local file yet and `config/dock.json` has a `machines.<this hostname>`
+  section, deploy or dock-core (whichever runs first) moves that section into the local file and removes it from
+  `config/dock.json`. Other hosts' `machines.*` sections stay and are still read for them, for compatibility, but
+  nothing writes `machines.*` any more.
+- **The shared `config/dock.json` places only Herdr's and herdr-dock's own mods.** Third-party mods (for example
+  mission-control-*) belong in a PC's local file, which the dialog edits.
 
 ### Add a third-party mod to a region
 
@@ -164,21 +198,21 @@ The "Dock layout" dialog edits the config without hand-editing JSON. Open it any
 
 Run the command again to close it.
 
-- **Saves go to this PC only.** The dialog writes to `machines.<hostname>` in `config/dock.json`. The shared base
-  config is never changed by it, so other machines keep their own layout.
+- **Saves go to this PC only.** The dialog writes `~/.config/herdr-app/herdr-dock/local.json`. The shared
+  `config/dock.json` is never changed by it, so other machines keep their own layout.
 - **Two views.** "By region" lists each region with its features; "By mod" lists each mod with where it is
   placed. Both edit the same draft, and nothing is written until you save.
 - **Placement rules are enforced.** The same rules as in Config: the top bar keeps `dock-core`, and `dock-header`,
   `dock-footer`, `dock-spaces`, `dock-agents` and `dock-quotas` only go in the left region. An edit that would
   break them is refused, so the saved config always passes the same checks as a hand edit.
-- **Reset this PC to shared** removes this PC's `machines.<hostname>` section, so it follows the shared config again.
-- **If `dock.json` changed on disk since the dialog opened** (for example, you edited it by hand), the next Save or
+- **Reset this PC to shared** writes an empty override to the local file, so this PC follows the shared config again.
+- **If the local file changed on disk since the dialog opened** (for example, you edited it by hand), the next Save or
   Reset writes nothing: it loads the file's new version, re-applies only the fields you changed on top (a region's
   size, its shown setting, the left mode, or a region's whole mod list), and shows "dock.json changed on disk; your
   edits were re-applied, check and save again". Check and save again. Everything you didn't change keeps the file's
   new values. If the new version isn't valid JSON or config, your edits are kept and the error is shown; fix the file
   and save again.
-- **The first save may reformat `dock.json`.** The writer uses a stable format: 2-space indent, each feature
+- **The first save may reformat the local file.** The writer uses a stable format: 2-space indent, each feature
   object on one line. Content and key order are unchanged, so later saves give small diffs.
 
 ## Git projects and Pipelines
