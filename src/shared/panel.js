@@ -155,10 +155,16 @@ export { rightActiveOf };
 const RIGHT = "dock-right";
 const RIGHT_STACK = "dock-right-stack";
 
-// The right panel as the live tree (layout()) has it: { column: shown?, active: block id }.
+// The right panel as the live tree (layout()) has it: { column: shown?, active: block id, children: the
+// stack's block ids (null when there is no stack) }.
 export function liveRight(tree) {
   const col = findNode(tree, RIGHT);
-  return { column: Boolean(col && !col.hidden), active: findNode(tree, RIGHT_STACK)?.active ?? null };
+  const stack = findNode(tree, RIGHT_STACK);
+  return {
+    column: Boolean(col && !col.hidden),
+    active: stack?.active ?? null,
+    children: stack ? (stack.children ?? []).map((c) => c?.id).filter((id) => typeof id === "string") : null,
+  };
 }
 
 // Whether the right panel shows on this PC: its own choice, else the config default.
@@ -180,6 +186,10 @@ export function planRight({ shown, active, features, live }) {
   const mod = rightActiveOf(active, features);
   const child = `dock-right-${features.findIndex((f) => f.mod === mod)}-${mod}`;
   if (!shown) return live.column ? [{ command: "layout.hide", args: { id: RIGHT } }] : [];
+  // The live layout doesn't have that tab yet: dock-core already has a new config (a mod just placed in the
+  // right region) but Herdr hasn't loaded the new layout file. Selecting now fails with an error toast on
+  // every render until it does, so wait; the next render after the reload plans again.
+  if (Array.isArray(live.children) && !live.children.includes(child)) return [];
   const out = [];
   if (live.active !== child) out.push({ command: "layout.select", args: { stack: RIGHT_STACK, child } });
   if (!live.column) out.push({ command: "layout.show", args: { id: RIGHT } });

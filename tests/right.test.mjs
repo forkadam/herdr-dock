@@ -10,8 +10,26 @@ const cmds = (actions) => actions.map((a) => `${a.command} ${JSON.stringify(a.ar
 test("liveRight reads whether the panel is shown and which block the stack shows", () => {
   const tree = { id: "root", children: [{ id: "dock-right", hidden: true, children: [
     { id: "dock-right-stack", active: "dock-right-1-files", children: [] }] }] };
-  assert.deepEqual(liveRight(tree), { column: false, active: "dock-right-1-files" });
-  assert.deepEqual(liveRight({ id: "root" }), { column: false, active: null });
+  assert.deepEqual(liveRight(tree), { column: false, active: "dock-right-1-files", children: [] });
+  assert.deepEqual(liveRight({ id: "root" }), { column: false, active: null, children: null });
+  const two = { id: "dock-right-stack", active: "dock-right-0-a", children: [{ id: "dock-right-0-a" }, { id: "dock-right-1-b" }] };
+  assert.deepEqual(liveRight({ id: "root", children: [{ id: "dock-right", children: [two] }] }).children,
+    ["dock-right-0-a", "dock-right-1-b"]);
+});
+
+test("planRight waits while the live layout doesn't have the tab yet (a deploy that adds a right mod)", () => {
+  // dock-core already has the new config; Herdr hasn't loaded the new layout file, so its stack lacks the tab.
+  const stale = { column: true, active: "dock-right-0-mission-control-github",
+    children: ["dock-right-0-mission-control-github", "dock-right-1-files"] };
+  const withNew = [{ mod: "mission-control-github" }, { mod: "dock-notifications" }, { mod: "files" }];
+  assert.deepEqual(cmds(planRight({ shown: true, active: "dock-notifications", features: withNew, live: stale })), []);
+  // Hidden panel: still hides even while the tabs don't match.
+  assert.deepEqual(cmds(planRight({ shown: false, active: "dock-notifications", features: withNew, live: stale })),
+    ['layout.hide {"id":"dock-right"}']);
+  // Once the layout has the tab, it selects it.
+  const fresh = { ...stale, children: ["dock-right-0-mission-control-github", "dock-right-1-dock-notifications", "dock-right-2-files"] };
+  assert.deepEqual(cmds(planRight({ shown: true, active: "dock-notifications", features: withNew, live: fresh })),
+    ['layout.select {"stack":"dock-right-stack","child":"dock-right-1-dock-notifications"}']);
 });
 
 test("rightActiveOf falls back to the first mod for a missing or removed one", () => {
