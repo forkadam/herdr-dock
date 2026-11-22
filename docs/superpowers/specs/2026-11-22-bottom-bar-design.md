@@ -128,3 +128,21 @@ clears it. The bar is the way into that history.
 - The machine-and-branch source for `dock-where` (Herdr's status mod source is a reference).
 - Tests for the pure parts: history append, cap, resolve, counts, warning thresholds, the move edit op, the
   sample parser.
+
+## Revision 2026-11-22: layout, icons, Herdr's own usage (decided by the user)
+
+- **Order:** `dock-where` (takes the free width, so the branch name always shows in full), `dock-warnings`,
+  `dock-system`, `dock-attention` (at the far right). Default bottom features:
+  `[{ mod: "dock-where" }, { mod: "dock-warnings", size: 150 }, { mod: "dock-system", size: 150 },
+  { mod: "dock-attention", size: 190 }]`.
+- **dock-system uses icons, not words:** a CPU (chip) icon and a memory icon, each followed by its %, the same 90%
+  warning colour, hidden when the sample is missing or older than 30 s.
+- **Herdr's own usage, on hover only** (the user picked hover over always-visible): the CPU icon's tooltip reads
+  `CPU 34% · Herdr 2%`, the memory icon's `Memory 61% · Herdr 210 MB`. Without a fresh Herdr sample the tooltip
+  shows just the system figure.
+  - "Herdr" = every local process named `herdr*` (`herdr-app` plus its `herdr-core` processes). Remote machines
+    are not counted.
+  - dock-core samples it every **10 s**: on Windows one `powershell -NoProfile -NonInteractive` call to
+    `Get-Process -Name herdr*` (about 0.25 s each); on macOS/Linux `ps -A -o pid=,rss=,time=,comm=`. CPU % is the
+    change in total processor time between two samples, over the elapsed time and the core count (the system
+    sample adds `cores`). Published to shared key `dock.system.herdr = { cpu, mem, at }` (`mem` in bytes).
