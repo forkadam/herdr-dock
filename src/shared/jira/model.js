@@ -41,8 +41,10 @@ export function groupByCategory(rows) {
   return CATEGORIES.map((c) => ({ ...c, rows: rows.filter((r) => r.category === c.category) })).filter((g) => g.rows.length);
 }
 
-// Rows -> one board column per status: [{ status, category, rows }], by category, then in the order first seen.
-export function boardColumns(rows) {
+// Rows -> one board column per status: [{ status, category, rows }], by category, then in Jira's status order
+// (`order`: status names from GET /status), then in the order first seen.
+export function boardColumns(rows, order = []) {
+  const pos = (name) => { const i = order.indexOf(name); return i < 0 ? Infinity : i; };
   const cols = [];
   for (const r of rows) {
     const name = r.status ?? "No status";
@@ -50,7 +52,8 @@ export function boardColumns(rows) {
     if (!col) cols.push((col = { status: name, category: r.category, rows: [], seen: cols.length }));
     col.rows.push(r);
   }
-  return cols.sort((a, b) => RANK[a.category] - RANK[b.category] || a.seen - b.seen).map(({ seen, ...c }) => c);
+  return cols.sort((a, b) => RANK[a.category] - RANK[b.category] || (pos(a.status) - pos(b.status) || 0) || a.seen - b.seen)
+    .map(({ seen, ...c }) => c);
 }
 
 // GET /issue/{key} -> the detail pane: the row, the description as text, the last 5 comments, links.
@@ -108,7 +111,9 @@ export function wikiToText(markup) {
 }
 
 const TLS = /certificate|self[- ]signed|unable_to_verify|unknownissuer|\bssl\b|\btls\b|cert_|handshake/i;
-const OFFLINE = /econnrefused|enotfound|eai_again|getaddrinfo|\bdns\b|network|unreachable|connection refused|resolve host|failed to lookup|connect error/i;
+// Herdr's fetch says only "error sending request for url (…)" for any failure to connect (refused, DNS, and also a
+// certificate it rejects): it counts as offline, and the hint names the certificate too.
+const OFFLINE = /econnrefused|enotfound|eai_again|getaddrinfo|\bdns\b|network|unreachable|connection refused|resolve host|failed to lookup|connect error|error sending request/i;
 const TIMEOUT = /timed?\s?out|etimedout|timeout/i;
 const CURL = { 6: "offline", 7: "offline", 28: "timeout", 35: "tls", 51: "tls", 53: "tls", 54: "tls", 58: "tls", 59: "tls", 60: "tls", 77: "tls", 80: "tls", 82: "tls", 83: "tls", 90: "tls", 91: "tls" };
 
@@ -118,11 +123,16 @@ const TEXT = {
   notfound: ["Jira couldn't find that.", "It may have been moved or deleted; refresh the list."],
   invalid: ["Jira refused the request.", "Check the filter's JQL, or do this step in the browser."],
   server: ["Jira had a server error.", "Try again in a minute."],
-  offline: ["Can't reach Jira.", "Are you on the company network (or VPN)? It retries every 5 minutes."],
+  offline: ["Can't reach Jira.", "Are you on the company network (or VPN)? If Jira opens in your browser, its certificate may not be trusted here: try the curl connection. It retries every 5 minutes."],
   tls: ["Jira's certificate isn't trusted here.", "Switch the connection to curl in Settings (it uses this computer's certificates)."],
   timeout: ["Jira took too long to answer.", "Try again; if it keeps happening, Jira may be overloaded."],
   unknown: ["Something went wrong talking to Jira.", "Try again; the details are below."],
 };
+
+// An error's text without URLs (a search URL is a wall of JQL) and without Herdr's "fetching <url> failed:" lead.
+function shorten(text) {
+  return String(text).replace(/^fetching \S+ failed:\s*/i, "").replace(/\(?https?:\/\/[^\s)]*\)?/g, "").replace(/\s{2,}/g, " ").trim().slice(0, 300);
+}
 
 // A response or a transport failure -> { kind, message, hint, fields? } for the page to show. Input: an HTTP answer
 // { status, data } (data: Jira's { errorMessages, errors }), a fetch rejection { error: text }, or a curl failure
@@ -139,7 +149,7 @@ export function classify({ status, data, error, curlCode } = {}) {
   }
   const [base, hint] = TEXT[kind];
   const jira = [...(data?.errorMessages ?? []), ...Object.values(data?.errors ?? {})].filter((x) => typeof x === "string" && x);
-  const detail = jira.length ? jira.join(" ") : kind === "unknown" ? String(error ?? (curlCode ? `curl exit ${curlCode}` : status ? `HTTP ${status}` : "")) : "";
+  const detail = jira.length ? jira.join(" ") : kind === "unknown" ? shorten(error ?? (curlCode ? `curl exit ${curlCode}` : status ? `HTTP ${status}` : "")) : "";
   const out = { kind, message: detail ? `${base} ${detail}` : base, hint };
   const fields = Object.keys(data?.errors ?? {});
   if (fields.length) out.fields = fields;
@@ -152,7 +162,8 @@ const PLACEHOLDERS = ["key", "summary", "url", "type", "status", "priority", "as
 const DESCRIPTION_MAX = 2000;
 
 export function startTask(template, detail) {
-  const t = typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK;
+  // A one-line settings field can't hold a line break: "\n" typed there means one.
+  const t = (typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK).replace(/\\n/g, "\n");
   return t.replace(/\{(\w+)\}/g, (whole, name) => {
     if (!PLACEHOLDERS.includes(name)) return whole;
     let v = detail?.[name];

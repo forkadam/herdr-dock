@@ -1,8 +1,8 @@
 {
   "repo": "forkadam/herdr-dock",
   "branch": "main",
-  "version": "0983ab79b4e3",
-  "source": "58fd1ee",
+  "version": "4e6ae6b1dd9e",
+  "source": "82ec65f",
   "mods": [
     "dock-agents",
     "dock-attention",
@@ -14,6 +14,7 @@
     "dock-git",
     "dock-git-delete",
     "dock-header",
+    "dock-jira",
     "dock-notifications",
     "dock-overview",
     "dock-pages",

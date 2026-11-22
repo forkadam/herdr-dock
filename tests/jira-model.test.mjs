@@ -74,6 +74,9 @@ test("boardColumns: one per status, by category then first seen", () => {
   const reviewFirst = [...rows].sort((a, b) => (a.status === "In Review" ? -1 : b.status === "In Review" ? 1 : 0));
   assert.deepEqual(boardColumns(reviewFirst).map((c) => c.status), ["To Do", "In Review", "In Progress", "Done"]);
   assert.deepEqual(boardColumns([]), []);
+  // Jira's own status order wins over the order first seen.
+  assert.deepEqual(boardColumns(reviewFirst, ["To Do", "In Progress", "In Review", "Done"]).map((c) => c.status), ["To Do", "In Progress", "In Review", "Done"]);
+  assert.deepEqual(boardColumns(reviewFirst, ["Done"]).map((c) => c.status), ["To Do", "In Review", "In Progress", "Done"]);
 });
 
 test("issueDetail: description as text, the last 5 comments, links", () => {
@@ -135,6 +138,15 @@ test("classify: transport failures", () => {
     assert.equal(classify({ error: e }).kind, "offline", e);
   }
   assert.equal(classify({ error: "operation timed out" }).kind, "timeout");
+  // Herdr's fetch: one message for any failure to connect, with the URL twice.
+  const herdr = classify({ error: "fetching http://127.0.0.1:8089/rest/api/2/search?jql=a failed: error sending request for url (http://127.0.0.1:8089/rest/api/2/search?jql=a)" });
+  assert.equal(herdr.kind, "offline");
+  assert.match(herdr.hint, /certificate/);
+  assert.ok(!herdr.message.includes("http"));
+  const odd = classify({ error: "fetching https://j/x?jql=long failed: something new (https://j/x?jql=long)" });
+  assert.equal(odd.kind, "unknown");
+  assert.match(odd.message, /something new/);
+  assert.ok(!odd.message.includes("https://"));
   assert.equal(classify({ error: "something odd" }).kind, "unknown");
   for (const [code, kind] of [[6, "offline"], [7, "offline"], [28, "timeout"], [35, "tls"], [51, "tls"], [58, "tls"], [60, "tls"], [2, "unknown"]]) {
     assert.equal(classify({ curlCode: code }).kind, kind, String(code));
@@ -147,6 +159,7 @@ test("startTask fills every placeholder, empty when missing; unknown ones stay",
   assert.equal(startTask(undefined, d), `Work on Jira issue API-2: ${d.summary}\n${BASE}/browse/API-2`);
   assert.equal(startTask("", d), startTask(DEFAULT_START_TASK, d));
   assert.equal(startTask("/init-ticket {key}", d), "/init-ticket API-2");
+  assert.equal(startTask("{key}\\n{url}", d), `API-2\n${d.url}`); // "\n" typed in the one-line field
   assert.equal(startTask("{key}|{type}|{status}|{priority}|{url}", d), `API-2|${d.type}|${d.status}|${d.priority}|${d.url}`);
   assert.equal(startTask("{key} {description}", d), `API-2 ${d.description}`);
   const bare = { key: "X-1", summary: "s", url: "u" };

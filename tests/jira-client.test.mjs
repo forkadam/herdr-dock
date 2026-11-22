@@ -53,6 +53,7 @@ for (const transport of ["fetch", "curl"]) {
     assert.equal(issue.data.key, key);
     assert.ok("comment" in issue.data.fields && "description" in issue.data.fields);
     assert.equal((await c.favouriteFilters()).data.length, 2);
+    assert.deepEqual((await c.statuses()).data.map((x) => x.name), ["To Do", "In Progress", "In Review", "Done"]);
     const tr = await c.transitions(key);
     assert.ok(tr.ok && Array.isArray(tr.data) && tr.data.length);
     const comment = await c.comment(key, `from ${transport}`);

@@ -7,7 +7,7 @@ const LEFT_MODES = ["expanded", "icons", "hidden"];
 // Core features that draw the left panel modes (icon rail, collapsed header).
 export const LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
 // Pages that only make sense filling the work area.
-export const PAGE_ONLY = ["dock-overview"];
+export const PAGE_ONLY = ["dock-overview", "dock-jira"];
 const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 
 export const DEFAULT_CONFIG = {

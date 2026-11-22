@@ -211,6 +211,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
       return [200, { expand: "names,schema", startAt, maxResults, total: hits.length,
         issues: hits.slice(startAt, startAt + maxResults).map((i) => pick(i, url.searchParams.get("fields"))) }];
     }
+    if (req.method === "GET" && p("/status")) return [200, workflow.statuses.map(statusObj)];
     if (req.method === "GET" && p("/filter/favourite")) {
       return [200, filters.map((f) => ({ self: self(`${API}/filter/${f.id}`), ...clone(f),
         viewUrl: self(`/issues/?filter=${f.id}`), searchUrl: self(`${API}/search?jql=${encodeURIComponent(f.jql)}`) }))];

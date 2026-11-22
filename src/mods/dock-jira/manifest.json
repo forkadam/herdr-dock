@@ -1,0 +1,1 @@
+{ "id": "dock-jira", "name": "Jira", "icon": "icon.svg", "regions": ["pages"], "settings": {} }

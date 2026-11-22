@@ -20,7 +20,7 @@ import {
 var REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
 var LEFT_MODES = ["expanded", "icons", "hidden"];
 var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
-var PAGE_ONLY = ["dock-overview"];
+var PAGE_ONLY = ["dock-overview", "dock-jira"];
 var NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 var DEFAULT_CONFIG = {
   v: 1,
