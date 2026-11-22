@@ -266,22 +266,26 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
 
 The bottom bar is a quiet glance. In order, left to right:
 
-- **Where** (`dock-where`): this machine and the branch of the focused space, like `□ This computer  ⑂ main`.
-- **Attention** (`dock-attention`): `⚠ 2 need you` (red) and `3 unread` (dim). Each is hidden at zero; with both at
-  zero it shows a dim `No notifications`. Click it to open the notification history.
+- **Where** (`dock-where`): this machine and the branch of the focused space, like `□ This computer  ⑂ main`. It
+  takes the free width, so the branch is shown in full; its tooltip has the full name.
 - **Warnings** (`dock-warnings`): `⟳ 1` pipelines running now, `⚠ quota 92%` when any Claude or Codex window is at
   90% or more, `⚠ disk 7%` when this PC's system drive has under 10% free. With none applying it shows nothing.
-- **System** (`dock-system`): `CPU 34%  RAM 61%` at the right edge, in the warning colour from 90%.
+- **System** (`dock-system`): a chip icon and a memory icon, each with its %, in the warning colour from 90%.
+  Hover them for Herdr's own usage: `CPU 34% · Herdr 0.1%`, `Memory 61% · Herdr 210 MB`.
+- **Notifications** (`dock-attention`), at the far right: `⚠ 2 need you` (red) and `3 unread` (dim). Each is hidden
+  at zero; with both at zero it shows a dim `No notifications`. Click it to open the notification history.
 
 Anything that is fine shows nothing. To reorder the items, or move one to another region, use the Dock layout
 dialog's **Move up** / **Move down**. Herdr's own `workspace-status` is no longer in the default bottom region, but
 you can place it back there in the same dialog.
 
-- CPU and RAM are for this PC only, sampled every 5 s.
+- CPU and memory are for this PC only, sampled every 5 s.
+- **Herdr's usage** counts every local `herdr*` process (herdr-app plus its herdr-core processes), sampled every
+  10 s: Windows through one short PowerShell call, macOS and Linux through `ps`. Remote machines aren't counted.
 - The quota warning needs **dock-quotas** placed somewhere (it publishes `dock.quotas.top`, refreshed at least
   every minute; a reading older than 2 minutes is ignored). Clicking `⟳ 1` with one pipeline running shows it.
-- The shared keys `dock.notify.history`, `dock.system.sample` and `dock.quotas.top` are per PC, in Herdr's own
-  state, never in `config/dock.json` or git.
+- The shared keys `dock.notify.history`, `dock.system.sample`, `dock.system.herdr` and `dock.quotas.top` are per
+  PC, in Herdr's own state, never in `config/dock.json` or git.
 
 ## Notifications
 
