@@ -1,0 +1,37 @@
+// The Updates strip at the top of the Dock layout dialog (pure): what dock.update.state (src/shared/update.js)
+// reads as, its tone, and the one action it offers.
+import { formatAge } from "../../shared/claude.js";
+
+const CHECK = { label: "Check now", kind: "check" };
+const UPDATE = { label: "Update", kind: "update" };
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// updateStrip(state, now) -> { text, tone: "dim"|"accent"|"ok"|"bad", action: null | { label, kind } }.
+export function updateStrip(state, now) {
+  if (!state || typeof state !== "object") return { text: "herdr-dock · not checked yet", tone: "dim", action: CHECK };
+  const reason = String(state.reason ?? "").trim() || "unknown error";
+  switch (state.status) {
+    case "checking":
+      return { text: "Checking…", tone: "dim", action: null };
+    case "updating":
+      return { text: 'Updating… see the "Update herdr-dock" tab', tone: "dim", action: null };
+    case "available": {
+      const latest = state.subject ? ` (latest: "${state.subject}")` : "";
+      return { text: `Update available · ${plural(state.behind ?? 0, "new commit")}${latest}`, tone: "accent", action: UPDATE };
+    }
+    case "updated": {
+      const commits = typeof state.commits === "number" ? ` · ${plural(state.commits, "commit")}` : "";
+      return { text: `✓ Updated to ${state.current ?? "?"}${commits}`, tone: "ok", action: CHECK };
+    }
+    case "blocked":
+      return { text: `Can't update: ${reason}`, tone: "bad", action: CHECK };
+    case "failed":
+      // A failed fetch's reason already reads "Can't check: …"; a failed update's is bare.
+      return { text: reason.startsWith("Can't check:") ? reason : `Update failed: ${reason}`, tone: "bad", action: CHECK };
+    default: {
+      const sha = state.current ? ` ${state.current}` : "";
+      const age = typeof state.checkedAt === "number" ? ` · checked ${formatAge(Math.max(0, now - state.checkedAt))}` : "";
+      return { text: `herdr-dock${sha} · up to date${age}`, tone: "dim", action: CHECK };
+    }
+  }
+}

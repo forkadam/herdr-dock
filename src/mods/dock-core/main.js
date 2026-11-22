@@ -32,6 +32,8 @@ const HOST_KEY = "dock.host";
 const PATH_KEY = "dock.config.path";
 // Where this PC's local file lives (<app home>/herdr-dock/local.json), for the dialog.
 const LOCAL_PATH_KEY = "dock.config.localPath";
+// The herdr-dock repo, for the dialog's Update button (the update tab's folder).
+const REPO_KEY = "dock.config.repo";
 const APPLIED_KEY = "dock.config.applied";
 // The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
 // while the live tree holds them). Machine-local, like the drag-resizes it keeps.
@@ -128,6 +130,7 @@ export default class DockCore extends View {
     await this.migrate(repo);
     await this.reload(cx);
     this.repo = repo;
+    setShared(REPO_KEY, repo);
     this.resultPath = `${home}/${RESULT_REL}`;
     // A result left from an update (deploy restarted dock-core before it was seen), then the 6 h check.
     await this.consumeResult(cx);

@@ -8,20 +8,23 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, Tabs, Tab } from "gpui-base";
 import {
-  appHome, checking, closeOverlay, exec, props, readTextFile, setShared, shared, theme, window, writeTextFile,
+  appHome, checking, closeOverlay, exec, props, readTextFile, run, setShared, shared, theme, window, writeTextFile,
 } from "herdr";
 import { DEFAULT_CONFIG } from "../../shared/config.js";
 import { applyEdit, draftFromConfig, stepSize } from "../../shared/edit.js";
 import { buildInventory } from "../../shared/inventory.js";
 import { slashPath } from "../../shared/path.js";
+import { UPDATE_KEY } from "../../shared/update.js";
 import { isDirty, loadSession, resetSession, saveSession } from "./session.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
+import { updateStrip } from "./update-view.js";
 
 const REGIONS = ["top", "left", "right", "bottom"];
 const VIEW_KEY = "dock.config.view";
 const VIEWS = [["region", "By region"], ["mod", "By mod"]];
+const REPO_KEY = "dock.config.repo";
 
 const makeIo = () => ({
   readTextFile, writeTextFile, exec, shared, appHome: slashPath(appHome()), platform: window()?.platform,
@@ -159,6 +162,31 @@ export default class DockConfig extends View {
       .child(div().text_size(12.5).text_color(t.dim).child(`this PC: ${host || "unknown"}`));
   }
 
+  // The Updates strip: dock-core's update state, with Check now or Update.
+  updates(t) {
+    const strip = updateStrip(checking() ? null : shared(UPDATE_KEY), Date.now());
+    const color = { accent: t.accent, ok: t.done ?? t.accent, bad: t.blocked, dim: t.dim }[strip.tone] ?? t.dim;
+    const repo = shared(REPO_KEY);
+    const action = strip.action;
+    const canUpdate = action?.kind !== "update" || Boolean(repo);
+    return h_flex().id("dc-updates").gap(8).items_center().min_h(28)
+      .child(div().flex_none().text_size(12.5).text_color(t.muted).child("Updates"))
+      .child(div().flex_1().min_w(0).text_size(12.5).text_color(color).truncate()
+        .child(strip.tone === "accent" ? `● ${strip.text}` : strip.text))
+      .when(Boolean(action), (el) => el.child(button(t, `dc-update-${action.kind}`, action.label,
+        { primary: action.kind === "update", enabled: canUpdate && !checking() }, () => this.updateAction(action.kind, repo))));
+  }
+
+  updateAction(kind, repo) {
+    if (kind === "check") {
+      run("dock-core.update.check");
+      return;
+    }
+    if (!repo) return;
+    run("dock-core.update.start");
+    run("tab.new", { name: "Update herdr-dock", folder: repo, argv: ["node", "scripts/update.mjs"] });
+  }
+
   banner(t) {
     const s = this.session;
     const errors = [...new Set([shared("dock.config.error"), s?.error, this.editError, this.loadError].filter(Boolean))];
@@ -210,7 +238,7 @@ export default class DockConfig extends View {
       ? (view === "mod" ? byMod(this, t) : byRegion(this, t))
       : [div().py(24).text_color(t.dim).child(this.loadError ? "Couldn't load the dock config." : "Loading…")];
     return v_flex().id("dock-config").size_full().min_h(0).bg(t.popover).text_size(13).text_color(t.foreground)
-      .child(v_flex().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.banner(t)).child(this.tabs(t, view)))
+      .child(v_flex().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.updates(t)).child(this.banner(t)).child(this.tabs(t, view)))
       .child(v_flex().id("dc-body").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(8).children(body))
       .child(this.footer(t));
   }
