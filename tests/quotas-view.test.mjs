@@ -17,13 +17,13 @@ test("quotaRows formats windows (the group header names the provider)", () => {
   assert.equal(r.label, "5-hour"); assert.equal(r.value, "5% used");
   assert.match(r.detail, /^resets in 2h 04m · just now$/);
   assert.equal(r.stale, false); assert.equal(r.percent, 5);
-  assert.equal(r.tooltip, "Claude · 5-hour: 5% used · source: Claude status line");
+  assert.equal(r.tooltip, "Claude · 5-hour: 5% used · resets in 2h 04m · just now · source: Claude status line");
 });
 test("quotaRows weekly label, null reset", () => {
   const [r] = quotaRows(S({ windows: [{ kind: "weekly", usedPercent: 40, resetsMs: null }] }), 1_060_000, CODEX);
   assert.equal(r.label, "weekly");
   assert.equal(r.detail, "1m ago");
-  assert.equal(r.tooltip, "Codex · weekly: 40% used · source: Codex session logs");
+  assert.equal(r.tooltip, "Codex · weekly: 40% used · 1m ago · source: Codex session logs");
 });
 test("a stale reading marks every row stale", () => {
   const rows = quotaRows(S({ stale: true }), 2_000_000, CLAUDE);
@@ -86,4 +86,27 @@ test("quotaGroups: Claude's group carries the plan", () => {
   const cli = { source: "cli", plan: "claude_max_20x", fetchedMs: now, stale: false, windows: [{ kind: "weekly", usedPercent: 1, resetsMs: null, durationMs: 1 }] };
   assert.equal(quotaGroups({ claude: cli }, now)[0].plan, "Max 20x");
   assert.equal(quotaGroups({ claude: S() }, now)[0].plan, null);
+});
+
+// ---- One line per window: label, bar, usage, reset ----
+import { shortReset } from "../src/mods/dock-quotas/view.js";
+
+test("shortReset: the time left, short, for a one-line row", () => {
+  const now = 1_000_000;
+  assert.equal(shortReset(now + 7_440_000, now), "2h 04m");
+  assert.equal(shortReset(now + (5 * 86400 + 5 * 3600 + 30 * 60) * 1000, now), "5d 5h");
+  assert.equal(shortReset(now + 38 * 60e3, now), "38m");
+  assert.equal(shortReset(now + 20e3, now), "<1m");
+  assert.equal(shortReset(null, now), null);
+  assert.equal(shortReset(now - 1, now), null);
+});
+
+test("quotaRows: the one-line usage and reset, and the full detail in the tooltip", () => {
+  const [r] = quotaRows(S(), 1_000_000 + 30_000, CLAUDE);
+  assert.equal(r.usage, "5%");
+  assert.equal(r.reset, "2h 04m");
+  assert.match(r.tooltip, /resets in 2h 04m · just now/);
+  const [reset] = quotaRows(S({ windows: [{ kind: "five_hour", usedPercent: 50, resetsMs: 999_000 }] }), 1_000_000, CLAUDE);
+  assert.equal(reset.usage, "reset");
+  assert.equal(reset.reset, null);
 });

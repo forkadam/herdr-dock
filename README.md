@@ -452,8 +452,8 @@ No Python is needed anywhere; everything runs on Node.
 
 - **Claude's limits** (5-hour, weekly, per-model weekly like `weekly · Fable`, and your plan) come first from your own
   `claude` CLI: every 5 minutes Quotas runs `mods/dock-quotas/herdr-claude-usage.mjs`, which asks it for usage the way
-  `/usage` does (its own sign-in, no token read, no model usage), in about a second. No setup. Each bar has a **pace
-  tick**: how much of the window's time has passed; a bar past its tick is being used up too fast. The idea comes from
+  `/usage` does (its own sign-in, no token read, no model usage), in about a second. No setup. Each window is one line (label, bar, usage, time to reset; hover for the rest), and
+  each bar has a **pace tick**: how much of the window's time has passed; a bar past its tick is being used up too fast. The idea comes from
   [nozikov/herdr-usage-limits](https://github.com/nozikov/herdr-usage-limits) (MIT); this is a Node version, so it runs
   on Windows too. Without `claude` (or signed out) Quotas falls back to the status line below.
 - **Claude's status line** adds two things: fresher 5-hour and weekly numbers between those checks (it reports on every

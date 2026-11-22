@@ -264,21 +264,24 @@ export default class Quotas extends View {
         : title);
   }
 
+  // One line per window: label, bar (with the pace tick), usage, time to reset. The rest (full reset time, age,
+  // source, pace in numbers) is in the tooltip.
   row(t, r, i) {
-    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[barLevel(r.percent ?? 0)];
+    const level = barLevel(r.percent ?? 0);
+    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[level];
     const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return v_flex().id(`quota-${i}`).px(16).py(4).gap(3).flex_none().tooltip(r.tooltip)
+    return h_flex().id(`quota-${i}`).px(16).h(24).gap(8).flex_none().items_center().tooltip(r.tooltip)
       .when(r.stale, (el) => el.opacity(0.55))
-      .child(h_flex().items_center().gap(6)
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label))
-        .when(r.stale, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child("stale")))
-        .child(div().flex_none().text_size(12).text_color(r.percent == null ? t.dim : t.muted).child(r.value)))
-      .when(r.percent != null, (el) => el.child(div().relative().w_full().h(4).rounded(2).bg(t.border)
-        .child(div().w(`${pct}%`).h(4).rounded(2).bg(color))
+      .child(div().w(92).flex_none().truncate().text_size(12).text_color(t.foreground).child(r.label))
+      .child(div().flex_1().min_w(24).h(4).relative().rounded(2).bg(t.border)
+        .when(r.percent != null, (bar) => bar.child(div().w(`${pct}%`).h(4).rounded(2).bg(color)))
         // The pace tick: how much of the window's time has passed. A bar past it is being used up too fast.
-        .when(r.pace != null, (bar) => bar.child(div().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7)))))
-      .child(div().truncate().text_size(11).text_color(t.dim).child(r.detail));
+        .when(r.pace != null, (bar) => bar.child(div().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7))))
+      .child(div().w(34).flex_none().flex().justify_end().text_size(12)
+        .text_color(r.percent == null ? t.dim : level === "ok" ? t.muted : color).child(r.usage ?? r.value))
+      .child(div().w(46).flex_none().flex().justify_end().text_size(11).text_color(t.dim).child(r.stale ? "stale" : r.reset ?? ""));
   }
+
 
   render(cx) {
     const t = theme();

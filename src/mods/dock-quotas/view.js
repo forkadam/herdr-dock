@@ -17,7 +17,19 @@ const labelOf = (w) => (w.kind === "model" ? `weekly · ${w.label}` : LABELS[w.k
 
 const isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 
-// One provider's reading -> rows { label, value, detail, stale, tooltip, percent, pace }. `pace` (0..1, or null): how
+// The time left before a reset, short, for a one-line row: "38m", "2h 04m", "5d 5h", "<1m"; null when unknown or past.
+export function shortReset(resetsMs, nowMs) {
+  if (!Number.isFinite(resetsMs) || resetsMs <= nowMs) return null;
+  const min = Math.floor((resetsMs - nowMs) / 60e3);
+  if (min < 1) return "<1m";
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m`;
+}
+
+// One provider's reading -> rows { label, value, detail, stale, tooltip, percent, pace, usage, reset }. A row is drawn
+// on one line (label, bar, usage, reset); `detail` (reset and age, in full) goes in the tooltip. `pace` (0..1, or null): how
 // much of the window's time has passed, drawn as a tick on the bar (a bar past it is being used up too fast).
 export function quotaRows(usage, nowMs, provider) {
   const age = formatAge(nowMs - usage.fetchedMs);
@@ -27,15 +39,18 @@ export function quotaRows(usage, nowMs, provider) {
     // Past its reset time, an old reading's % no longer applies.
     if (isReset(w, nowMs)) {
       return { label, value: "reset", detail: `reset · ${age}`, stale: Boolean(usage.stale),
-        tooltip: `${provider.title} · ${label}: reset since this reading · source: ${source}`, percent: null, pace: null };
+        tooltip: `${provider.title} · ${label}: reset since this reading · ${age} · source: ${source}`, percent: null, pace: null, usage: "reset", reset: null };
     }
     const pace = paceOf(w, nowMs);
+    const detail = w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`;
     return {
       label,
       value: formatPercent(w.usedPercent),
-      detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`,
+      detail,
       stale: Boolean(usage.stale),
-      tooltip: `${provider.title} · ${label}: ${formatPercent(w.usedPercent)}${pace == null ? "" : ` · ${Math.round(pace * 100)}% of the window has passed`} · source: ${source}`,
+      tooltip: `${provider.title} · ${label}: ${formatPercent(w.usedPercent)} · ${detail}${pace == null ? "" : ` · ${Math.round(pace * 100)}% of the window has passed`} · source: ${source}`,
+      usage: `${Math.round(w.usedPercent)}%`,
+      reset: shortReset(w.resetsMs, nowMs),
       percent: w.usedPercent,
       pace,
     };

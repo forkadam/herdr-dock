@@ -296,6 +296,15 @@ var LABELS = { five_hour: "5-hour", weekly: "weekly" };
 var sourceOf = (usage, provider) => usage.source === "cli" ? "Claude Code (/usage)" : provider.source;
 var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : LABELS[w.kind] ?? w.kind;
 var isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
+function shortReset(resetsMs, nowMs) {
+  if (!Number.isFinite(resetsMs) || resetsMs <= nowMs) return null;
+  const min = Math.floor((resetsMs - nowMs) / 6e4);
+  if (min < 1) return "<1m";
+  const d = Math.floor(min / 1440), h = Math.floor(min % 1440 / 60), m = min % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m`;
+}
 function quotaRows(usage, nowMs, provider) {
   const age = formatAge(nowMs - usage.fetchedMs);
   const source = sourceOf(usage, provider);
@@ -307,18 +316,23 @@ function quotaRows(usage, nowMs, provider) {
         value: "reset",
         detail: `reset \xB7 ${age}`,
         stale: Boolean(usage.stale),
-        tooltip: `${provider.title} \xB7 ${label}: reset since this reading \xB7 source: ${source}`,
+        tooltip: `${provider.title} \xB7 ${label}: reset since this reading \xB7 ${age} \xB7 source: ${source}`,
         percent: null,
-        pace: null
+        pace: null,
+        usage: "reset",
+        reset: null
       };
     }
     const pace = paceOf(w, nowMs);
+    const detail = w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} \xB7 ${age}`;
     return {
       label,
       value: formatPercent(w.usedPercent),
-      detail: w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} \xB7 ${age}`,
+      detail,
       stale: Boolean(usage.stale),
-      tooltip: `${provider.title} \xB7 ${label}: ${formatPercent(w.usedPercent)}${pace == null ? "" : ` \xB7 ${Math.round(pace * 100)}% of the window has passed`} \xB7 source: ${source}`,
+      tooltip: `${provider.title} \xB7 ${label}: ${formatPercent(w.usedPercent)} \xB7 ${detail}${pace == null ? "" : ` \xB7 ${Math.round(pace * 100)}% of the window has passed`} \xB7 source: ${source}`,
+      usage: `${Math.round(w.usedPercent)}%`,
+      reset: shortReset(w.resetsMs, nowMs),
       percent: w.usedPercent,
       pace
     };
@@ -618,10 +632,13 @@ var Quotas = class extends View {
     const title = div2().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
     return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().child(onTitle ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle()) : title);
   }
+  // One line per window: label, bar (with the pace tick), usage, time to reset. The rest (full reset time, age,
+  // source, pace in numbers) is in the tooltip.
   row(t, r, i) {
-    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[barLevel(r.percent ?? 0)];
+    const level = barLevel(r.percent ?? 0);
+    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[level];
     const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return v_flex2().id(`quota-${i}`).px(16).py(4).gap(3).flex_none().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(h_flex().items_center().gap(6).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(r.label)).when(r.stale, (el) => el.child(div2().flex_none().text_size(10.5).text_color(t.dim).child("stale"))).child(div2().flex_none().text_size(12).text_color(r.percent == null ? t.dim : t.muted).child(r.value))).when(r.percent != null, (el) => el.child(div2().relative().w_full().h(4).rounded(2).bg(t.border).child(div2().w(`${pct}%`).h(4).rounded(2).bg(color)).when(r.pace != null, (bar) => bar.child(div2().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7))))).child(div2().truncate().text_size(11).text_color(t.dim).child(r.detail));
+    return h_flex().id(`quota-${i}`).px(16).h(24).gap(8).flex_none().items_center().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(div2().w(92).flex_none().truncate().text_size(12).text_color(t.foreground).child(r.label)).child(div2().flex_1().min_w(24).h(4).relative().rounded(2).bg(t.border).when(r.percent != null, (bar) => bar.child(div2().w(`${pct}%`).h(4).rounded(2).bg(color))).when(r.pace != null, (bar) => bar.child(div2().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7)))).child(div2().w(34).flex_none().flex().justify_end().text_size(12).text_color(r.percent == null ? t.dim : level === "ok" ? t.muted : color).child(r.usage ?? r.value)).child(div2().w(46).flex_none().flex().justify_end().text_size(11).text_color(t.dim).child(r.stale ? "stale" : r.reset ?? ""));
   }
   render(cx) {
     const t = theme();

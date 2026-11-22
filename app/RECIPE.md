@@ -13,7 +13,7 @@ The layout (`layouts/herdr-dock.json`) is a row with no title bar, canvas backgr
   - Spaces (flexible): your spaces, click to select.
   - Agents (flexible): your agents grouped by status; each Claude row can show its context as "NN%".
   - Git projects (flexible): repos and worktrees with git status and a CI badge (passed, failed, running, warning).
-  - Quotas (220px): per provider (Claude with its plan, Codex), the 5-hour, weekly and per-model weekly windows as "% used" with reset time and a pace tick (how much of the window has passed).
+  - Quotas (220px): per provider (Claude with its plan, Codex), one line per window (5-hour, weekly, per-model weekly): label, bar with a pace tick (how much of the window has passed), "15%", time to reset ("2h 04m"); the full detail is in its tooltip.
   - Footer (40px): buttons for the layout dialog, adding, and settings.
 - **Work area** (`dock-work`), top to bottom:
   - Top bar (42px, drags the window): the panel toggle (44px) then the tab bar with a right-panel button beside "+" and window buttons.
