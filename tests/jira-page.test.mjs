@@ -108,3 +108,20 @@ test("startWork: a Claude tab named after the issue, its first message from the 
   assert.equal(startWork({ key: "X-1", summary: "s", url: "u" }, "{key} {description}").args.task, "X-1 ");
   assert.equal(startWork(null, "x"), null);
 });
+
+// ---- Final review fixes ----
+import { needsDetail, refreshSize } from "../src/shared/jira/page.js";
+
+test("refreshSize: a refresh keeps the rows already loaded (Load more), within a cap", () => {
+  assert.equal(refreshSize(0), 50);
+  assert.equal(refreshSize(30), 50);
+  assert.equal(refreshSize(150), 150);
+  assert.equal(refreshSize(900), 200);
+});
+
+test("needsDetail: a list row lacks the description, so a template using it needs the full issue", () => {
+  assert.equal(needsDetail("/init-ticket {key}"), false);
+  assert.equal(needsDetail("{key}\\n{description}"), true);
+  assert.equal(needsDetail(""), false); // the default template
+  assert.equal(needsDetail(undefined), false);
+});

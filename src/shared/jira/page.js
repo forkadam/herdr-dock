@@ -1,6 +1,6 @@
 // The Jira page's decisions (pure; no host imports): which filters it offers, when it polls, what it shows.
 import { BUILTIN_FILTERS } from "./jql.js";
-import { startTask, wikiToText } from "./model.js";
+import { DEFAULT_START_TASK, startTask, wikiToText } from "./model.js";
 
 export const SHOWN_EVERY_MS = 2 * 60e3;
 export const HIDDEN_EVERY_MS = 10 * 60e3;
@@ -40,6 +40,11 @@ export function pageState({ settings, token, editing, connected, problem, checki
   if (checking || !connected) return "checking";
   return "ready";
 }
+
+// How many issues a refresh asks for: at least a page, and as many as are already listed (after Load more), so a
+// poll or an action never shrinks the list under the reader. Capped so one refresh stays one modest request.
+export const REFRESH_CAP = 200;
+export const refreshSize = (loaded) => Math.min(REFRESH_CAP, Math.max(PAGE_SIZE, Number.isFinite(loaded) ? loaded : 0));
 
 // The Pages badge: how many issues are assigned to me and unresolved (null when not connected).
 export const badgeFor = (count) => (Number.isFinite(count) ? { count, tone: "info" } : null);
@@ -87,4 +92,11 @@ export function withComment(detail, comment) {
 export function startWork(issue, template) {
   if (!issue?.key) return null;
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
+}
+
+// Whether Start work needs the full issue first: a list row has no description, so a template that uses it would
+// otherwise send it empty (the detail's button already has it).
+export function needsDetail(template) {
+  const t = typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK;
+  return /\{description\}/.test(t);
 }
