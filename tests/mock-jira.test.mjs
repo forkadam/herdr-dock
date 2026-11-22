@@ -201,3 +201,15 @@ test("issueHistory(): the issues opened, most recently viewed first", async () =
     assert.equal((await viewed()).total, 2);
   } finally { await fresh.close(); }
 });
+
+test("project statuses: per issue type, every status of the workflow", async () => {
+  const r = await call("/rest/api/2/project/WEB/statuses");
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.data) && r.data.length >= 1);
+  for (const type of r.data) {
+    assert.ok(type.name && Array.isArray(type.statuses));
+    assert.deepEqual(type.statuses.map((x) => x.name), ["To Do", "In Progress", "In Review", "Done"]);
+    assert.ok(type.statuses.every((x) => x.statusCategory?.key));
+  }
+  assert.equal((await call("/rest/api/2/project/NOPE/statuses")).status, 404);
+});

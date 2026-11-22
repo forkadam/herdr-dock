@@ -216,6 +216,13 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
         issues: hits.slice(startAt, startAt + maxResults).map((i) => pick(i, url.searchParams.get("fields"))) }];
     }
     if (req.method === "GET" && p("/status")) return [200, workflow.statuses.map(statusObj)];
+    const ps = new RegExp(`^${API}/project/([A-Za-z]+)/statuses$`).exec(path);
+    if (req.method === "GET" && ps) {
+      const key = projects.find((k) => same(k, ps[1]));
+      if (!key) return [404, err([`No project could be found with key '${ps[1]}'.`])];
+      const types = [...new Map(issues.filter((i) => i.fields.project.key === key).map((i) => [i.fields.issuetype.id, i.fields.issuetype])).values()];
+      return [200, types.map((t) => ({ self: self(`${API}/issuetype/${t.id}`), id: t.id, name: t.name, subtask: false, statuses: workflow.statuses.map(statusObj) }))];
+    }
     if (req.method === "GET" && p("/filter/favourite")) {
       return [200, filters.map((f) => ({ self: self(`${API}/filter/${f.id}`), ...clone(f),
         viewUrl: self(`/issues/?filter=${f.id}`), searchUrl: self(`${API}/search?jql=${encodeURIComponent(f.jql)}`) }))];

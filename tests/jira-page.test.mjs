@@ -191,3 +191,17 @@ test("dragStarted: a press becomes a drag only once the pointer has moved a few 
   assert.equal(dragStarted({ x: 10, y: 10 }, { x: 10 + DRAG_START_PX, y: 10 }), true);
   assert.equal(dragStarted(null, { x: 0, y: 0 }), false);
 });
+
+// ---- Board columns from the projects' workflows ----
+import { boardProjects, unionStatuses } from "../src/shared/jira/page.js";
+
+test("boardProjects: the project keys on the board, from the issue keys", () => {
+  assert.deepEqual(boardProjects([{ key: "WEB-1" }, { key: "API-3" }, { key: "WEB-9" }]), ["WEB", "API"]);
+  assert.deepEqual(boardProjects([]), []);
+});
+
+test("unionStatuses: each status once, in the order the projects list them", () => {
+  const web = [{ name: "To Do", category: "new" }, { name: "Done", category: "done" }];
+  const api = [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }, { name: "Done", category: "done" }];
+  assert.deepEqual(unionStatuses([web, api, "loading", null]).map((x) => x.name), ["To Do", "Done", "QA"]);
+});

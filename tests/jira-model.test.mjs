@@ -79,6 +79,14 @@ test("boardColumns: one per status, by category then first seen", () => {
   // Jira's own status order wins over the order first seen.
   assert.deepEqual(boardColumns(reviewFirst, ["To Do", "In Progress", "In Review", "Done"]).map((c) => c.status), ["To Do", "In Progress", "In Review", "Done"]);
   assert.deepEqual(boardColumns(reviewFirst, ["Done"]).map((c) => c.status), ["To Do", "In Review", "In Progress", "Done"]);
+  // The workflow's statuses (from the projects on the board) all get a column, empty ones too: Done shows even when
+  // the filter only lists unresolved issues.
+  const open = rows.filter((r) => r.category !== "done");
+  const all = [{ name: "To Do", category: "new" }, { name: "In Progress", category: "indeterminate" }, { name: "In Review", category: "indeterminate" }, { name: "Done", category: "done" }];
+  const withAll = boardColumns(open, ["To Do", "In Progress", "In Review", "Done"], all);
+  assert.deepEqual(withAll.map((c) => [c.status, c.rows.length > 0]), [["To Do", true], ["In Progress", true], ["In Review", true], ["Done", false]]);
+  assert.equal(withAll[3].category, "done");
+  assert.deepEqual(boardColumns(open, [], []).map((c) => c.status), boardColumns(open).map((c) => c.status));
 });
 
 test("issueDetail: description as text, the last 5 comments, links", () => {

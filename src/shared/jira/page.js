@@ -169,3 +169,15 @@ export function dragColumns(cols, targets, transitions, order = []) {
     .sort((a, b) => (RANK[a.c.category] ?? 1) - (RANK[b.c.category] ?? 1) || (pos(a.c.status) - pos(b.c.status) || 0) || a.i - b.i)
     .map(({ c }) => c);
 }
+
+// ---- Board columns from the projects' workflows ----
+
+// The projects on the board, from its issues' keys (PROJ-123), each once, in order.
+export const boardProjects = (rows) => [...new Set((rows ?? []).map((r) => String(r.key ?? "").split("-")[0]).filter(Boolean))];
+
+// Several projects' statuses ([{ name, category }] each; anything else skipped) as one list, each status once.
+export function unionStatuses(lists) {
+  const seen = new Map();
+  for (const list of lists ?? []) if (Array.isArray(list)) for (const st of list) if (st?.name && !seen.has(st.name)) seen.set(st.name, st);
+  return [...seen.values()];
+}

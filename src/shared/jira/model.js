@@ -42,8 +42,10 @@ export function groupByCategory(rows) {
 }
 
 // Rows -> one board column per status: [{ status, category, rows }], by category, then in Jira's status order
-// (`order`: status names from GET /status), then in the order first seen.
-export function boardColumns(rows, order = []) {
+// (`order`: status names from GET /status), then in the order first seen. `statuses` ([{ name, category }], the
+// workflow's statuses of the projects on the board) adds an empty column for each one no row has, so a board shows
+// its whole workflow (Done too, when the filter lists only open issues).
+export function boardColumns(rows, order = [], statuses = []) {
   const pos = (name) => { const i = order.indexOf(name); return i < 0 ? Infinity : i; };
   const cols = [];
   for (const r of rows) {
@@ -51,6 +53,9 @@ export function boardColumns(rows, order = []) {
     let col = cols.find((c) => c.status === name);
     if (!col) cols.push((col = { status: name, category: r.category, rows: [], seen: cols.length }));
     col.rows.push(r);
+  }
+  for (const st of statuses ?? []) {
+    if (st?.name && !cols.some((c) => c.status === st.name)) cols.push({ status: st.name, category: st.category in RANK ? st.category : "new", rows: [], seen: cols.length });
   }
   return cols.sort((a, b) => RANK[a.category] - RANK[b.category] || (pos(a.status) - pos(b.status) || 0) || a.seen - b.seen)
     .map(({ seen, ...c }) => c);

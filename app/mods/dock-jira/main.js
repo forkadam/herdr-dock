@@ -72,7 +72,7 @@ function issueRow(issue, base) {
 function groupByCategory(rows) {
   return CATEGORIES.map((c) => ({ ...c, rows: rows.filter((r) => r.category === c.category) })).filter((g) => g.rows.length);
 }
-function boardColumns(rows, order = []) {
+function boardColumns(rows, order = [], statuses = []) {
   const pos = (name) => {
     const i = order.indexOf(name);
     return i < 0 ? Infinity : i;
@@ -83,6 +83,9 @@ function boardColumns(rows, order = []) {
     let col = cols.find((c) => c.status === name);
     if (!col) cols.push(col = { status: name, category: r.category, rows: [], seen: cols.length });
     col.rows.push(r);
+  }
+  for (const st of statuses ?? []) {
+    if (st?.name && !cols.some((c) => c.status === st.name)) cols.push({ status: st.name, category: st.category in RANK ? st.category : "new", rows: [], seen: cols.length });
   }
   return cols.sort((a, b) => RANK[a.category] - RANK[b.category] || (pos(a.status) - pos(b.status) || 0) || a.seen - b.seen).map(({ seen, ...c }) => c);
 }
@@ -327,6 +330,14 @@ function createClient({ base, transport = "fetch", token, curlConfigPath, curlBo
     myself: () => request("GET", api("/myself")),
     search: (jql, page = {}) => request("GET", searchUrl(root, jql, page)),
     issue: (key) => request("GET", `${api(issuePath(key))}?fields=${DETAIL_FIELDS.join(",")}`),
+    // A project's statuses across its issue types, once each, in Jira's order: [{ name, category }] (board columns).
+    projectStatuses: (key) => request("GET", api(`/project/${encodeURIComponent(key)}/statuses`)).then((r) => map(r, (d) => {
+      const seen = /* @__PURE__ */ new Map();
+      for (const type of Array.isArray(d) ? d : []) {
+        for (const st of type?.statuses ?? []) if (st?.name && !seen.has(st.name)) seen.set(st.name, { name: st.name, category: st.statusCategory?.key ?? "new" });
+      }
+      return [...seen.values()];
+    })),
     statuses: () => request("GET", api("/status")).then((r) => map(r, (d) => Array.isArray(d) ? d : [])),
     favouriteFilters: () => request("GET", api("/filter/favourite")).then((r) => map(r, (d) => Array.isArray(d) ? d : [])),
     transitions: (key) => request("GET", api(`${issuePath(key)}/transitions`)).then((r) => map(r, (d) => d?.transitions ?? [])),
@@ -451,6 +462,14 @@ function dragColumns(cols, targets, transitions, order = []) {
     return i < 0 ? Infinity : i;
   };
   return [...cols, ...extra].map((c, i) => ({ c, i })).sort((a, b) => (RANK2[a.c.category] ?? 1) - (RANK2[b.c.category] ?? 1) || (pos(a.c.status) - pos(b.c.status) || 0) || a.i - b.i).map(({ c }) => c);
+}
+var boardProjects = (rows) => [...new Set((rows ?? []).map((r) => String(r.key ?? "").split("-")[0]).filter(Boolean))];
+function unionStatuses(lists) {
+  const seen = /* @__PURE__ */ new Map();
+  for (const list of lists ?? []) if (Array.isArray(list)) {
+    for (const st of list) if (st?.name && !seen.has(st.name)) seen.set(st.name, st);
+  }
+  return [...seen.values()];
 }
 
 // src/shared/path.js
@@ -675,6 +694,7 @@ var Jira = class extends View {
     this.formBusy = false;
     this.favourites = [];
     this.statusOrder = [];
+    this.projectStatuses = /* @__PURE__ */ new Map();
     this.query = "";
     this.rows = [];
     this.total = void 0;
@@ -775,7 +795,7 @@ var Jira = class extends View {
   }
   // Issue keys in the order they're drawn (by group in the list, by column on the board).
   visibleOrder() {
-    const parts = shared2(VIEW_KEY) === "board" ? boardColumns(this.rows, this.statusOrder) : groupByCategory(this.rows);
+    const parts = shared2(VIEW_KEY) === "board" ? boardColumns(this.rows, this.statusOrder, this.boardStatuses()) : groupByCategory(this.rows);
     return parts.flatMap((p) => p.rows.map((r) => r.key));
   }
   // ---- data ----
@@ -880,7 +900,22 @@ var Jira = class extends View {
     this.listProblem = null;
     this.problem = null;
     cx.notify();
+    await this.loadProjectStatuses(cx);
     await this.updateBadge(cx, f);
+  }
+  // The workflow statuses of each project on the board, asked once per project (the board shows them all as columns,
+  // empty ones too). A failure leaves that project out: its columns then come from its issues, as before.
+  async loadProjectStatuses(cx) {
+    for (const key of boardProjects(this.rows)) {
+      if (this.projectStatuses.has(key)) continue;
+      this.projectStatuses.set(key, "loading");
+      const r = await this.client(cx).projectStatuses(key);
+      this.projectStatuses.set(key, r.ok ? r.data : []);
+      cx.notify();
+    }
+  }
+  boardStatuses() {
+    return unionStatuses(boardProjects(this.rows).map((k) => this.projectStatuses.get(k)));
   }
   // How many issues are assigned to me and unresolved: free when that's the filter shown, else one count query.
   async updateBadge(cx, f) {
@@ -1116,6 +1151,7 @@ var Jira = class extends View {
         }
         if (url.url !== this.jira.settings.baseUrl) {
           Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)));
+          this.projectStatuses = /* @__PURE__ */ new Map();
           this.connected = false;
           setShared2(BADGE_KEY, null);
         }
@@ -1147,7 +1183,7 @@ var Jira = class extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false });
+      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false, projectStatuses: /* @__PURE__ */ new Map() });
       setShared2(BADGE_KEY, null);
       cx2.notify();
     });
@@ -1269,13 +1305,14 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
   }
   boardView(t) {
     const d = this.drag;
-    const cols = d ? dragColumns(boardColumns(this.rows, this.statusOrder), d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : boardColumns(this.rows, this.statusOrder);
+    const base = boardColumns(this.rows, this.statusOrder, this.boardStatuses());
+    const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
       const target = d && d.targets.has(c.status);
       const over = target && d.over === c.status;
-      return v_flex().id(`jira-col-${i}`).w(280).flex_none().min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
+      return v_flex().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
         if (this.drag && this.drag.over !== (target ? c.status : null)) {
           this.drag.over = target ? c.status : null;
           cx.notify();

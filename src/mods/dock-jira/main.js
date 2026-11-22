@@ -11,7 +11,7 @@ import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail,
-  dragColumns, dragStarted, dropPlan, dropTargets, pageState, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
+  boardProjects, dragColumns, dragStarted, dropPlan, dropTargets, pageState, unionStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
@@ -42,6 +42,7 @@ export default class Jira extends View {
     this.formBusy = false;
     this.favourites = [];
     this.statusOrder = []; // Jira's statuses in its own order (board columns)
+    this.projectStatuses = new Map(); // project key -> its workflow's statuses [{ name, category }], or "loading"
     this.query = "";
     this.rows = [];
     this.total = undefined;
@@ -120,7 +121,7 @@ export default class Jira extends View {
 
   // Issue keys in the order they're drawn (by group in the list, by column on the board).
   visibleOrder() {
-    const parts = shared(VIEW_KEY) === "board" ? boardColumns(this.rows, this.statusOrder) : groupByCategory(this.rows);
+    const parts = shared(VIEW_KEY) === "board" ? boardColumns(this.rows, this.statusOrder, this.boardStatuses()) : groupByCategory(this.rows);
     return parts.flatMap((p) => p.rows.map((r) => r.key));
   }
 
@@ -225,7 +226,24 @@ export default class Jira extends View {
     this.listProblem = null;
     this.problem = null;
     cx.notify();
+    await this.loadProjectStatuses(cx);
     await this.updateBadge(cx, f);
+  }
+
+  // The workflow statuses of each project on the board, asked once per project (the board shows them all as columns,
+  // empty ones too). A failure leaves that project out: its columns then come from its issues, as before.
+  async loadProjectStatuses(cx) {
+    for (const key of boardProjects(this.rows)) {
+      if (this.projectStatuses.has(key)) continue;
+      this.projectStatuses.set(key, "loading");
+      const r = await this.client(cx).projectStatuses(key);
+      this.projectStatuses.set(key, r.ok ? r.data : []);
+      cx.notify();
+    }
+  }
+
+  boardStatuses() {
+    return unionStatuses(boardProjects(this.rows).map((k) => this.projectStatuses.get(k)));
   }
 
   // How many issues are assigned to me and unresolved: free when that's the filter shown, else one count query.
@@ -429,7 +447,7 @@ export default class Jira extends View {
           if (!t.ok) { this.formError = t.error; return; }
         }
         // Another Jira: forget the old one's issues, open issue and filters, so nothing asks the new site for them.
-        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.connected = false; setShared(BADGE_KEY, null); }
+        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.projectStatuses = new Map(); this.connected = false; setShared(BADGE_KEY, null); }
         const settings = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
           startTask: this.taskInput.value(), caFile: this.caInput.value().trim() };
         const s = await saveSettings(io, this.site, settings, this.jira.settingsText ?? undefined);
@@ -451,7 +469,7 @@ export default class Jira extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false });
+      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false, projectStatuses: new Map() });
       setShared(BADGE_KEY, null);
       cx.notify();
     });
@@ -639,14 +657,15 @@ export default class Jira extends View {
 
   boardView(t) {
     const d = this.drag;
-    const cols = d ? dragColumns(boardColumns(this.rows, this.statusOrder), d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder)
-      : boardColumns(this.rows, this.statusOrder);
+    const base = boardColumns(this.rows, this.statusOrder, this.boardStatuses());
+    const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
       const target = d && d.targets.has(c.status);
       const over = target && d.over === c.status;
-      return v_flex().id(`jira-col-${i}`).w(280).flex_none().min_h(0).rounded(10).border_1()
+      // Columns share the board's width (no gap on the right), down to 240px each; past that the board scrolls.
+      return v_flex().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1()
         .bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border)
         .when(Boolean(d) && !own && !target, (el) => el.opacity(0.4))
         .on_mouse_move((_e, cx) => { if (this.drag && this.drag.over !== (target ? c.status : null)) { this.drag.over = target ? c.status : null; cx.notify(); } })

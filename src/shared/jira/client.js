@@ -87,6 +87,14 @@ export function createClient({ base, transport = "fetch", token, curlConfigPath,
     myself: () => request("GET", api("/myself")),
     search: (jql, page = {}) => request("GET", searchUrl(root, jql, page)),
     issue: (key) => request("GET", `${api(issuePath(key))}?fields=${DETAIL_FIELDS.join(",")}`),
+    // A project's statuses across its issue types, once each, in Jira's order: [{ name, category }] (board columns).
+    projectStatuses: (key) => request("GET", api(`/project/${encodeURIComponent(key)}/statuses`)).then((r) => map(r, (d) => {
+      const seen = new Map();
+      for (const type of Array.isArray(d) ? d : []) {
+        for (const st of type?.statuses ?? []) if (st?.name && !seen.has(st.name)) seen.set(st.name, { name: st.name, category: st.statusCategory?.key ?? "new" });
+      }
+      return [...seen.values()];
+    })),
     statuses: () => request("GET", api("/status")).then((r) => map(r, (d) => (Array.isArray(d) ? d : []))),
     favouriteFilters: () => request("GET", api("/filter/favourite")).then((r) => map(r, (d) => (Array.isArray(d) ? d : []))),
     transitions: (key) => request("GET", api(`${issuePath(key)}/transitions`)).then((r) => map(r, (d) => d?.transitions ?? [])),

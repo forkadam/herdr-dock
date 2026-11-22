@@ -193,7 +193,9 @@ board, an issue's detail beside them, quick actions, and **Start work**.
 - **Filters**: Assigned to me (the default), Reported by me, Recently viewed (Jira's `issueHistory()`), then your Jira favourite
   filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
   filter (Enter). The choice and the List / Board view are remembered per PC.
-- **List** groups by To do / In progress / Done; **Board** has one column per status, in Jira's own order.
+- **List** groups by To do / In progress / Done; **Board** has one column per status of the workflows of the projects
+  on it (asked once per project, `GET /project/{key}/statuses`), empty ones too, in Jira's own order. The columns
+  share the width; past 240px each, the board scrolls sideways.
 - **Drag a card** on the board to move it. When the drag starts the page asks Jira which moves that issue has (its
   workflow, for you, right now): those columns light up, the rest dim, and a status you can reach that has no column
   yet appears as an empty one. Drop on a lit column to move it; when several moves lead there (say Resolve and
