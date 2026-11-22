@@ -85,11 +85,17 @@ function deepMerge(base, over) {
   return out;
 }
 
-export function mergeForHost(config, hostname) {
-  const { machines = {}, ...base } = config;
+// The key of this host's machines section, matched case-insensitively (or undefined).
+function hostKey(machines, hostname) {
   const host = String(hostname).toLowerCase();
-  const key = Object.keys(machines).find((k) => k.toLowerCase() === host);
-  const merged = key ? deepMerge(base, machines[key]) : base;
+  return Object.keys(machines).find((k) => k.toLowerCase() === host);
+}
+
+export function mergeForHost(config, hostname, local = null) {
+  const { machines = {}, ...base } = config;
+  const key = hostKey(machines, hostname);
+  let merged = key ? deepMerge(base, machines[key]) : base;
+  if (local) merged = deepMerge(merged, { regions: local.regions ?? {} });
   const regions = {};
   for (const name of REGION_NAMES) {
     const r = merged.regions?.[name] ?? {};
@@ -98,6 +104,85 @@ export function mergeForHost(config, hostname) {
     if (name === "left") regions[name].mode = r.hidden === true ? "hidden" : (r.mode ?? "expanded");
   }
   return { ...merged, regions };
+}
+
+// The per-PC local file, under the app home ($HERDR_APP_HOME or ~/.config/herdr-app).
+// Shape { v: 1, regions }, the same as a machines.<host> value. Never in git.
+export const LOCAL_REL = "herdr-dock/local.json";
+
+// null text (no local file) is { ok: true, local: null }.
+export function parseLocal(text) {
+  if (text == null) return { ok: true, local: null };
+  let c;
+  try {
+    c = JSON.parse(text);
+  } catch (e) {
+    return { ok: false, error: `${LOCAL_REL}: Invalid JSON: ${e.message}` };
+  }
+  if (!isObj(c)) return { ok: false, error: `${LOCAL_REL}: must be an object` };
+  if (c.v !== 1) return { ok: false, error: `${LOCAL_REL}: v: unsupported version ${JSON.stringify(c.v)} (expected 1)` };
+  const regions = c.regions ?? {};
+  const err = checkRegions(regions, "regions");
+  if (err) return { ok: false, error: `${LOCAL_REL}: ${err}` };
+  return { ok: true, local: { ...c, regions } };
+}
+
+// Base, then machines.<host> (compatibility), then the local file. Callers parse the local
+// file with parseLocal first and pass null when it's missing or invalid; an invalid local
+// object handed in anyway is ignored, never merged.
+export function mergeWithLocal(config, hostname, local) {
+  const ok = isObj(local) && local.v === 1 && !checkRegions(local.regions ?? {}, "regions");
+  return mergeForHost(config, hostname, ok ? local : null);
+}
+
+// JSON equality: same values, object key order ignored.
+function jsonEqual(a, b) {
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => jsonEqual(x, b[i]));
+  if (isObj(a)) {
+    if (!isObj(b)) return false;
+    const ka = Object.keys(a);
+    return ka.length === Object.keys(b).length && ka.every((k) => k in b && jsonEqual(a[k], b[k]));
+  }
+  return a === b;
+}
+
+// "machines": {} (as committed) is the same as no machines key.
+function withoutEmptyMachines(c) {
+  if (!isObj(c.machines) || Object.keys(c.machines).length) return c;
+  const { machines, ...rest } = c;
+  return rest;
+}
+
+// One-time move of this host's machines section into the local file. null when there's
+// nothing to do: a local file already exists (even a corrupt one), the config is missing
+// or not JSON, or it has no section for this host. Other hosts' sections stay. When the
+// rest is JSON-equal to git's committed text (headText), that exact text is kept so the
+// working copy is clean again.
+export function migrationPlan({ configText, host, localText, headText }) {
+  if (localText != null || typeof configText !== "string") return null;
+  let c;
+  try {
+    c = JSON.parse(configText);
+  } catch {
+    return null;
+  }
+  if (!isObj(c) || !isObj(c.machines)) return null;
+  const key = hostKey(c.machines, host);
+  if (key === undefined || !isObj(c.machines[key])) return null;
+  const { [key]: section, ...others } = c.machines;
+  const rest = { ...c };
+  if (Object.keys(others).length) rest.machines = others;
+  else delete rest.machines;
+  let head;
+  try {
+    head = typeof headText === "string" ? JSON.parse(headText) : undefined;
+  } catch {
+    head = undefined;
+  }
+  return {
+    localText: JSON.stringify({ v: 1, regions: section.regions ?? {} }, null, 2) + "\n",
+    configText: isObj(head) && jsonEqual(rest, withoutEmptyMachines(head)) ? headText : JSON.stringify(rest, null, 2) + "\n",
+  };
 }
 
 // What to do with a (possibly half-saved) config: the layout text to write, or null when
