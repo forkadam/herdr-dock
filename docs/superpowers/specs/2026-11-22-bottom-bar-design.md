@@ -95,8 +95,8 @@ clears it. The bar is the way into that history.
     their action (it names the agent's pane or terminal). `{ kind: "pipeline", worktree }` for pipeline failure
     alerts (the collector's alert action already carries `worktree`). Other items have `needs: null`.
   - `resolved`: set true once its cause is fixed. The agent's status is no longer `blocked`, or the worktree's
-    pipeline in `dock.git.state` is no longer `failed`. Checked by `dock-attention` while it runs, so it is kept
-    current even when the history isn't open.
+    pipeline in `dock.git.state` has a known status that isn't `failed` (not polled yet or `unknown` is not
+    fixed). Checked by `dock-core` on its tick, so it is kept current even when the history isn't open.
 - `dock-notifications` (feature mod, regions `["right"]`, also opened as a dialog) renders the list. Each item has
   ✕ to clear, Clear all at the top, and click to run the action. Opening it sets `read` on every item.
 - Opening the history: `dock-attention` sets `dock.right.active = "dock-notifications"` and

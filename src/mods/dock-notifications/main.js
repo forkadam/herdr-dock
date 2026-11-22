@@ -36,6 +36,7 @@ export default class Notifications extends View {
     notifyCommand("notify.read");
   }
 
+  // Closes the dialog (no-op in the right panel); also after a row's action runs.
   close() {
     const id = props()?.overlay;
     if (id) closeOverlay(id);
@@ -63,7 +64,7 @@ export default class Notifications extends View {
     return h_flex().id(`nt-row-${r.id}`).flex_none().mx(8).px(8).py(6).gap(10).items_start().rounded(6)
       .border_l(3).border_color(edge ? red : t.chrome)
       .when(Boolean(action), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click(() => run(action.name, action.args ?? {})))
+        .on_click(() => { run(action.name, action.args ?? {}); this.close(); }))
       .child(div().mt(5).size(8).rounded(4).flex_none().bg(t[DOT[r.level] ?? "accent"] ?? t.accent))
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().truncate().text_size(12.5).text_color(t.foreground).when(!r.read, (el) => el.font_semibold())

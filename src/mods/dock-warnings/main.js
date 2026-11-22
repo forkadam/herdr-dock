@@ -6,7 +6,11 @@ import { gitCommand } from "../_git-command.js";
 import { requestFocus } from "../_feature.js";
 import { SAMPLE_KEY, warningsFor } from "../../shared/system.js";
 
-const CLICK = { pipelines: () => gitCommand("git.show"), quota: () => requestFocus("dock-quotas") };
+// One running pipeline: show its worktree; several: just show Git projects.
+const CLICK = {
+  pipelines: (w) => (w.worktrees?.length === 1 ? gitCommand("git.show", { worktree: w.worktrees[0] }) : gitCommand("git.show")),
+  quota: () => requestFocus("dock-quotas"),
+};
 
 export default class Warnings extends View {
   init(_props, cx) {
@@ -18,7 +22,7 @@ export default class Warnings extends View {
     return div().id(`dock-warning-${w.key}`).flex_none().text_color(w.key === "pipelines" ? t.muted : WARN)
       .tooltip(w.tip)
       .when(Boolean(click), (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground))
-        .on_click((_e, cx) => { cx.stop_propagation(); click(); }))
+        .on_click((_e, cx) => { cx.stop_propagation(); click(w); }))
       .child(w.text);
   }
 

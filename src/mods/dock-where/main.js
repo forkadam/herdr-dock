@@ -13,9 +13,14 @@ export default class Where extends View {
   render() {
     const t = theme();
     const space = spaces().find((s) => s.active);
+    const machine = space?.machine ?? "This computer";
+    // The full names, for a branch cut short.
+    const tip = space?.branch ? `${space.branch} on ${machine}` : machine;
     return barRow(t)
+      .id("dock-where")
+      .tooltip(tip)
       .gap(12)
-      .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer", true))
+      .child(label(space?.machine ? "server" : "monitor", machine, true))
       .when(Boolean(space?.branch), (el) => el.child(label("branch", space.branch, false)));
   }
 }

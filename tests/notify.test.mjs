@@ -111,6 +111,24 @@ test("resolveItems: a needs-pipeline item resolves when that worktree's pipeline
   assert.equal(resolveItems(l, { agents: [], gitState: null })[0].resolved, false);
 });
 
+test("resolveItems: a pipeline not polled yet (null) or unknown (CI error) is not fixed", () => {
+  const l = [item({ needs: { kind: "pipeline", worktree: API } })];
+  assert.equal(resolveItems(l, { agents: [], gitState: state(null) }), l);
+  assert.equal(resolveItems(l, { agents: [], gitState: state(undefined) }), l);
+  assert.equal(resolveItems(l, { agents: [], gitState: state({ status: "unknown" }) }), l);
+  assert.equal(resolveItems(l, { agents: [], gitState: state({ status: "running" }) })[0].resolved, true);
+});
+
+test("addItem: a long body is cut to 2000 characters with an ellipsis", () => {
+  const long = "a".repeat(2500);
+  const b = addItem([], { title: "t", body: long }, 1, "i")[0].body;
+  assert.equal(b.length, 2001);
+  assert.ok(b.endsWith("…"));
+  assert.equal(b.slice(0, 2000), "a".repeat(2000));
+  const exact = "b".repeat(2000);
+  assert.equal(addItem([], { title: "t", body: exact }, 1, "i")[0].body, exact);
+});
+
 test("resolveItems: same array when nothing changed; resolved stays resolved", () => {
   const l = [item({ needs: { kind: "agent", terminal: "t1" } }), item({ id: "y" })];
   assert.equal(resolveItems(l, { agents: [{ address: "t1", status: "blocked" }], gitState: null }), l);

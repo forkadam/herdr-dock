@@ -13,6 +13,9 @@ import { parseGitCommand } from "./gitcmd.js";
 
 export const HISTORY_KEY = "dock.notify.history";
 export const CAP = 200;
+const BODY_MAX = 2000;
+
+const cut = (s) => (typeof s === "string" && s.length > BODY_MAX ? s.slice(0, BODY_MAX) + "…" : s);
 
 const isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => (typeof v === "string" ? v : null);
@@ -52,10 +55,10 @@ export function needsOf(n) {
   return null;
 }
 
-// The list with n recorded first. Past CAP, resolved items go first (oldest first), then the oldest.
+// The list with n recorded first (a body over 2000 characters is cut, with "…"). Past CAP, resolved items go first (oldest first), then the oldest.
 export function addItem(list, n, now, id) {
   const p = isObj(n) ? n : {};
-  const out = [itemOf({ ...p, id, at: now, read: false, needs: needsOf(p), resolved: false }), ...list];
+  const out = [itemOf({ ...p, body: cut(p.body), id, at: now, read: false, needs: needsOf(p), resolved: false }), ...list];
   while (out.length > CAP) {
     const i = out.findLastIndex((x) => x.resolved);
     out.splice(i >= 0 ? i : out.length - 1, 1);
@@ -75,7 +78,11 @@ function isFixed(needs, agents, gitState) {
   }
   for (const r of gitState?.repos ?? []) {
     const w = (r?.worktrees ?? []).find((x) => x?.id === needs.worktree);
-    if (w) return w.pipeline?.status !== "failed";
+    if (w) {
+      // Not polled yet (null) or a CI error ("unknown"): not fixed. Only a definite non-failed status is.
+      const status = w.pipeline?.status;
+      return typeof status === "string" && status !== "unknown" && status !== "failed";
+    }
   }
   return false; // a worktree the state doesn't know: unknown is not fixed
 }

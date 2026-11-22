@@ -278,7 +278,8 @@ dialog's **Move up** / **Move down**. Herdr's own `workspace-status` is no longe
 you can place it back there in the same dialog.
 
 - CPU and RAM are for this PC only, sampled every 5 s.
-- The quota warning needs **dock-quotas** placed somewhere (it publishes `dock.quotas.top`).
+- The quota warning needs **dock-quotas** placed somewhere (it publishes `dock.quotas.top`, refreshed at least
+  every minute; a reading older than 2 minutes is ignored). Clicking `⟳ 1` with one pipeline running shows it.
 - The shared keys `dock.notify.history`, `dock.system.sample` and `dock.quotas.top` are per PC, in Herdr's own
   state, never in `config/dock.json` or git.
 
@@ -290,8 +291,9 @@ you can place it back there in the same dialog.
   from `dock-*` mods (pipeline failures, Delete worktree refusals). `dock-toast` records them and shows the toast
   as Herdr's own does; `dock-core` is the only writer of the history.
 - Newest first, each with its level, title, body and time. Items stay until you clear them: **✕** on one, or
-  **Clear all**. The history is capped at 200 (the oldest cleared go first).
-- Click an item to run its action (go to the agent, show the pipeline). Opening the history marks everything read.
+  **Clear all**. The history is capped at 200; once over, resolved items go first, then the oldest.
+- Click an item to run its action (go to the agent, show the pipeline); in the dialog this also closes it.
+  Opening the history marks everything read.
 - "Needs you" items (an agent is blocked, a pipeline failed) get a **✓ resolved** mark once the cause is fixed.
   They stay until you clear them, but the red count in the bar counts unresolved ones only.
 - If this PC's right region doesn't place it, it opens as a dialog; add it in the Dock layout dialog to keep it

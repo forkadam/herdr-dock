@@ -5,6 +5,8 @@ export const SAMPLE_KEY = "dock.system.sample";
 const CPU_WINDOW_MS = 250;
 const SAMPLE_MAX_AGE_MS = 30000;
 const QUOTA_WARN_PERCENT = 90;
+// dock-quotas refreshes dock.quotas.top's `at` at least every 60 s while mounted; older means it stopped.
+const QUOTA_MAX_AGE_MS = 120000;
 const DISK_WARN_FREE_PERCENT = 10;
 
 // Prints one JSON line {"cpu","mem","diskFree"} (percent). CPU is busy time over a short window;
@@ -48,13 +50,16 @@ export function parseSample(stdout, now) {
   return { cpu: pct(o.cpu), mem: pct(o.mem), diskFree: d, at: now };
 }
 
-// What the bottom bar flags, in display order: running pipelines, quota near its limit, low disk.
+// What the bottom bar flags, in display order: running pipelines (with their worktree ids), quota near its
+// limit (only a reading published within the last 120 s), low disk.
 export function warningsFor({ sample, gitState, quotaTop, now }) {
   const out = [];
-  let running = 0;
-  for (const r of gitState?.repos ?? []) for (const w of r.worktrees ?? []) if (w.pipeline?.status === "running") running++;
-  if (running > 0) out.push({ key: "pipelines", text: `⟳ ${running}`, tip: `${running} pipeline${running === 1 ? "" : "s"} running` });
-  if (quotaTop && !quotaTop.stale && quotaTop.p >= QUOTA_WARN_PERCENT) {
+  const worktrees = [];
+  for (const r of gitState?.repos ?? []) for (const w of r.worktrees ?? []) if (w.pipeline?.status === "running") worktrees.push(w.id);
+  const running = worktrees.length;
+  if (running > 0) out.push({ key: "pipelines", text: `⟳ ${running}`, tip: `${running} pipeline${running === 1 ? "" : "s"} running`, worktrees });
+  const fresh = Number.isFinite(quotaTop?.at) && now - quotaTop.at <= QUOTA_MAX_AGE_MS;
+  if (quotaTop && fresh && !quotaTop.stale && quotaTop.p >= QUOTA_WARN_PERCENT) {
     out.push({ key: "quota", text: `⚠ quota ${Math.round(quotaTop.p)}%`, tip: `Agent quota at ${Math.round(quotaTop.p)}%` });
   }
   if (sample && typeof sample.diskFree === "number" && sample.diskFree < DISK_WARN_FREE_PERCENT

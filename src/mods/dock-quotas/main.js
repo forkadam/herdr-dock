@@ -16,6 +16,8 @@ const CODEX_ABSENT_MS = 300000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
 const TOP_KEY = "dock.quotas.top";
+// dock.quotas.top's `at` is refreshed once it is this old (with the 30 s timer: at most ~60 s old).
+const TOP_REFRESH_MS = 55000;
 const WARN = "#d29922";
 const HIGH = "#f85149";
 
@@ -92,11 +94,17 @@ export default class Quotas extends View {
   }
 
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
-  // { p, stale }, or null with no reading. Written only when it changes.
+  // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
+  // and again once `at` is TOP_REFRESH_MS old (the 30 s timer calls this), so a reading that stops being
+  // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
-    const b = iconBadge([this.statusline, this.codex], Date.now());
-    const top = b ? { p: parseInt(b.text, 10), stale: b.stale } : null;
-    if (JSON.stringify(shared(TOP_KEY) ?? null) !== JSON.stringify(top)) setShared(TOP_KEY, top);
+    const now = Date.now();
+    const b = iconBadge([this.statusline, this.codex], now);
+    const prev = shared(TOP_KEY) ?? null;
+    if (!b) { if (prev !== null) setShared(TOP_KEY, null); return; }
+    const p = parseInt(b.text, 10), stale = b.stale;
+    const same = prev && prev.p === p && prev.stale === stale && Number.isFinite(prev.at) && now - prev.at < TOP_REFRESH_MS;
+    if (!same) setShared(TOP_KEY, { p, stale, at: now });
   }
 
   // Codex's latest rate limits: in each of the last 8 days' session folders (newest first), the most

@@ -1,20 +1,24 @@
-// Same look as Herdr's shipped toast, but each one is also recorded in dock-core's history.
-// How notifications look. Anything can post one with notify({ title, body,
-// level, icon, action }); replace this mod to restyle them all. Click to
-// run its action (e.g. go to the agent) and dismiss it.
+// How notifications look: Herdr's shipped toast, plus each one is recorded in dock-core's history. Anything
+// can post one with notify({ title, body, level, icon, action }). Click to run its action (e.g. go to the
+// agent) and dismiss it.
 
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, run, theme } from "herdr";
+import { props, closeOverlay, run, theme, checking } from "herdr";
 import { notifyCommand } from "../_notify-command.js";
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 
 export default class Toast extends View {
   init() {
-    // Report once per toast instance; dock-core owns dock.notify.history.
-    const { title, body, level, icon, action } = props() ?? {};
-    notifyCommand("notify.add", { n: { title, body, level, icon, action } });
+    // Report once per toast instance; dock-core owns dock.notify.history. Recording never drops the toast.
+    if (checking()) return;
+    try {
+      const { title, body, level, icon, action } = props() ?? {};
+      notifyCommand("notify.add", { n: { title, body, level, icon, action } });
+    } catch (e) {
+      console.log(`dock-toast: recording failed: ${e?.message ?? e}`);
+    }
   }
 
   render(cx) {

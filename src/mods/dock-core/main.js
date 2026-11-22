@@ -48,6 +48,8 @@ const POLL_MS = 3000;
 const EMPTY_WATCH_MS = 1000;
 // The git/CI collector's tick: it compares io.now() each tick, so this is its scheduling resolution.
 const TICK_MS = 1000;
+// After dock-core starts, agent items are not resolved for this long (agents() may not be complete yet).
+const AGENT_GRACE_MS = 30000;
 // The CPU/memory/disk sample: its node child takes ~250 ms, and 4 s is the most it may take.
 const SAMPLE_MS = 5000;
 const SAMPLE_TIMEOUT_MS = 4000;
@@ -65,6 +67,7 @@ export default class DockCore extends View {
     this.layoutPath = null;
     this.collector = null;
     this.notifySeq = 0; // with Date.now(), makes this PC's history item ids unique
+    this.startedAt = Date.now(); // agents() can be [] just after start, before programs re-report
     if (checking() || !isTop()) return;
     cx.spawn(async (cx) => this.start(cx));
     this.startCollector(cx);
@@ -204,7 +207,7 @@ export default class DockCore extends View {
     if (!cmd) return false;
     const history = historyOf(shared(HISTORY_KEY));
     if (cmd.cmd === "show") {
-      setShared(HISTORY_KEY, markAllRead(history));
+      if (history.some((x) => !x.read)) setShared(HISTORY_KEY, markAllRead(history));
       this.reveal(revealPlan(this.merged, "dock-notifications", NOTIFY_DIALOG),
         (e) => console.log(`dock-core: notify.show failed: ${e?.message ?? e}`));
       return true;
@@ -218,8 +221,12 @@ export default class DockCore extends View {
   resolveNotify() {
     const history = historyOf(shared(HISTORY_KEY));
     if (!history.length) return;
+    // Unknown agents (undefined) leave agent items unresolved: so does the first AGENT_GRACE_MS after start,
+    // when agents() can briefly be [] and would resolve every agent item as gone.
     let list;
-    try { list = agents(); } catch { list = undefined; } // unknown agents leave agent items unresolved
+    if (Date.now() - this.startedAt >= AGENT_GRACE_MS) {
+      try { list = agents(); } catch { list = undefined; }
+    }
     const next = resolveItems(history, { agents: list, gitState: shared("dock.git.state") });
     if (next !== history) setShared(HISTORY_KEY, next);
   }
