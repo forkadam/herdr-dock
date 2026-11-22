@@ -67,12 +67,13 @@ test("tree is aligned like Herdr's main layout", () => {
   assert.equal(body.gap, 8);
   assert.equal(find(t, "dock-main").padding, undefined);
 });
-test("default config shows workspace-status bottom and a 44px dock-core and dock-tabs", () => {
+test("default config shows the bar items bottom and a 44px dock-core and dock-tabs", () => {
   const m = mergeForHost(parseConfig(readFileSync("config/dock.json", "utf8")).config, "h");
   const t = buildLayout(m);
   const bottom = find(t, "dock-bottom");
   assert.equal(bottom.hidden, undefined);
-  assert.equal(bottom.children[0].content.mod, "workspace-status");
+  assert.deepEqual(bottom.children.map((c) => [c.content.mod, c.size]),
+    [["dock-where", { px: 240 }], ["dock-attention", { px: 190 }], ["dock-warnings", { px: 230 }], ["dock-system", { weight: 1 }]]);
   assert.deepEqual(find(t, "dock-top").children[0].size, { px: 44 });
   assert.equal(find(t, "dock-top").children[1].content.mod, "dock-tabs");
 });
@@ -146,4 +147,11 @@ test("the default left panel lists Git projects after Agents", async () => {
 test("buildLayout root names dock-toast as the notification toast", () => {
   const m = mergeForHost(parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config, "nohost");
   assert.equal(buildLayout(m).toast, "dock-toast");
+});
+
+test("the code default bottom bar matches the shipped one", async () => {
+  const { DEFAULT_CONFIG } = await import("../src/shared/config.js");
+  const shipped = parseConfig(readFileSync("config/dock.json", "utf8")).config.regions.bottom.features;
+  assert.deepEqual(DEFAULT_CONFIG.regions.bottom.features, shipped);
+  assert.deepEqual(shipped, [{ mod: "dock-where", size: 240 }, { mod: "dock-attention", size: 190 }, { mod: "dock-warnings", size: 230 }, { mod: "dock-system" }]);
 });

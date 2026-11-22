@@ -1,0 +1,1 @@
+{ "id": "dock-system", "name": "System", "icon": "icon.svg", "regions": ["bottom"], "settings": {} }

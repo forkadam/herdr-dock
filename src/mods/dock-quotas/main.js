@@ -2,7 +2,7 @@
 // Codex's (from its newest session log), each under its provider's icon.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, shared, props, checking, home, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
+import { theme, shared, setShared, props, checking, home, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
 import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
@@ -15,6 +15,7 @@ const REFRESH_MS = 30000;
 const CODEX_ABSENT_MS = 300000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
+const TOP_KEY = "dock.quotas.top";
 const WARN = "#d29922";
 const HIGH = "#f85149";
 
@@ -59,11 +60,13 @@ export default class Quotas extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
+          this.publishTop();
           cx.notify();
         } while (this.again);
       } catch (e) {
         console.log(`dock-quotas: read failed: ${e}`);
         this.statusline = null;
+        this.publishTop();
         cx.notify();
       } finally {
         this.reading = false;
@@ -82,9 +85,18 @@ export default class Quotas extends View {
         this.codex = null;
       } finally {
         this.codexReading = false;
+        this.publishTop();
         cx.notify();
       }
     });
+  }
+
+  // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
+  // { p, stale }, or null with no reading. Written only when it changes.
+  publishTop() {
+    const b = iconBadge([this.statusline, this.codex], Date.now());
+    const top = b ? { p: parseInt(b.text, 10), stale: b.stale } : null;
+    if (JSON.stringify(shared(TOP_KEY) ?? null) !== JSON.stringify(top)) setShared(TOP_KEY, top);
   }
 
   // Codex's latest rate limits: in each of the last 8 days' session folders (newest first), the most
