@@ -6,8 +6,8 @@
 //              action: { name: "agent.focus", args: { terminal: "t13" } }, overlay: "o6" }
 //   done:    { title: "<program> finished",  body: "<space> / <tab>", level: "info",
 //              action: { name: "agent.focus", args: { terminal: "t14" } }, overlay: "o7" }
-// args.terminal is the agent's terminal address (agents()[i].address), not its pane id. Needs keeps the
-// spec's field name `pane` for it, and resolveItems matches an agent by address or pane.
+// args.terminal is the agent's terminal address (agents()[i].address), not its pane id: an agent item's needs
+// is { kind: "agent", terminal }, and resolveItems matches it against agents()[i].address.
 
 import { parseGitCommand } from "./gitcmd.js";
 
@@ -24,7 +24,7 @@ function actionOf(a) {
 
 function itemOf(x) {
   if (!isObj(x) || typeof x.id !== "string") return null;
-  const needs = isObj(x.needs) && ((x.needs.kind === "agent" && typeof x.needs.pane === "string")
+  const needs = isObj(x.needs) && ((x.needs.kind === "agent" && typeof x.needs.terminal === "string")
     || (x.needs.kind === "pipeline" && typeof x.needs.worktree === "string")) ? x.needs : null;
   return {
     id: x.id, at: Number.isFinite(x.at) ? x.at : 0, title: typeof x.title === "string" ? x.title : "",
@@ -48,7 +48,7 @@ export function needsOf(n) {
     return c?.cmd === "show" && typeof c.worktree === "string" ? { kind: "pipeline", worktree: c.worktree } : null;
   }
   const terminal = n.action.args?.terminal;
-  if (name === "agent.focus" && n.level === "error" && typeof terminal === "string") return { kind: "agent", pane: terminal };
+  if (name === "agent.focus" && n.level === "error" && typeof terminal === "string") return { kind: "agent", terminal };
   return null;
 }
 
@@ -69,7 +69,8 @@ export const markAllRead = (list) => list.map((x) => (x.read ? x : { ...x, read:
 
 function isFixed(needs, agents, gitState) {
   if (needs.kind === "agent") {
-    const a = (Array.isArray(agents) ? agents : []).find((g) => g?.address === needs.pane || g?.pane === needs.pane);
+    if (!Array.isArray(agents)) return false; // agents unknown: not fixed (a real [] means it's gone)
+    const a = agents.find((g) => g?.address === needs.terminal);
     return !a || a.status !== "blocked"; // a gone agent waits on nothing
   }
   for (const r of gitState?.repos ?? []) {
