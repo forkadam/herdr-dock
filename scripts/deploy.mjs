@@ -8,15 +8,15 @@ import { buildLayout } from "../src/shared/layout.js";
 import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
 import { mergeKeys } from "./keys.mjs";
+import { resolveAppHome } from "./app-home.mjs";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
-const ai = args.indexOf("--app-home");
-if (ai >= 0 && (!args[ai + 1] || args[ai + 1].startsWith("--"))) {
+const appHome = resolveAppHome(args);
+if (!appHome) {
   console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run]");
   process.exit(1);
 }
-const appHome = resolve(ai >= 0 ? args[ai + 1] : process.env.HERDR_APP_HOME || join(homedir(), ".config/herdr-app"));
 const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"], ["ctrl-alt-n", "dock-core.right"]];
 const SECTION = "layout:herdr-dock";
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
