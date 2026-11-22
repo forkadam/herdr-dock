@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attentionText } from "../src/mods/dock-attention/view.js";
+import { attentionText, attentionBell } from "../src/mods/dock-attention/view.js";
 import { systemTips } from "../src/mods/dock-system/view.js";
 
 test("attentionText shows need-you in red and unread dim", () => {
@@ -17,6 +17,12 @@ test("attentionText leaves out a part at zero", () => {
 
 test("attentionText says No notifications when both are zero", () => {
   assert.deepEqual(attentionText({ needYou: 0, unread: 0 }), [{ text: "No notifications", tone: "dim" }]);
+});
+
+test("attentionBell: red when something needs you, accent for unread only, dim when nothing; tip says what", () => {
+  assert.deepEqual(attentionBell({ needYou: 2, unread: 3 }), { tone: "bad", tip: "⚠ 2 need you · 3 unread" });
+  assert.deepEqual(attentionBell({ needYou: 0, unread: 1 }), { tone: "unread", tip: "1 unread" });
+  assert.deepEqual(attentionBell({ needYou: 0, unread: 0 }), { tone: "none", tip: "No notifications" });
 });
 
 const NOW = 1_000_000;

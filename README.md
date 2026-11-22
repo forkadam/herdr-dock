@@ -272,8 +272,9 @@ The bottom bar is a quiet glance. In order, left to right:
   90% or more, `⚠ disk 7%` when this PC's system drive has under 10% free. With none applying it shows nothing.
 - **System** (`dock-system`): a chip icon and a memory icon, each with its %, in the warning colour from 90%.
   Hover them for Herdr's own usage: `CPU 34% · Herdr 0.1%`, `Memory 61% · Herdr 210 MB`.
-- **Notifications** (`dock-attention`), at the far right: `⚠ 2 need you` (red) and `3 unread` (dim). Each is hidden
-  at zero; with both at zero it shows a dim `No notifications`. Click it to open the notification history.
+- **Notifications** (`dock-attention`), at the far right: just a bell, red when something needs you, the accent
+  colour when there are only unread items, dim when there's nothing. Hover it for what's there (`⚠ 2 need you · 3
+  unread`, or `No notifications`); click it to open the notification history.
 
 Anything that is fine shows nothing. To reorder the items, or move one to another region, use the Dock layout
 dialog's **Move up** / **Move down**. Herdr's own `workspace-status` is no longer in the default bottom region, but
