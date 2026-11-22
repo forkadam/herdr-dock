@@ -73,8 +73,8 @@ export function gitCommandName(name, args = {}) {
     case "git.open.job":
       if (!Number.isInteger(args?.index) || args.index < 0) throw new Error("git.open.job needs { index }");
       return `${name}.${args.index}`;
-    case "git.select":
-      if (typeof args?.worktree !== "string") throw new Error("git.select needs { worktree }");
+    case "git.select": case "git.delete":
+      if (typeof args?.worktree !== "string") throw new Error(`${name} needs { worktree }`);
       return `${name}.${b64urlEncode(args.worktree)}`;
     case "git.show":
       return typeof args?.worktree === "string" ? `${name}.${b64urlEncode(args.worktree)}` : name;
@@ -92,7 +92,7 @@ export function parseGitCommand(c) {
   if (rest === "show") return { cmd: "show", worktree: null };
   let m = /^open\.job\.(\d+)$/.exec(rest);
   if (m) return { cmd: "open.job", index: Number(m[1]) };
-  m = /^(select|show)\.([A-Za-z0-9_-]+)$/.exec(rest);
+  m = /^(select|show|delete)\.([A-Za-z0-9_-]+)$/.exec(rest);
   if (m) {
     const worktree = b64urlDecode(m[2]);
     return worktree == null ? null : { cmd: m[1], worktree };

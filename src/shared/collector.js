@@ -17,6 +17,7 @@ const REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
 const REPOS_KEY = "dock.git.repos";
 const SKIPPED_KEY = "dock.git.skipped";
+const HIDDEN_KEY = "dock.git.hidden";
 const STATE_KEY = "dock.git.state";
 const SELECTED_KEY = "dock.git.selected";
 const DETAIL_KEY = "dock.git.detail";
@@ -336,6 +337,8 @@ export function createCollector(io) {
   // - a repo in dock.git.skipped (removed while a terminal was in it) is hidden and never auto-added,
   //   and leaves the list once no terminal is in it.
   function applySkipAndAutoAdd(view, addedList) {
+    const resolving = addedList.some((a) => !added.get(`${a.machine ?? ""}|${a.path}`)?.done);
+    applyHidden(view, resolving);
     const raw = io.shared(SKIPPED_KEY);
     const skipped = Array.isArray(raw) ? raw.filter((s) => typeof s === "string") : [];
     const open = new Set([...view.values()].filter((r) => [...r.wts.values()].some((w) => w.open)).map((r) => r.id));
@@ -345,7 +348,6 @@ export function createCollector(io) {
     }
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return; // tests of other behaviour can turn it off; on in the app
-    const resolving = addedList.some((a) => !added.get(`${a.machine ?? ""}|${a.path}`)?.done);
     if (resolving) return;
     const extra = [];
     for (const r of view.values()) {
@@ -354,6 +356,47 @@ export function createCollector(io) {
       if (w) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...(io.shared(REPOS_KEY) ?? []), ...extra]);
+  }
+
+  // Hidden worktrees (docs/superpowers/specs/2026-11-22-worktree-hide-delete-design.md): dock.git.hidden is
+  // [{ id, held }], held while a terminal was in it when hidden. Each entry is left out of the list until a
+  // terminal enters it after none was in it; an entry for a worktree that no longer exists is dropped (not
+  // while an added repo is still resolving, when its worktrees aren't known yet). A repo left with no
+  // worktrees is left out too.
+  function applyHidden(view, resolving) {
+    const raw = io.shared(HIDDEN_KEY);
+    const list = Array.isArray(raw) ? raw.filter((e) => e && typeof e.id === "string") : [];
+    const where = new Map();
+    for (const r of view.values()) for (const [id, w] of r.wts) where.set(id, { r, w });
+    const next = [];
+    for (const e of list) {
+      const f = where.get(e.id);
+      if (!f) { if (resolving) next.push(e); continue; }
+      if (!e.held && f.w.open) continue; // a terminal came back: show it again
+      next.push({ id: e.id, held: Boolean(e.held && f.w.open) });
+      f.r.wts.delete(e.id);
+      if (!f.r.wts.size && !f.r.error) view.delete(f.r.id);
+    }
+    if (JSON.stringify(next) !== JSON.stringify(list) || (raw !== undefined && !Array.isArray(raw))) io.setShared(HIDDEN_KEY, next);
+  }
+
+  // Deletes a worktree from disk: `git worktree remove` from its repo's main checkout, never --force, so git
+  // refuses one with uncommitted changes. The main checkout itself is refused. Notifies on failure.
+  async function deleteWorktree(id) {
+    let found = null;
+    for (const r of currentView.values()) if (r.wts.has(id)) found = { r, w: r.wts.get(id) };
+    if (!found) return { ok: false, error: "worktree not found" };
+    const { r, w } = found;
+    if (slashPath(w.path).toLowerCase() === slashPath(r.mainPath).toLowerCase()) {
+      return { ok: false, error: "the main checkout can't be deleted as a worktree" };
+    }
+    const res = await run(r.machine, ["-C", r.mainPath, "worktree", "remove", w.path]);
+    refresh();
+    if (res.code === 0) return { ok: true };
+    const error = errText(res);
+    log(`git worktree remove ${w.path} failed: ${error}`);
+    io.notify({ title: `Couldn't delete worktree ${basename(w.path)}`, body: error, level: "error" });
+    return { ok: false, error };
   }
 
   function publish(now) {
@@ -524,5 +567,5 @@ export function createCollector(io) {
     return job?.webUrl ?? null;
   }
 
-  return { tick, refresh, select, retry, urlFor, state: () => published };
+  return { tick, refresh, select, retry, deleteWorktree, urlFor, state: () => published };
 }

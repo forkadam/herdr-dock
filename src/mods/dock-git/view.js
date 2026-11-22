@@ -104,3 +104,28 @@ export function skipAfterRemove(skipped, repo) {
   const list = Array.isArray(skipped) ? skipped : [];
   return list.includes(repo.id) ? list : [...list, repo.id];
 }
+
+// The right-click menu. A repo row: Remove repo (all its worktrees leave the list). A worktree row works on
+// just that worktree: Hide from list, and Delete worktree… (not for the main checkout, which git can't
+// remove as a worktree). Both: the repo's web page, and Copy path for the line clicked.
+export function rowMenu(rows, row) {
+  const repo = row.kind === "repo" ? row : rows.find((r) => r.kind === "repo" && r.id === row.repoId);
+  if (!repo) return [];
+  const items = row.kind === "repo"
+    ? [{ key: "remove", label: `Remove repo ${repo.name}`, repoId: repo.id }]
+    : [{ key: "hide", label: "Hide from list", worktree: row.id },
+      ...(row.path === repo.mainPath ? [] : [{ key: "delete", label: "Delete worktree…", worktree: row.id }])];
+  if (repo.webUrl) items.push({ key: "web", label: repo.webLabel, url: repo.webUrl });
+  const path = row.kind === "repo" ? repo.mainPath : row.path;
+  if (path) items.push({ key: "copy", label: "Copy path", path });
+  return items;
+}
+
+// Hide from list on a worktree row: dock.git.hidden gains { id, held } (held: a terminal is in it now, so it
+// stays hidden until they leave). The repo's last shown worktree removes the repo instead: { removeRepo }.
+export function hideWorktree(hidden, rows, row) {
+  const others = rows.filter((r) => r.kind === "worktree" && r.repoId === row.repoId && r.id !== row.id);
+  if (!others.length) return { hidden: null, removeRepo: row.repoId };
+  const list = (Array.isArray(hidden) ? hidden : []).filter((e) => e?.id !== row.id);
+  return { hidden: [...list, { id: row.id, held: Boolean(row.open) }], removeRepo: null };
+}

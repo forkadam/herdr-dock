@@ -69,3 +69,10 @@ test("showPlan: right-panel when dock-pipelines is placed there, else a dialog",
   assert.deepEqual(showPlan({ regions: { right: { features: [{ mod: "dock-quotas" }] } } }), dialog);
   assert.deepEqual(showPlan(null), dialog);
 });
+
+test("git.delete carries the worktree id and parses back; it needs one", () => {
+  const name = gitCommandName("git.delete", { worktree: "|d:/work/api-login" });
+  assert.match(name, /^git\.delete\.[A-Za-z0-9_-]+$/);
+  assert.deepEqual(parseGitCommand(name), { cmd: "delete", worktree: "|d:/work/api-login" });
+  assert.throws(() => gitCommandName("git.delete", {}));
+});

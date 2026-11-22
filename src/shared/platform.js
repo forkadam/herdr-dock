@@ -27,6 +27,13 @@ export function openUrlCommand(platform, url) {
   return { command: "xdg-open", args: [url] };
 }
 
+// The command that opens a folder in the file manager (Explorer wants backslashes).
+export function openFolderCommand(platform, path) {
+  if (platform === "windows") return { command: "explorer", args: [String(path).replace(/\//g, "\\")] };
+  if (platform === "macos") return { command: "open", args: [path] };
+  return { command: "xdg-open", args: [path] };
+}
+
 // The command that lists the files (not folders) in `dir`.
 export function listFilesCommand(platform, dir) {
   if (platform === "windows") return { command: "cmd", args: ["/c", "dir", "/b", "/a-d", dir.replaceAll("/", "\\")] };

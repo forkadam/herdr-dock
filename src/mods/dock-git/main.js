@@ -2,20 +2,22 @@
 // pipeline badge. Clicking a worktree selects it (and its space when open); the badge shows its pipeline.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, shared, setShared, props, run, exec, pickFolder, window } from "herdr";
+import { theme, shared, setShared, props, run, exec, pickFolder, window, openOverlay } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { gitCommand } from "../_git-command.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { gitRows, gitSummary, addRepoPath, removeRepoPaths, skipAfterRemove } from "./view.js";
+import { gitRows, gitSummary, addRepoPath, removeRepoPaths, skipAfterRemove, rowMenu, hideWorktree } from "./view.js";
 
 const REPOS_KEY = "dock.git.repos";
 const SKIPPED_KEY = "dock.git.skipped";
+const HIDDEN_KEY = "dock.git.hidden";
 const WARN = "#d29922";
 
 export default class Git extends View {
   init() {
-    this.menu = null; // the repo id whose right-click menu is open
+    this.menu = null; // the row (repo or worktree id) whose right-click menu is open, drawn under it
+    this.hover = null; // the repo row under the pointer, which shows its ✕
   }
 
   tones(t) {
@@ -49,6 +51,25 @@ export default class Git extends View {
     gitCommand("git.refresh");
   }
 
+  hideWorktree(rows, row) {
+    const { hidden, removeRepo } = hideWorktree(shared(HIDDEN_KEY), rows, row);
+    if (removeRepo) return this.removeRepo(removeRepo);
+    setShared(HIDDEN_KEY, hidden);
+    this.menu = null;
+    gitCommand("git.refresh");
+  }
+
+  // Deleting from disk can lose work: dock-git-delete warns first, and only its Delete runs it.
+  confirmDelete(row) {
+    this.menu = null;
+    const name = String(row.path ?? "").replace(/\/+$/, "").split("/").pop();
+    const repo = this.repoById(row.repoId);
+    openOverlay({
+      mod: "dock-git-delete", kind: "dialog", modal: true, width: 460, height: 230,
+      props: { branch: row.branch, name, path: row.path, machine: repo?.machine ?? null, worktree: row.id },
+    });
+  }
+
   openWeb(url) {
     const { command, args } = openUrlCommand(window()?.platform, url);
     exec(command, args).catch((e) => console.log(`dock-git: open failed: ${e?.message ?? e}`));
@@ -75,7 +96,8 @@ export default class Git extends View {
     const detail = r.detail;
     return h_flex().id(`git-repo-${i}`).h(24).px(16).gap(6).flex_none().items_center().mt(i ? 6 : 0)
       .tooltip(r.tooltip)
-      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu = this.menu === r.id ? null : r.id; cx.notify(); })
+      .on_mouse_down("right", (_e, cx) => this.toggleMenu(r.id, cx))
+      .on_hover((on, cx) => { const next = on ? r.id : this.hover === r.id ? null : this.hover; if (next !== this.hover) { this.hover = next; cx.notify(); } })
       .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(r.name))
       .when(Boolean(detail), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`· ${detail}`)))
       .child(div().flex_1())
@@ -84,14 +106,30 @@ export default class Git extends View {
         .child(div().id(`git-remove-${i}`).flex_none().px(6).h(18).rounded(5).text_size(11).text_color(red)
           .flex().items_center().cursor_pointer().hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => { cx.stop_propagation(); this.removeRepo(r.id); cx.notify(); })
-          .child("Remove")));
+          .child("Remove")))
+      .when(!r.error && this.hover === r.id, (el) => el
+        .child(div().id(`git-x-${i}`).flex_none().w(18).h(18).rounded(4).flex().items_center().justify_center()
+          .text_size(11).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(red))
+          .tooltip(`Remove ${r.name} from the list`)
+          .on_click((_e, cx) => { cx.stop_propagation(); this.removeRepo(r.id); cx.notify(); })
+          .child("✕")));
   }
 
-  menuFor(t, r, i) {
-    const items = [];
-    items.push(["remove", "Remove repo", (cx) => { this.removeRepo(r.id); cx.notify(); }]);
-    if (r.webUrl) items.push(["web", r.webLabel, () => this.openWeb(r.webUrl)]);
-    if (r.mainPath) items.push(["copy", "Copy path", (cx) => cx.write_to_clipboard(r.mainPath)]);
+  toggleMenu(id, cx) {
+    cx.stop_propagation();
+    this.menu = this.menu === id ? null : id;
+    cx.notify();
+  }
+
+  menuFor(t, rows, r, i) {
+    const act = {
+      remove: (m) => () => this.removeRepo(m.repoId),
+      hide: () => () => this.hideWorktree(rows, r),
+      delete: () => () => this.confirmDelete(r),
+      web: (m) => () => this.openWeb(m.url),
+      copy: (m) => (cx) => cx.write_to_clipboard(m.path),
+    };
+    const items = rowMenu(rows, r).map((m) => [m.key, m.label, act[m.key](m)]);
     if (!items.length) items.push(["none", "No actions", () => {}]);
     return v_flex().id(`git-menu-${i}`).mx(12).my(2).p(4).flex_none().rounded(7).bg(t.popover ?? t.chrome)
       .border(1).border_color(t.border).text_size(12)
@@ -113,6 +151,7 @@ export default class Git extends View {
       .when(w.selected, (el) => el.bg(t.selected ?? t.hover))
       .hover((s) => s.bg(t.hover))
       .on_click(() => select())
+      .on_mouse_down("right", (_e, cx) => this.toggleMenu(w.id, cx))
       .child(div().size(6).flex_none().rounded_full().bg(w.open ? tones.ok : "#00000000"))
       .child(div().id(`git-branch-${i}`).flex_1().min_w(0).truncate().text_color(w.open ? t.foreground : t.muted)
         .tooltip(w.tooltip).child(w.branch))
@@ -147,10 +186,10 @@ export default class Git extends View {
     const children = [];
     rows.forEach((r, i) => {
       if (r.kind === "empty") children.push(div().px(16).py(4).text_size(12).text_color(t.dim).child(r.text));
-      else if (r.kind === "repo") {
-        children.push(this.repoRow(t, r, i));
-        if (this.menu === r.id) children.push(this.menuFor(t, r, i));
-      } else children.push(this.worktreeRow(t, r, i));
+      else {
+        children.push(r.kind === "repo" ? this.repoRow(t, r, i) : this.worktreeRow(t, r, i));
+        if (this.menu === r.id) children.push(this.menuFor(t, rows, r, i));
+      }
     });
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
       .child(this.header(t, null, null))

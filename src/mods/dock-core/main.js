@@ -149,6 +149,7 @@ export default class DockCore extends View {
     else if (g.cmd === "open") open(col.urlFor("pipeline"));
     else if (g.cmd === "open.job") open(col.urlFor({ job: g.index }));
     else if (g.cmd === "select") col.select(g.worktree).catch(fail("select"));
+    else if (g.cmd === "delete") col.deleteWorktree(g.worktree).catch(fail("delete"));
     else if (g.cmd === "show") {
       const worktree = g.worktree ?? shared("dock.git.selected") ?? null;
       if (worktree) col.select(worktree).catch(fail("select"));

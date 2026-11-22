@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hostnameCommand, listDirCommand, parseDirListing, openUrlCommand } from "../src/shared/platform.js";
+import { hostnameCommand, listDirCommand, parseDirListing, openUrlCommand, openFolderCommand } from "../src/shared/platform.js";
 
 test("hostnameCommand: uname -n on Linux, hostname elsewhere", () => {
   assert.deepEqual(hostnameCommand("linux"), { command: "uname", args: ["-n"] });
@@ -29,4 +29,10 @@ test("openUrlCommand: per platform", () => {
   assert.deepEqual(openUrlCommand("windows", u), { command: "rundll32", args: ["url.dll,FileProtocolHandler", u] });
   assert.deepEqual(openUrlCommand("macos", u), { command: "open", args: [u] });
   assert.deepEqual(openUrlCommand("linux", u), { command: "xdg-open", args: [u] });
+});
+
+test("openFolderCommand: Explorer with backslashes on Windows, open / xdg-open elsewhere", () => {
+  assert.deepEqual(openFolderCommand("windows", "C:/Users/me/wt-login"), { command: "explorer", args: ["C:\\Users\\me\\wt-login"] });
+  assert.deepEqual(openFolderCommand("macos", "/Users/me/wt"), { command: "open", args: ["/Users/me/wt"] });
+  assert.deepEqual(openFolderCommand("linux", "/home/me/wt"), { command: "xdg-open", args: ["/home/me/wt"] });
 });

@@ -576,3 +576,76 @@ test("skipped: a removed repo with a terminal in it is hidden and not re-added u
   io.t += 1000; await c.tick();
   assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/home/me/tool", machine: "devbox" }]);
 });
+
+// --- hidden worktrees and Delete worktree (docs/superpowers/specs/2026-11-22-worktree-hide-delete-design.md) ---
+const API = {
+  " -C D:/work/api rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api\nD:/work/api/.git\n"),
+  " -C D:/work/api worktree list --porcelain": wtList(["D:/work/api", "main"], ["D:/work/api-login", "feature/login"]),
+  " -C D:/work/api remote get-url origin": NO_ORIGIN,
+  " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+  " --no-optional-locks -C D:/work/api-login status --porcelain=v2 --branch": status("feature/login"),
+  " -C D:/work/api-login rev-parse --path-format=absolute --show-toplevel --git-common-dir": ok("D:/work/api-login\nD:/work/api/.git\n"),
+};
+const wtPaths = (c) => c.state().repos[0].worktrees.map((w) => w.path);
+
+test("hidden: a hidden worktree is left out of the list; the entry goes once the worktree is gone", async () => {
+  const table = { ...API };
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table });
+  io.setShared("dock.git.hidden", [{ id: "|d:/work/api-login", held: false }]);
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(wtPaths(c), ["D:/work/api"]);
+  assert.deepEqual(io.shared("dock.git.hidden"), [{ id: "|d:/work/api-login", held: false }]);
+  table[" -C D:/work/api worktree list --porcelain"] = wtList(["D:/work/api", "main"]); // removed outside
+  io.t += 61000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.hidden"), []);
+});
+
+test("hidden: hidden while a terminal is in it, it shows again only when a terminal comes back after they left", async () => {
+  const panes = [{ pane: "p1", tab: "t1", cwd: "D:/work/api-login" }];
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table: API, panes,
+    spaces: [{ id: "s1", name: "dev", machine: null, tabs: [{ id: "t1" }] }] });
+  io.setShared("dock.git.hidden", [{ id: "|d:/work/api-login", held: true }]);
+  const c = createCollector(io);
+  await c.tick(); io.t += 1000; await c.tick();
+  assert.deepEqual(wtPaths(c), ["D:/work/api"]);
+  assert.deepEqual(io.shared("dock.git.hidden"), [{ id: "|d:/work/api-login", held: true }]);
+  panes.length = 0; // the terminal leaves: still hidden, now waiting for one to come back
+  io.t += 1000; await c.tick();
+  assert.deepEqual(wtPaths(c), ["D:/work/api"]);
+  assert.deepEqual(io.shared("dock.git.hidden"), [{ id: "|d:/work/api-login", held: false }]);
+  panes.push({ pane: "p2", tab: "t1", cwd: "D:/work/api-login" }); // a terminal comes back
+  io.t += 1000; await c.tick();
+  assert.deepEqual(io.shared("dock.git.hidden"), []);
+  assert.deepEqual(wtPaths(c), ["D:/work/api", "D:/work/api-login"]);
+});
+
+test("deleteWorktree: runs git worktree remove from the main checkout, never --force; refuses the main checkout", async () => {
+  const table = { ...API, " -C D:/work/api worktree remove D:/work/api-login": ok("") };
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table });
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(await c.deleteWorktree("|d:/work/api-login"), { ok: true });
+  assert.equal(callsTo(io, "worktree remove D:/work/api-login"), 1);
+  assert.equal(io.calls.some((x) => x.key.includes("--force")), false);
+  const main = await c.deleteWorktree("|d:/work/api");
+  assert.equal(main.ok, false);
+  assert.match(main.error, /main checkout/);
+  assert.equal(callsTo(io, "worktree remove D:/work/api "), 0);
+});
+
+test("deleteWorktree: git's refusal (uncommitted changes) comes back as the error and as a notification", async () => {
+  const table = { ...API, " -C D:/work/api worktree remove D:/work/api-login":
+    { code: 128, stdout: "", stderr: "fatal: 'D:/work/api-login' contains modified or untracked files, use --force to delete it\n" } };
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table });
+  const notes = [];
+  io.notify = (n) => notes.push(n);
+  const c = createCollector(io);
+  await c.tick();
+  const r = await c.deleteWorktree("|d:/work/api-login");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /modified or untracked files/);
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].level, "error");
+  assert.match(notes[0].body, /modified or untracked files/);
+});

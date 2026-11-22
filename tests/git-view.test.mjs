@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gitRows, badgeOf, gitSummary, repoWebUrl, addRepoPath, removeRepoPaths, EMPTY_TEXT } from "../src/mods/dock-git/view.js";
+import { gitRows, badgeOf, gitSummary, repoWebUrl, addRepoPath, removeRepoPaths, EMPTY_TEXT, rowMenu, hideWorktree } from "../src/mods/dock-git/view.js";
 
 const P = (status, o = {}) => ({ status, id: 1, sha: "abc", webUrl: "https://x/p/1", createdAt: null, stale: false, error: null, via: "fetch", hint: null, ...o });
 const W = (o = {}) => ({ id: "|d:/r/api", path: "D:/r/api", branch: "main", detached: false, sha: "a1b2c3d4e5", upstream: "origin/main",
@@ -127,4 +127,30 @@ test("skipAfterRemove: a repo removed while a terminal is in it is skipped; othe
   assert.deepEqual(skipAfterRemove(["r9"], open), ["r9", "r1"]);
   assert.deepEqual(skipAfterRemove(["r1"], open), ["r1"]);
   assert.equal(skipAfterRemove(["r9"], closed), null);
+});
+
+test("rowMenu: a repo row removes the repo; a worktree row hides or deletes just that worktree (not the main checkout)", () => {
+  const api = R({ worktrees: [W({}), W({ id: "|d:/r/api-login", path: "D:/r/api-login", branch: "feature/login" })] });
+  const rows = gitRows({ repos: [api] }, null);
+  const [repo, main, login] = rows;
+  assert.deepEqual(rowMenu(rows, repo).map((m) => m.key), ["remove", "web", "copy"]);
+  assert.equal(rowMenu(rows, repo)[0].label, "Remove repo api");
+  assert.deepEqual(rowMenu(rows, login).map((m) => m.key), ["hide", "delete", "web", "copy"]);
+  assert.deepEqual(rowMenu(rows, main).map((m) => m.key), ["hide", "web", "copy"]);
+  const del = rowMenu(rows, login).find((m) => m.key === "delete");
+  assert.equal(del.label, "Delete worktree…");
+  assert.equal(del.worktree, "|d:/r/api-login");
+  assert.equal(rowMenu(rows, repo).find((m) => m.key === "copy").path, "D:/r/api");
+  assert.equal(rowMenu(rows, login).find((m) => m.key === "copy").path, "D:/r/api-login");
+  assert.equal(rowMenu(rows, login).find((m) => m.key === "web").url, "https://gitlab.corp/grp/api");
+});
+
+test("hideWorktree: adds { id, held } while others stay; hiding the last one removes the repo instead", () => {
+  const api = R({ worktrees: [W({}), W({ id: "|d:/r/api-login", path: "D:/r/api-login", branch: "feature/login", open: true })] });
+  const rows = gitRows({ repos: [api] }, null);
+  const [, main, login] = rows;
+  assert.deepEqual(hideWorktree([], rows, login), { hidden: [{ id: "|d:/r/api-login", held: true }], removeRepo: null });
+  assert.deepEqual(hideWorktree(undefined, rows, main), { hidden: [{ id: "|d:/r/api", held: false }], removeRepo: null });
+  const solo = gitRows({ repos: [R({})] }, null);
+  assert.deepEqual(hideWorktree([], solo, solo[1]), { hidden: null, removeRepo: api.id });
 });
