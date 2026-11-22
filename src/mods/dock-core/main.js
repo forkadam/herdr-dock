@@ -16,6 +16,7 @@ import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
 import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/notify.js";
 import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
 import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
+import { SAMPLE_KEY, parseSample, sampleCommand } from "../../shared/system.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
@@ -47,6 +48,9 @@ const POLL_MS = 3000;
 const EMPTY_WATCH_MS = 1000;
 // The git/CI collector's tick: it compares io.now() each tick, so this is its scheduling resolution.
 const TICK_MS = 1000;
+// The CPU/memory/disk sample: its node child takes ~250 ms, and 4 s is the most it may take.
+const SAMPLE_MS = 5000;
+const SAMPLE_TIMEOUT_MS = 4000;
 
 const isTop = () => props()?.dockRegion === "top";
 
@@ -64,6 +68,7 @@ export default class DockCore extends View {
     if (checking() || !isTop()) return;
     cx.spawn(async (cx) => this.start(cx));
     this.startCollector(cx);
+    this.startSampler(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -132,6 +137,28 @@ export default class DockCore extends View {
         this.collector?.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
         try { this.resolveNotify(); } catch (e) { console.log(`dock-core: notify resolve failed: ${e?.message ?? e}`); }
         await cx.sleep(TICK_MS);
+      }
+    });
+  }
+
+  // The system sampler: one node child every SAMPLE_MS publishes dock.system.sample. A failure is
+  // logged once, then again only after a success, so a missing node does not flood the log.
+  startSampler(cx) {
+    let failed = false;
+    cx.spawn(async (cx) => {
+      for (;;) {
+        try {
+          const { command, args } = sampleCommand();
+          const { stdout } = await exec(command, args, { timeout: SAMPLE_TIMEOUT_MS });
+          const sample = parseSample(stdout, Date.now());
+          if (!sample) throw new Error("unreadable sample output");
+          setShared(SAMPLE_KEY, sample);
+          failed = false;
+        } catch (e) {
+          if (!failed) console.log(`dock-core: system sample failed: ${e?.message ?? e}`);
+          failed = true;
+        }
+        await cx.sleep(SAMPLE_MS);
       }
     });
   }
