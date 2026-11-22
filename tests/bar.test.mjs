@@ -20,9 +20,9 @@ test("attentionText says No notifications when both are zero", () => {
 });
 
 test("attentionBell: red when something needs you, accent for unread only, dim when nothing; tip says what", () => {
-  assert.deepEqual(attentionBell({ needYou: 2, unread: 3 }), { tone: "bad", tip: "⚠ 2 need you · 3 unread" });
-  assert.deepEqual(attentionBell({ needYou: 0, unread: 1 }), { tone: "unread", tip: "1 unread" });
-  assert.deepEqual(attentionBell({ needYou: 0, unread: 0 }), { tone: "none", tip: "No notifications" });
+  assert.deepEqual(attentionBell({ needYou: 2, unread: 3 }), { tone: "bad", dot: true, tip: "⚠ 2 need you · 3 unread" });
+  assert.deepEqual(attentionBell({ needYou: 0, unread: 1 }), { tone: "unread", dot: true, tip: "1 unread" });
+  assert.deepEqual(attentionBell({ needYou: 0, unread: 0 }), { tone: "none", dot: false, tip: "No notifications" });
 });
 
 const NOW = 1_000_000;

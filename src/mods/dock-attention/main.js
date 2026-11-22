@@ -1,7 +1,8 @@
 // Attention: a bell at the far right of the bar, coloured by what's in the notification history — red when
-// something needs the user, the accent colour for unread only, dim when nothing. Hovering says what; clicking
+// something needs the user, the accent colour for unread only, dim when nothing, with a dot when there's
+// anything to see. Hovering says what; clicking
 // opens the history (dock-core's notify.show reveals it and marks everything read).
-import { View, svg } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { theme, shared } from "herdr";
 import { notifyCommand } from "../_notify-command.js";
@@ -17,6 +18,11 @@ export default class Attention extends View {
       .bg(t.chrome).border_t(1).border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover))
       .tooltip(`${bell.tip} · click to open`)
       .on_click(() => notifyCommand("notify.show"))
-      .child(svg("mods/dock-notifications/icon.svg").size(14).text_color(color));
+      .child(div().relative().size(14)
+        .child(svg("mods/dock-notifications/icon.svg").size(14).text_color(color))
+        // A dot on the bell's top right whenever there's something to see; ringed in the bar colour so it
+        // reads against the bell.
+        .when(bell.dot, (el) => el.child(div().absolute().top(-2).right(-2).size(7).rounded_full()
+          .bg(color).border_1().border_color(t.chrome))));
   }
 }

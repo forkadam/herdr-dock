@@ -7,8 +7,9 @@ export function attentionText({ needYou, unread }) {
 }
 
 // The bar's bell (pure): its colour (red when something needs you, accent for unread only, dim when
-// nothing) and its tooltip, the same words attentionText would have shown.
+// nothing), whether it carries a dot (whenever there's something to see), and its tooltip, the same words
+// attentionText would have shown.
 export function attentionBell(c) {
   const tone = c.needYou > 0 ? "bad" : c.unread > 0 ? "unread" : "none";
-  return { tone, tip: attentionText(c).map((p) => p.text).join(" · ") };
+  return { tone, dot: tone !== "none", tip: attentionText(c).map((p) => p.text).join(" · ") };
 }
