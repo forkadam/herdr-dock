@@ -170,6 +170,43 @@ time, for the whole window (not per space or tab), so a page is never open twice
 - Add or remove pages in the Dock layout dialog (Pages section). Placing the first page also adds the Pages bar to
   the left panel. With no pages the layout is exactly as before.
 
+## Jira page
+
+`dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues and filters as a list or a
+board, an issue's detail beside them, quick actions, and **Start work**.
+
+- **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
+- **Connect**: the page asks for Jira's address and a **personal access token** (Jira → Profile → Personal Access
+  Tokens; Jira 8.14 or later). If you use the mcp-atlassian MCP, its `JIRA_URL` and `JIRA_PERSONAL_TOKEN` are the
+  two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
+- **Where things live** (per PC, never in git or the shared config):
+  - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters.
+  - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
+    (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
+    **Disconnect** empties both.
+- **Connection**: *Herdr (fetch)* by default, or *curl*. Herdr's fetch reports any failure to connect the same way,
+  so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
+  **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
+  reaches curl only through the private `-K` file, never on its command line.
+- **Filters**: Assigned to me (the default), Reported by me, Mine updated recently, then your Jira favourite
+  filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
+  filter (Enter). The choice and the List / Board view are remembered per PC.
+- **List** groups by To do / In progress / Done; **Board** has one column per status, in Jira's own order.
+- **Detail**: description (Jira markup shown as text), last 5 comments, links, Open in browser. **Actions**: the
+  status pill lists the moves the workflow allows (a step that needs more fields says so and links to the browser),
+  Assign to me, and a comment box (Send, or Ctrl+Enter).
+- **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
+  from your template, then shows the terminal. Placeholders: `{key} {summary} {url} {type} {status} {priority}
+  {assignee} {description}`; type `\n` for a line break. For example `/init-ticket {key}` hands it to your own skill.
+  Settings previews the message for the selected issue.
+- **Refresh**: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your open issues),
+  and no sooner than 5 minutes after a failure. The refresh button reconnects at once.
+- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
+  `keys.json`.
+- **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
+  `mock-token`) with 30 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
+  `--status 500` and `--token <other>` rehearse failures.
+
 ## Panel modes
 
 The left panel has three modes. Ctrl+Alt+B (or the top-bar toggle) cycles through them:
@@ -209,7 +246,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 - The top bar must contain `dock-core` and can't be hidden (the toggle, Ctrl+Alt+B and config errors live there).
   `dock-spaces`, `dock-agents`, `dock-git`, `dock-quotas` and `dock-pages` can only be placed in the left region.
 - `pages` (optional) holds dock pages: `{ "features": [ { "mod": "dock-overview" } ] }`, features only (no size,
-  never hidden). `dock-overview` can only be placed there. See "Dock pages".
+  never hidden). `dock-overview` and `dock-jira` can only be placed there. See "Dock pages".
 - A feature is `{ "mod": string, "props"?: object, "size"?: px, "drag"?: boolean }`. With no `size`, it gets
   weight 1 and shares the remaining space. With `"drag": true`, dragging the feature moves the window.
 - The left panel starts with `dock-header` (46 px), like the header in Herdr's `main` layout: the Herdr
