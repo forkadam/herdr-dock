@@ -92080,7 +92080,7 @@ var require_elk_bundled = __commonJS({
 });
 
 // src/app/render-helper.js
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -97320,6 +97320,29 @@ function splitSegments(text) {
 }
 var mermaidBlocks = (text) => splitSegments(text).filter((s) => s.kind === "mermaid").map((s) => s.source);
 
+// src/shared/render/cache.js
+var CACHE_MAX_AGE_MS = 14 * 864e5;
+var CACHE_MAX_COUNT = 300;
+var TMP_MAX_AGE_MS = 36e5;
+var SVG = /^[0-9a-f]{8}-[0-9a-f]{8}\.svg$/;
+var TMP = /^[0-9a-f]{8}-[0-9a-f]{8}\.svg\.\d+\.tmp$/;
+function cacheToPrune(files, nowMs, { maxAgeMs = CACHE_MAX_AGE_MS, maxCount = CACHE_MAX_COUNT } = {}) {
+  const out2 = [];
+  const keep = [];
+  for (const f of files ?? []) {
+    if (TMP.test(f.name)) {
+      if (nowMs - f.mtimeMs > TMP_MAX_AGE_MS) out2.push(f.name);
+      continue;
+    }
+    if (!SVG.test(f.name)) continue;
+    if (nowMs - f.mtimeMs >= maxAgeMs) out2.push(f.name);
+    else keep.push(f);
+  }
+  keep.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const f of keep.slice(maxCount)) out2.push(f.name);
+  return out2.sort();
+}
+
 // src/shared/render/transcript.js
 var parse = (line) => {
   try {
@@ -97431,7 +97454,13 @@ function render(source, req, themeId) {
     if (source.length > MAX_SOURCE) throw new Error(`diagram too large (${Math.round(source.length / 1024)} KiB)`);
     const name = `${hashText(source)}-${themeId}.svg`;
     const file = join(req.cacheDir, name);
-    if (!existsSync(file)) {
+    if (existsSync(file)) {
+      try {
+        const now = /* @__PURE__ */ new Date();
+        utimesSync(file, now, now);
+      } catch {
+      }
+    } else {
       const svg = flattenSvg(renderMermaidSVG(source, colors(req.theme)), req.theme.background);
       mkdirSync(req.cacheDir, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
@@ -97492,8 +97521,39 @@ function listMarkdown(cwd, depth = 3, out2 = [], dir = cwd) {
   }
   return out2;
 }
+function prune(cacheDir, options) {
+  let names;
+  try {
+    names = readdirSync(cacheDir);
+  } catch {
+    return 0;
+  }
+  const files = names.map((name) => {
+    try {
+      return { name, mtimeMs: statSync(join(cacheDir, name)).mtimeMs };
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  let n = 0;
+  for (const name of cacheToPrune(files, Date.now(), options)) {
+    try {
+      rmSync(join(cacheDir, name), { force: true });
+      n++;
+    } catch {
+    }
+  }
+  return n;
+}
 function main(req) {
+  const out2 = run(req);
+  if (req?.cacheDir && ["claude", "codex", "file"].includes(req.mode)) prune(req.cacheDir);
+  return out2;
+}
+function run(req) {
   switch (req?.mode) {
+    case "clear":
+      return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
     case "claude":
       return fromLog(readClaude, readText(req.transcript, MAX_LOG).split("\n"), req, { source: "claude", file: req.transcript });
     case "codex": {

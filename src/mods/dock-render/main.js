@@ -56,9 +56,19 @@ export default class Render extends View {
     cx.timer.every(CODEX_POLL_MS, (cx) => { if (this.shown() && this.target?.kind === "codex") this.load(cx); });
   }
 
-  // Commands (keys.json can bind them: "dock-render.diagrams"): answer, diagrams, files, refresh; in Files: next, prev,
-  // open, back.
+  // Commands (keys.json can bind them: "dock-render.diagrams"): answer, diagrams, files, refresh, clear (empty the
+  // diagram cache; what's on screen is drawn again); in Files: next, prev, open, back.
   command(c, cx) {
+    if (c === "clear") {
+      cx.spawn(async (cx) => {
+        const out = await this.helper({ mode: "clear" });
+        console.log(`dock-render: cache cleared (${out.removed ?? 0} diagrams)`);
+        await this.load(cx);
+        if (this.file) await this.openFile(this.file.path);
+        cx.notify();
+      });
+      return;
+    }
     if (c === "answer" || c === "diagrams" || c === "files") this.setView(c, cx);
     else if (c === "refresh") cx.spawn(async (cx) => this.load(cx));
     else if (c === "back") this.file = null;

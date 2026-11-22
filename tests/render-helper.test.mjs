@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -99,4 +99,32 @@ test("bad requests and missing files answer ok:false, never crash", () => {
   assert.equal(run({ mode: "nope" }).ok, false);
   const r = spawnSync(process.execPath, [HELPER, "not json"], { encoding: "utf8" });
   assert.equal(JSON.parse(r.stdout).ok, false);
+});
+
+test("cache: a reused diagram's date is refreshed, old ones are pruned after a read, clear empties it", () => {
+  const x = home();
+  try {
+    const f = join(x.h, "doc.md");
+    writeFileSync(f, "```mermaid\nflowchart LR\n A-->B\n```\n");
+    const first = run({ ...x.base, mode: "file", path: f }).segments[0].svg;
+    const file = join(x.h, first);
+    const old = new Date(Date.now() - 20 * 86400e3);
+    utimesSync(file, old, old); // looks unused for 20 days...
+    run({ ...x.base, mode: "file", path: f }); // ...but it's shown again: kept, date refreshed
+    assert.ok(existsSync(file));
+    assert.ok(Date.now() - statSync(file).mtimeMs < 60e3);
+    // An unrelated diagram unused for 20 days goes on the next read; a non-diagram file stays.
+    const stale = join(x.cacheDir, "0123abcd-3f077949.svg");
+    writeFileSync(stale, "<svg/>");
+    utimesSync(stale, old, old);
+    writeFileSync(join(x.cacheDir, "keep.txt"), "mine");
+    run({ ...x.base, mode: "file", path: f });
+    assert.equal(existsSync(stale), false);
+    assert.ok(existsSync(join(x.cacheDir, "keep.txt")));
+    // clear: every diagram goes.
+    const c = run({ ...x.base, mode: "clear" });
+    assert.equal(c.ok, true);
+    assert.equal(c.removed, 1);
+    assert.deepEqual(readdirSync(x.cacheDir), ["keep.txt"]);
+  } finally { x.done(); }
 });

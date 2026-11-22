@@ -6,15 +6,18 @@
 //   { mode: "codex", cwd, codexHome?, now?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
 //   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file
 //   { mode: "list", cwd }                                           the Markdown files under cwd
+//   { mode: "clear", cacheDir }                                     delete every rendered diagram
+// After each read the cache is tidied: diagrams not shown for 14 days go, and past the 300 most recently used.
 //
 // Each diagram is rendered once: <cacheDir>/<hash of source>-<hash of theme>.svg, shown by the mod as
 // image("<relBase>/<that file>"). A diagram that doesn't render gives { error, source } instead.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { flattenSvg, mix } from "../shared/render/flatten.js";
 import { hashText, splitSegments } from "../shared/render/markdown.js";
+import { cacheToPrune } from "../shared/render/cache.js";
 import { codexCwd, readClaude, readCodex } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
 
@@ -43,7 +46,10 @@ function render(source, req, themeId) {
     if (source.length > MAX_SOURCE) throw new Error(`diagram too large (${Math.round(source.length / 1024)} KiB)`);
     const name = `${hashText(source)}-${themeId}.svg`;
     const file = join(req.cacheDir, name);
-    if (!existsSync(file)) {
+    if (existsSync(file)) {
+      // Shown again: its date says "last used", so the cleanup keeps it.
+      try { const now = new Date(); utimesSync(file, now, now); } catch {}
+    } else {
       const svg = flattenSvg(renderMermaidSVG(source, colors(req.theme)), req.theme.background);
       mkdirSync(req.cacheDir, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
@@ -100,8 +106,29 @@ function listMarkdown(cwd, depth = 3, out = [], dir = cwd) {
   return out;
 }
 
+// The cache's diagrams to delete (cache.js), deleted; how many went.
+function prune(cacheDir, options) {
+  let names;
+  try { names = readdirSync(cacheDir); } catch { return 0; }
+  const files = names.map((name) => { try { return { name, mtimeMs: statSync(join(cacheDir, name)).mtimeMs }; } catch { return null; } }).filter(Boolean);
+  let n = 0;
+  for (const name of cacheToPrune(files, Date.now(), options)) {
+    try { rmSync(join(cacheDir, name), { force: true }); n++; } catch {}
+  }
+  return n;
+}
+
 function main(req) {
+  const out = run(req);
+  // After each read, the cache is tidied (unused for 14 days, past the newest 300): cheap, a folder listing.
+  if (req?.cacheDir && ["claude", "codex", "file"].includes(req.mode)) prune(req.cacheDir);
+  return out;
+}
+
+function run(req) {
   switch (req?.mode) {
+    case "clear":
+      return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
     case "claude":
       return fromLog(readClaude, readText(req.transcript, MAX_LOG).split("\n"), req, { source: "claude", file: req.transcript });
     case "codex": {

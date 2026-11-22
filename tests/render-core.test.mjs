@@ -72,3 +72,32 @@ test("flattenSvg: no CSS variables, color-mix, @import or web fonts; a backgroun
   assert.match(out, /<rect x="0" y="0" width="100" height="50" fill="#101010"\/>/);
   assert.throws(() => flattenSvg("<svg><foreignObject/></svg>", "#000"), /browser/);
 });
+
+// ---- Cache cleanup ----
+import { CACHE_MAX_AGE_MS, CACHE_MAX_COUNT, cacheToPrune } from "../src/shared/render/cache.js";
+
+test("cacheToPrune: diagrams not used for 14 days go, and past the newest 300; other files are left alone", () => {
+  const now = Date.parse("2026-11-22T12:00:00Z");
+  const day = 86400e3;
+  const files = [
+    { name: "aaaaaaaa-11111111.svg", mtimeMs: now - 1 * day },
+    { name: "bbbbbbbb-11111111.svg", mtimeMs: now - 15 * day },
+    { name: "notes.txt", mtimeMs: now - 99 * day },
+    { name: "cccccccc-11111111.svg.123.tmp", mtimeMs: now - 2 * day },
+  ];
+  assert.deepEqual(cacheToPrune(files, now), ["bbbbbbbb-11111111.svg", "cccccccc-11111111.svg.123.tmp"]);
+  assert.equal(CACHE_MAX_AGE_MS, 14 * day);
+  assert.equal(CACHE_MAX_COUNT, 300);
+  // Past the cap: the least recently used go first.
+  const many = Array.from({ length: 5 }, (_, i) => ({ name: `${String(i).padStart(8, "0")}-11111111.svg`, mtimeMs: now - i * 1000 }));
+  assert.deepEqual(cacheToPrune(many, now, { maxCount: 3 }), ["00000003-11111111.svg", "00000004-11111111.svg"]);
+  // Clear everything: maxAge 0.
+  assert.equal(cacheToPrune(many, now, { maxAgeMs: 0 }).length, 5);
+  assert.deepEqual(cacheToPrune([], now), []);
+});
+
+test("cacheToPrune: a temp file left by a crashed write goes after an hour", () => {
+  const now = Date.parse("2026-11-22T12:00:00Z");
+  const tmp = [{ name: "dddddddd-11111111.svg.4242.tmp", mtimeMs: now - 2 * 3600e3 }, { name: "eeeeeeee-11111111.svg.4243.tmp", mtimeMs: now - 60e3 }];
+  assert.deepEqual(cacheToPrune(tmp, now), ["dddddddd-11111111.svg.4242.tmp"]);
+});

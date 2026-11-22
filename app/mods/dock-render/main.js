@@ -153,9 +153,19 @@ var Render = class extends View {
       if (this.shown() && this.target?.kind === "codex") this.load(cx2);
     });
   }
-  // Commands (keys.json can bind them: "dock-render.diagrams"): answer, diagrams, files, refresh; in Files: next, prev,
-  // open, back.
+  // Commands (keys.json can bind them: "dock-render.diagrams"): answer, diagrams, files, refresh, clear (empty the
+  // diagram cache; what's on screen is drawn again); in Files: next, prev, open, back.
   command(c, cx) {
+    if (c === "clear") {
+      cx.spawn(async (cx2) => {
+        const out = await this.helper({ mode: "clear" });
+        console.log(`dock-render: cache cleared (${out.removed ?? 0} diagrams)`);
+        await this.load(cx2);
+        if (this.file) await this.openFile(this.file.path);
+        cx2.notify();
+      });
+      return;
+    }
     if (c === "answer" || c === "diagrams" || c === "files") this.setView(c, cx);
     else if (c === "refresh") cx.spawn(async (cx2) => this.load(cx2));
     else if (c === "back") this.file = null;

@@ -242,7 +242,11 @@ terminal, so you keep Claude Code's own terminal UI:
   (`mods/dock-render/herdr-render.mjs`): nothing to install, on Windows, macOS and Linux. Each is rendered once into
   `<app home>/herdr-dock/render/`, in your theme's colours. Making its SVG drawable by Herdr's renderer (no CSS
   variables, `color-mix()` or web fonts) is ported from [herdr-chat](https://github.com/ChmaraX/herdr-chat) (MIT).
-- **Keys**: `dock-render.answer|diagrams|files|refresh`, and in Files `next|prev|open|back`.
+- **The cache**: rendered diagrams are SVG files in `<app home>/herdr-dock/render/` (`~/.config/herdr-app/herdr-dock/render`
+  by default), one per diagram and theme. It tidies itself after each read: a diagram not shown for 14 days goes,
+  and past the 300 most recently used; showing one again keeps it. `dock-render.clear` empties it (what's on screen
+  is drawn again).
+- **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
 
 ## Panel modes
 
