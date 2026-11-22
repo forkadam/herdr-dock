@@ -2,13 +2,14 @@
 // Codex's (from its newest session log), each under its provider's icon.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, shared, setShared, props, checking, home, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
+import { theme, shared, setShared, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
 import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
+import { scriptPaths, statuslinePlan } from "../../shared/statusline.js";
 import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { quotaGroups, iconBadge, barLevel } from "./view.js";
+import { quotaGroups, iconBadge, barLevel, setupNotice } from "./view.js";
 
 const REFRESH_MS = 30000;
 // No ~/.codex/sessions: look again after this long (a few processes per check on Windows).
@@ -18,6 +19,8 @@ const EMPTY_WATCH_MS = 1000;
 const TOP_KEY = "dock.quotas.top";
 // dock.quotas.top's `at` is refreshed once it is this old (with the 30 s timer: at most ~60 s old).
 const TOP_REFRESH_MS = 55000;
+// With no Claude reading, the status-line self-check runs at most this often (and right after Set up).
+const SETUP_CHECK_MS = 60000;
 const WARN = "#d29922";
 const HIGH = "#f85149";
 
@@ -26,6 +29,7 @@ export default class Quotas extends View {
     this.statusline = null;
     this.codex = null;
     this.icons = {}; // agent key -> { icon, tint } from Herdr's agent table
+    this.setup = { state: null, busy: false, error: null, nextAt: 0 }; // the status-line self-check
     if (checking()) return;
     cx.spawn(async (cx) => {
       try {
@@ -62,6 +66,7 @@ export default class Quotas extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
+          if (!this.statusline) this.checkSetup(cx);
           this.publishTop();
           cx.notify();
         } while (this.again);
@@ -91,6 +96,72 @@ export default class Quotas extends View {
         cx.notify();
       }
     });
+  }
+
+  // No Claude reading: is Claude Code's status line wired to the writer? Reads ~/.claude/settings.json (and the
+  // script its command runs, for a line added by hand); no ~/.claude means Claude Code isn't used here.
+  checkSetup(cx, force = false) {
+    if (this.setup.checking || this.setup.busy || (!force && Date.now() < this.setup.nextAt)) return;
+    this.setup.checking = true;
+    cx.spawn(async (cx) => {
+      try {
+        const root = slashPath(home());
+        const text = await readTextFile(root + "/.claude/settings.json").catch(() => null);
+        let state;
+        if (text == null) {
+          const probe = listDirCommand(window()?.platform, root + "/.claude");
+          const r = await exec(probe.command, probe.args).catch(() => null);
+          state = r && r.code === 0 ? "missing" : "no-claude";
+        } else {
+          const writer = this.writerPath();
+          const first = statuslinePlan(text, writer);
+          state = first.command
+            ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null)))).state
+            : first.state;
+        }
+        this.setup.state = state;
+      } catch (e) {
+        console.log(`dock-quotas: status line check failed: ${e}`);
+      } finally {
+        this.setup.checking = false;
+        this.setup.nextAt = Date.now() + SETUP_CHECK_MS;
+        cx.notify();
+      }
+    });
+  }
+
+  writerPath() { return slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-cache.mjs"; }
+
+  // Set up: runs the setup script shipped with this mod (it backs up settings.json, then writes it).
+  runSetup(cx) {
+    if (this.setup.busy) return;
+    this.setup.busy = true;
+    this.setup.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
+        const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 30000 });
+        if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
+        else console.log(`dock-quotas: ${r.stdout.trim()}`);
+      } catch (e) {
+        this.setup.error = `couldn't run node: ${e}`;
+      } finally {
+        this.setup.busy = false;
+        this.checkSetup(cx, true);
+        cx.notify();
+      }
+    });
+  }
+
+  setupRow(t) {
+    const n = this.statusline ? null : setupNotice(this.setup.state, this.setup);
+    if (!n) return null;
+    return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip)
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? (t.blocked ?? HIGH) : t.muted).child(n.text))
+      .when(n.action === "setup", (el) => el.child(h_flex().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6)
+        .border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer()
+        .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
   }
 
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
@@ -192,11 +263,13 @@ export default class Quotas extends View {
         .child(this.header(t, () => requestFocus(myId)));
     }
     const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
+    const setup = this.setupRow(t);
     let n = 0;
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
       .child(this.header(t, null))
       .child(v_flex().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar()
-      .when(!groups.length, (el) => el.child(div().px(16).py(4).text_size(12).text_color(t.dim)
+      .when(Boolean(setup), (el) => el.child(setup))
+      .when(!groups.length && !setup, (el) => el.child(div().px(16).py(4).text_size(12).text_color(t.dim)
         .tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.")
         .child("no usage recorded yet")))
       .children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));

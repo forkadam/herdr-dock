@@ -68,10 +68,9 @@ Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/for
 - **Needs `gh` logged in and set up for git** while the repo is private (`gh auth status`, then `gh auth setup-git`).
 - **One install per machine.** If a `dock-*` mod or `layouts/herdr-dock.json` already exists, the agent stops and
   asks; a clone install updates with `npm run update`.
-- **Status line.** Add one line to your Claude status-line script, before it prints (here the mods live in the app
-  home, not in `~/.claude`):
-  - Windows (`statusline.ps1`): `try { $raw | & node "$env:USERPROFILE\.config\herdr-app\mods\dock-quotas\herdr-statusline-cache.mjs" 2>$null | Out-Null } catch {}`
-  - macOS / Linux: `printf '%s' "$input" | node ~/.config/herdr-app/mods/dock-quotas/herdr-statusline-cache.mjs >/dev/null 2>&1`
+- **Status line.** Set up for you: the install runs `mods/dock-quotas/herdr-statusline-setup.mjs`, and if it
+  didn't, Quotas says "Claude: status line not set up" with a **Set up** button. See "Where the quota and context
+  numbers come from".
 - **Updates.** The Updates strip in the Dock layout dialog compares the installed `VERSION.json` with the published
   one. **Update** opens a tab running `mods/dock-core/update-app.mjs`: it clones the repo into a temp folder,
   checks every mod, swaps the mods in, rolls back if anything fails, and reports. Your layout, your `keys.json`
@@ -371,16 +370,29 @@ you can place it back there in the same dialog.
 
 No Python is needed anywhere; everything runs on Node.
 
-- **Claude:** your Claude Code status line pipes its JSON to `~/.claude/herdr-statusline-cache.mjs` (installed by
-  `npm run deploy` when `~/.claude` exists), which writes `~/.claude/statusline-cache/claude-statusline.json`: the
-  5-hour/weekly windows and each session's context %. Add this one line to your status-line script, before it prints:
-  - Windows (`statusline.ps1`): `try { $raw | & node "$env:USERPROFILE\.claude\herdr-statusline-cache.mjs" 2>$null | Out-Null } catch {}`
-    (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`). The `try` keeps the status
-    line working on a PC without Node.
-  - macOS / Linux (a shell script): `printf '%s' "$input" | node ~/.claude/herdr-statusline-cache.mjs >/dev/null 2>&1`
-    (with `input=$(cat)` read first).
+- **Claude:** Claude Code hands its 5-hour/weekly limits and each session's context % only to its status-line
+  command, so herdr-dock's writer, `herdr-statusline-cache.mjs` (in `mods/dock-quotas/`), has to be in it. It
+  writes `~/.claude/statusline-cache/claude-statusline.json`. You don't need a status line of your own: `npm run
+  deploy`, the app install and the **Set up** button in Quotas run `herdr-statusline-setup.mjs`, which edits
+  `~/.claude/settings.json` (backup first: `settings.json.bak-herdr-dock`):
+  - **No status line:** adds `"statusLine": {"type": "command", "command": "node \"<app home>/mods/dock-quotas/herdr-statusline-cache.mjs\""}`.
+    It prints nothing, so Claude Code looks the same.
+  - **Your own status line, one command** (a script, say): puts the writer in front,
+    `node "<writer>" --tee | <your command>`. `--tee` passes the input through unchanged, so yours prints the same.
+  - **Already fed** (the command or its script mentions `herdr-statusline-cache`): left alone.
+  - **More than one command** (`&&`, `;`, a pipe): left alone; add this line to your script yourself, before it
+    prints:
+    - Windows (`statusline.ps1`): `try { $raw | & node "$env:USERPROFILE\.config\herdr-app\mods\dock-quotas\herdr-statusline-cache.mjs" 2>$null | Out-Null } catch {}`
+      (with `$raw = [Console]::In.ReadToEnd()` read first, and a UTF-8 `$OutputEncoding`). The `try` keeps the
+      status line working on a PC without Node.
+    - macOS / Linux: `printf '%s' "$input" | node ~/.config/herdr-app/mods/dock-quotas/herdr-statusline-cache.mjs >/dev/null 2>&1`
+      (with `input=$(cat)` read first).
 
-  Without it, the Claude block doesn't show and agent rows show no context figure.
+  Run it by hand with `node <app home>/mods/dock-quotas/herdr-statusline-setup.mjs` (`--check` only reports);
+  `npm run deploy -- --no-statusline` skips it. Until it's in place, Quotas shows the self-check line instead of
+  the Claude block, and agent rows show no context figure. The limits appear only on a Claude subscription, after
+  a session's first reply. (Older installs used `~/.claude/herdr-statusline-cache.mjs`; deploy still keeps it
+  current, so a line pointing there keeps working.)
 - **Codex:** read from Codex's own session logs, `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`: the latest rate limits
   among the most recently written logs of the last 8 days (only their `rate_limits` lines are read, so big logs are
   fine; checked every 30 s, every 5 min while there's no `~/.codex/sessions`). A limit whose reset time has passed

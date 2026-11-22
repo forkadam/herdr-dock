@@ -1,3 +1,4 @@
+import { slashPath } from "../src/shared/path.js";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -154,6 +155,13 @@ test("deploy installs the status-line writer into an existing Claude folder, and
     const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(join(claude, "herdr-statusline-cache.mjs"), "utf8"), readFileSync("scripts/herdr-statusline-cache.mjs", "utf8"));
+    // No status line yet: deploy adds one running the writer installed with dock-quotas (beside the setup script).
+    const writer = join(tmp, "mods/dock-quotas/herdr-statusline-cache.mjs");
+    assert.ok(existsSync(writer) && existsSync(join(tmp, "mods/dock-quotas/herdr-statusline-setup.mjs")));
+    assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).statusLine.command, `node "${slashPath(writer)}"`);
+    assert.match(r.stdout, /status line: Add a status line/);
+    const again = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
+    assert.match(again.stdout, /status line: the Claude status line already feeds herdr-dock/);
     const missing = join(tmpdir(), "dock-claude-missing-" + process.pid);
     const r2 = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: missing });
     assert.equal(r2.status, 0, r2.stderr);

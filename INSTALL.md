@@ -40,14 +40,18 @@ status` must show no errors. If it does, fix the cause or report it. Don't go on
 
 ## 4. The Claude status line
 
-**Ask first.** This feeds the quota and context numbers.
+Deploy (step 3) already did this: Claude Code gives its usage limits only to a status line, so deploy wires
+herdr-dock's writer into `~/.claude/settings.json` (backup: `settings.json.bak-herdr-dock`). Tell the user which
+of deploy's `status line:` messages it printed:
 
-1. Read `~/.claude/settings.json` and find `statusLine.command`. That points at the user's status-line script. If
-   there is none, skip this step and say so.
-2. Open the script. If it already calls `herdr-statusline-cache.mjs`, you're done with this step.
-3. In `README.md`, section "Where the quota and context numbers come from", find the one line for the user's
-   platform (Windows PowerShell, or macOS / Linux shell). Show the user that line and which file you'd add it to.
-4. Only if they agree, add it to the script, before the script prints, after the input is read.
+- **added a status line**: there was none; the new one prints nothing, so Claude Code looks the same.
+- **put the writer in front of your status line**: theirs prints the same as before.
+- **more than one command**: their status line was left alone. Show them the one line for their platform in
+  `README.md`, section "Where the quota and context numbers come from", and add it to their script only if they
+  agree, before it prints, after the input is read.
+- **already feeds herdr-dock**: nothing to do.
+
+If they don't want it, run `node scripts/deploy.mjs --no-statusline` next time and restore the backup.
 
 ## 5. Pipelines: gh and glab
 
@@ -71,8 +75,8 @@ line and the CLIs were set up or skipped, and whether they need to restart Herdr
 
 ## Never
 
-- Never edit files outside the repo, Herdr's app home (`~/.config/herdr-app`, or `$HERDR_APP_HOME`) and the
-  status-line script.
+- Never edit files outside the repo, Herdr's app home (`~/.config/herdr-app`, or `$HERDR_APP_HOME`),
+  `~/.claude/settings.json` (deploy's status line) and the status-line script.
 - Never commit or push.
 - Never put per-PC settings in `config/dock.json`. They go in `<app home>/herdr-dock/local.json`, through the Dock
   layout dialog.

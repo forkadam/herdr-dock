@@ -9,12 +9,14 @@ import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
 import { BINDINGS, mergeKeys, SECTION } from "./keys.mjs";
 import { resolveAppHome } from "./app-home.mjs";
+import { setupStatusline } from "../src/app/statusline-setup.js";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
+const noStatusline = args.includes("--no-statusline");
 const appHome = resolveAppHome(args);
 if (!appHome) {
-  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run]");
+  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run] [--no-statusline]");
   process.exit(1);
 }
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
@@ -116,6 +118,17 @@ const claudeHome = resolve(process.env.DOCK_CLAUDE_HOME || join(homedir(), ".cla
 if (existsSync(claudeHome)) {
   say(`install the status-line writer: ${join(claudeHome, "herdr-statusline-cache.mjs")}`);
   if (!dry) cpSync(join(ROOT, "scripts/herdr-statusline-cache.mjs"), join(claudeHome, "herdr-statusline-cache.mjs"));
+  // Claude Code's statusLine runs the writer installed with dock-quotas (no status line of your own needed).
+  if (noStatusline) console.log("--no-statusline: leaving ~/.claude/settings.json alone");
+  else {
+    const writer = slashPath(join(appHome, "mods/dock-quotas/herdr-statusline-cache.mjs"));
+    try {
+      const r = setupStatusline({ claudeHome, writer, dry });
+      say(`status line: ${r.message}`);
+    } catch (e) {
+      console.error(`status line setup failed (Quotas offers Set up): ${e.message}`);
+    }
+  }
 } else {
   console.log(`no ${claudeHome}: skipping the status-line writer (install Claude Code, then re-run deploy)`);
 }

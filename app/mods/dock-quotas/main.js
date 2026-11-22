@@ -1,7 +1,7 @@
 // src/mods/dock-quotas/main.js
 import { View, div as div2, svg as svg2, image } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { theme, shared, setShared as setShared2, props, checking, home, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
+import { theme, shared, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -147,6 +147,70 @@ function pickNewestUsage(readings) {
   return best;
 }
 
+// src/shared/statusline.js
+var WRITER_MARK = "herdr-statusline-cache";
+var isObj3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function readSettings(text) {
+  if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
+  let settings;
+  try {
+    settings = JSON.parse(String(text).replace(/^﻿/, ""));
+  } catch (e) {
+    return { ok: false, error: `not valid JSON (${e.message})` };
+  }
+  if (!isObj3(settings)) return { ok: false, error: "the root is not an object" };
+  const sl = settings.statusLine;
+  const command = isObj3(sl) && typeof sl.command === "string" && sl.command.trim() ? sl.command : null;
+  return { ok: true, settings, command };
+}
+function isSimpleCommand(command) {
+  let q = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (q) {
+      if (c === q) q = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      q = c;
+      continue;
+    }
+    if ("|&;<>`\n\r".includes(c)) return false;
+    if (c === "$" && command[i + 1] === "(") return false;
+  }
+  return q === null;
+}
+function scriptPaths(command, home2) {
+  const words = String(command).match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  const out = [];
+  for (let w of words) {
+    w = w.replace(/^["']|["']$/g, "");
+    if (w.startsWith("-") || !/[\\/]/.test(w)) continue;
+    w = w.replace(/^~(?=[\\/])/, home2).replace(/^\$HOME(?=[\\/])/, home2).replace(/^\$\{HOME\}(?=[\\/])/, home2).replace(/^%USERPROFILE%(?=[\\/])/i, home2).replace(/^\$env:USERPROFILE(?=[\\/])/i, home2).replace(/\\/g, "/");
+    if (!/^([A-Za-z]:)?\//.test(w)) continue;
+    out.push(w);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+var writerCommand = (writer) => `node "${String(writer).replace(/\\/g, "/")}"`;
+function statuslinePlan(settingsText, writer, scriptTexts = []) {
+  const r = readSettings(settingsText);
+  if (!r.ok) return { state: "invalid", error: r.error };
+  const { settings, command } = r;
+  if (command && (command.includes(WRITER_MARK) || scriptTexts.some((t) => typeof t === "string" && t.includes(WRITER_MARK)))) {
+    return { state: "fed" };
+  }
+  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
+  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
+  if (!command) {
+    const prev = isObj3(settings.statusLine) ? settings.statusLine : {};
+    return { state: "missing", text: write({ ...prev, type: "command", command: writerCommand(writer) }) };
+  }
+  if (!isSimpleCommand(command)) return { state: "complex", command };
+  return { state: "other", command, text: write({ ...settings.statusLine, command: `${writerCommand(writer)} --tee | ${command}` }) };
+}
+
 // src/shared/platform.js
 function listDirCommand(platform, dir) {
   if (platform === "windows") return { command: "cmd", args: ["/c", "dir", "/b", "/ad", dir.replaceAll("/", "\\")] };
@@ -219,6 +283,34 @@ function iconBadge(readings, nowMs) {
   return best ? { text: `${Math.round(best.p)}%`, stale: best.stale } : null;
 }
 var barLevel = (p) => p >= 90 ? "high" : p >= 70 ? "warn" : "ok";
+function setupNotice(state, { busy = false, error = null } = {}) {
+  if (error) return { text: "Claude: set up failed", tip: error, action: "setup" };
+  if (busy) return { text: "Claude: setting up\u2026", tip: "Writing ~/.claude/settings.json", action: null };
+  switch (state) {
+    case "missing":
+      return {
+        text: "Claude: status line not set up",
+        tip: "Claude Code gives its usage limits only to a status line. Set up adds one that prints nothing.",
+        action: "setup"
+      };
+    case "other":
+      return {
+        text: "Claude: status line doesn't feed Quotas",
+        tip: "Set up puts herdr-dock's writer in front of your status line; it prints the same.",
+        action: "setup"
+      };
+    case "complex":
+      return {
+        text: "Claude: add one line to your status line",
+        tip: `Your status line is more than one command, so it's left alone. README: "Where the quota and context numbers come from".`,
+        action: null
+      };
+    case "invalid":
+      return { text: "Claude: ~/.claude/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
+    default:
+      return null;
+  }
+}
 
 // src/mods/dock-quotas/main.js
 var REFRESH_MS = 3e4;
@@ -226,6 +318,7 @@ var CODEX_ABSENT_MS = 3e5;
 var EMPTY_WATCH_MS = 1e3;
 var TOP_KEY = "dock.quotas.top";
 var TOP_REFRESH_MS = 55e3;
+var SETUP_CHECK_MS = 6e4;
 var WARN = "#d29922";
 var HIGH = "#f85149";
 var Quotas = class extends View {
@@ -233,6 +326,7 @@ var Quotas = class extends View {
     this.statusline = null;
     this.codex = null;
     this.icons = {};
+    this.setup = { state: null, busy: false, error: null, nextAt: 0 };
     if (checking()) return;
     cx.spawn(async (cx2) => {
       try {
@@ -278,6 +372,7 @@ var Quotas = class extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
+          if (!this.statusline) this.checkSetup(cx2);
           this.publishTop();
           cx2.notify();
         } while (this.again);
@@ -306,6 +401,64 @@ var Quotas = class extends View {
         cx2.notify();
       }
     });
+  }
+  // No Claude reading: is Claude Code's status line wired to the writer? Reads ~/.claude/settings.json (and the
+  // script its command runs, for a line added by hand); no ~/.claude means Claude Code isn't used here.
+  checkSetup(cx, force = false) {
+    if (this.setup.checking || this.setup.busy || !force && Date.now() < this.setup.nextAt) return;
+    this.setup.checking = true;
+    cx.spawn(async (cx2) => {
+      try {
+        const root = slashPath(home());
+        const text = await readTextFile(root + "/.claude/settings.json").catch(() => null);
+        let state;
+        if (text == null) {
+          const probe = listDirCommand(window()?.platform, root + "/.claude");
+          const r = await exec(probe.command, probe.args).catch(() => null);
+          state = r && r.code === 0 ? "missing" : "no-claude";
+        } else {
+          const writer = this.writerPath();
+          const first = statuslinePlan(text, writer);
+          state = first.command ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null)))).state : first.state;
+        }
+        this.setup.state = state;
+      } catch (e) {
+        console.log(`dock-quotas: status line check failed: ${e}`);
+      } finally {
+        this.setup.checking = false;
+        this.setup.nextAt = Date.now() + SETUP_CHECK_MS;
+        cx2.notify();
+      }
+    });
+  }
+  writerPath() {
+    return slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-cache.mjs";
+  }
+  // Set up: runs the setup script shipped with this mod (it backs up settings.json, then writes it).
+  runSetup(cx) {
+    if (this.setup.busy) return;
+    this.setup.busy = true;
+    this.setup.error = null;
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      try {
+        const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
+        const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 3e4 });
+        if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
+        else console.log(`dock-quotas: ${r.stdout.trim()}`);
+      } catch (e) {
+        this.setup.error = `couldn't run node: ${e}`;
+      } finally {
+        this.setup.busy = false;
+        this.checkSetup(cx2, true);
+        cx2.notify();
+      }
+    });
+  }
+  setupRow(t) {
+    const n = this.statusline ? null : setupNotice(this.setup.state, this.setup);
+    if (!n) return null;
+    return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
   }
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
   // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
@@ -389,8 +542,9 @@ var Quotas = class extends View {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId)));
     }
     const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
+    const setup = this.setupRow(t);
     let n = 0;
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(!groups.length, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 };
 export {

@@ -71,3 +71,16 @@ test("never fails the status line: bad input, a bad session id and an unwritable
   assert.equal(r.status, 0);
   assert.equal(r.stdout + r.stderr, "");
 });
+
+test("--tee writes the input back unchanged (also when it isn't JSON) and still caches", () => {
+  const home = mkdtempSync(join(tmpdir(), "slc-"));
+  const input = JSON.stringify({ session_id: SESSION, context_window: { used_percentage: 5 } });
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const r = spawnSync(process.execPath, [SCRIPT, "--tee"], { input, env, encoding: "utf8" });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, input);
+  assert.equal(cacheOf(home).session_contexts[SESSION].used_percent, 5);
+  const bad = spawnSync(process.execPath, [SCRIPT, "--tee"], { input: "not json", env, encoding: "utf8" });
+  assert.equal(bad.status, 0);
+  assert.equal(bad.stdout, "not json");
+});

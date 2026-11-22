@@ -66,7 +66,6 @@ export async function buildApp(outDir = join(ROOT, "app")) {
 
   put("mods/dock-core/source.json", jsonText({ mode: "app" }));
   put("mods/dock-core/config.json", configText);
-  put("mods/dock-quotas/herdr-statusline-cache.mjs", readFileSync(join(ROOT, "scripts/herdr-statusline-cache.mjs")));
   // The shared default only (no host, no local file); dock-core rebuilds it with this PC's local.json on start.
   put("layouts/herdr-dock.json", jsonText(buildLayout(mergeForHost(parsed.config, ""), {})));
   put("keys.json", jsonText({ [SECTION]: Object.fromEntries(BINDINGS) }));

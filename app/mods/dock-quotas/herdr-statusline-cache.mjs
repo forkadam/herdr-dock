@@ -6,6 +6,8 @@
 // context-window percentage and when it was seen, plus the account's 5-hour/weekly usage windows when Claude
 // Code reports them. No paths, prompts or transcripts. Output: ~/.claude/statusline-cache/claude-statusline.json
 // Never throws and never prints: the status line must keep working whatever happens here.
+// --tee: also writes the input back to stdout unchanged, so it can sit in front of a status line of your own:
+// `node herdr-statusline-cache.mjs --tee | your-status-line` (herdr-statusline-setup.mjs sets that up).
 // `npm run deploy` installs this file as ~/.claude/herdr-statusline-cache.mjs.
 import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -34,9 +36,9 @@ function windowsFrom(limits) {
   return rows;
 }
 
-function main() {
+function main(raw) {
   // Windows PowerShell can prefix piped text with one or more UTF-8 byte-order marks.
-  const text = readFileSync(0, "utf8").slice(0, 1 << 20).replace(/^\uFEFF+/, "");
+  const text = raw.slice(0, 1 << 20).replace(/^\uFEFF+/, "");
   const event = JSON.parse(text);
   if (!isObj(event)) return;
   const session = event.session_id;
@@ -78,8 +80,13 @@ function main() {
   }
 }
 
+let raw = "";
 try {
-  main();
+  raw = readFileSync(0, "utf8");
+  main(raw);
 } catch {
   // Never break the status line.
+}
+if (process.argv.includes("--tee")) {
+  try { process.stdout.write(raw); } catch {}
 }

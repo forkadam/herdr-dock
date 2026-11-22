@@ -55,3 +55,21 @@ export function iconBadge(readings, nowMs) {
 }
 
 export const barLevel = (p) => (p >= 90 ? "high" : p >= 70 ? "warn" : "ok");
+
+// The Claude status-line self-check, shown while there's no Claude reading. state: statuslinePlan's state, or
+// "no-claude" (no ~/.claude) / null (not checked yet). -> { text, tip, action } or null (nothing to say).
+// action: "setup" when the Set up button can fix it.
+export function setupNotice(state, { busy = false, error = null } = {}) {
+  if (error) return { text: "Claude: set up failed", tip: error, action: "setup" };
+  if (busy) return { text: "Claude: setting up…", tip: "Writing ~/.claude/settings.json", action: null };
+  switch (state) {
+    case "missing": return { text: "Claude: status line not set up",
+      tip: "Claude Code gives its usage limits only to a status line. Set up adds one that prints nothing.", action: "setup" };
+    case "other": return { text: "Claude: status line doesn't feed Quotas",
+      tip: "Set up puts herdr-dock's writer in front of your status line; it prints the same.", action: "setup" };
+    case "complex": return { text: "Claude: add one line to your status line",
+      tip: "Your status line is more than one command, so it's left alone. README: \"Where the quota and context numbers come from\".", action: null };
+    case "invalid": return { text: "Claude: ~/.claude/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
+    default: return null;
+  }
+}
