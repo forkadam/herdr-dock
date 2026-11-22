@@ -17,6 +17,10 @@ import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/
 import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
 import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
 import { HERDR_KEY, SAMPLE_KEY, herdrSampleCommand, herdrUsage, parseHerdrProcs, parseSample, sampleCommand } from "../../shared/system.js";
+import {
+  CHECK_EVERY_MS, FETCH_TIMEOUT_MS, NOTIFIED_KEY, OPEN_DIALOG, RESULT_REL, UPDATE_KEY, availableNote, parseUpdateCommand,
+  resultNote, resultToState, shouldNotify, startState, timedOut, updateState,
+} from "../../shared/update.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
@@ -71,6 +75,10 @@ export default class DockCore extends View {
     this.configPath = null;
     this.localPath = null;
     this.layoutPath = null;
+    this.repo = null; // the herdr-dock repo, for the update check
+    this.resultPath = null; // <app home>/herdr-dock/update-result.json
+    this.updateBusy = false; // an update check is running
+    this.consuming = false; // the result file is being read
     this.collector = null;
     this.notifySeq = 0; // with Date.now(), makes this PC's history item ids unique
     this.startedAt = Date.now(); // agents() can be [] just after start, before programs re-report
@@ -119,7 +127,17 @@ export default class DockCore extends View {
     const repo = typeof src.repo === "string" ? slashPath(src.repo) : this.configPath.split("/").slice(0, -2).join("/");
     await this.migrate(repo);
     await this.reload(cx);
-    cx.spawn(async (cx) => this.watch(localDir, cx));
+    this.repo = repo;
+    this.resultPath = `${home}/${RESULT_REL}`;
+    // A result left from an update (deploy restarted dock-core before it was seen), then the 6 h check.
+    await this.consumeResult(cx);
+    cx.spawn(async (cx) => {
+      for (;;) {
+        await this.checkUpdate(cx);
+        await cx.sleep(CHECK_EVERY_MS);
+      }
+    });
+    cx.spawn(async (cx) => this.watch(localDir, cx, () => this.consumeResult(cx)));
     await this.watch(this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/", cx);
   }
 
@@ -162,8 +180,9 @@ export default class DockCore extends View {
     }
   }
 
-  // Reloads whenever something in dir changes (the config's folder and the local file's folder).
-  async watch(dir, cx) {
+  // Reloads whenever something in dir changes (the config's folder and the local file's folder), then runs
+  // after (the local folder also receives the update script's result file).
+  async watch(dir, cx, after = null) {
     for (;;) {
       try {
         const changed = await watchFolder(dir);
@@ -173,7 +192,116 @@ export default class DockCore extends View {
         await cx.sleep(POLL_MS);
       }
       await this.reload(cx);
+      if (after) await after();
     }
+  }
+
+  // One update check: fetch main (30 s), then compare. Publishes UPDATE_KEY and notifies once per new
+  // upstream sha. Never leaves the state on "checking"; never overwrites an update in progress.
+  async checkUpdate(cx) {
+    if (!this.repo || this.updateBusy) return;
+    const prev = shared(UPDATE_KEY) ?? null;
+    if (prev?.status === "updating") return;
+    this.updateBusy = true;
+    setShared(UPDATE_KEY, { ...(prev ?? {}), status: "checking" });
+    cx.notify();
+    let next;
+    try {
+      next = updateState(await this.gitUpdateInfo(), Date.now(), prev);
+    } catch (e) {
+      next = updateState({ fetchOk: false, fetchError: e?.message ?? String(e) }, Date.now(), prev);
+    } finally {
+      this.updateBusy = false;
+    }
+    // update.start or a result arrived while git ran: that state wins.
+    if ((shared(UPDATE_KEY) ?? null)?.status !== "checking") return;
+    setShared(UPDATE_KEY, next);
+    if (shouldNotify(next, shared(NOTIFIED_KEY) ?? null)) {
+      try { notify(availableNote(next)); } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
+      setShared(NOTIFIED_KEY, next.latest);
+    }
+    cx.notify();
+  }
+
+  // What updateState needs, from git in the repo. A failed fetch returns fetchOk false; any other failed git
+  // command throws (shown as a failed check).
+  async gitUpdateInfo() {
+    const git = (args, timeout) => exec("git", args, { cwd: this.repo, ...(timeout ? { timeout } : {}) });
+    let current = null;
+    try {
+      const r = await git(["rev-parse", "--short", "HEAD"]);
+      if (r.code === 0) current = r.stdout.trim();
+    } catch { /* the fetch below reports it */ }
+    let fetch;
+    try {
+      fetch = await git(["-c", "credential.interactive=never", "fetch", "--quiet", "origin", "main"], FETCH_TIMEOUT_MS);
+    } catch (e) {
+      return { fetchOk: false, fetchError: e?.message ?? String(e), current };
+    }
+    if (fetch.code !== 0) return { fetchOk: false, fetchError: fetch.stderr || fetch.stdout, current };
+    const out = async (args) => {
+      const r = await git(args);
+      if (r.code !== 0) throw new Error(`git ${args[0]}: ${(r.stderr || r.stdout || "").trim()}`);
+      return r.stdout;
+    };
+    const [behind, log, status, branch, ahead] = await Promise.all([
+      out(["rev-list", "--count", "HEAD..origin/main"]),
+      out(["log", "-1", "--format=%h%x09%s", "origin/main"]),
+      out(["status", "--porcelain"]),
+      out(["rev-parse", "--abbrev-ref", "HEAD"]),
+      out(["rev-list", "--count", "origin/main..HEAD"]),
+    ]);
+    const line = log.replace(/\r?\n$/, "");
+    const tab = line.indexOf("\t");
+    return {
+      fetchOk: true, current, branch: branch.trim(), behind: Number(behind.trim()) || 0, ahead: Number(ahead.trim()) || 0,
+      latest: (tab < 0 ? line : line.slice(0, tab)).trim() || null, subject: tab < 0 ? null : line.slice(tab + 1),
+      dirty: status.trim() !== "",
+    };
+  }
+
+  // Applies and deletes the update script's result file, if there is one.
+  async consumeResult(cx) {
+    if (!this.resultPath || this.consuming) return;
+    this.consuming = true;
+    try {
+      const text = await readTextFile(this.resultPath).catch(() => null);
+      if (text == null || text.trim() === "") return;
+      let result;
+      try { result = JSON.parse(text); } catch { result = undefined; }
+      const next = resultToState(result, shared(UPDATE_KEY) ?? null, Date.now());
+      // Not readable yet (still being written): the next change in the folder tries again.
+      if (!next) { console.log("dock-core: update-result.json is not a result yet"); return; }
+      // Delete first, so the same result is never applied twice.
+      await exec("node", ["-e", "require('fs').rmSync(process.argv[1], { force: true })", this.resultPath])
+        .catch((e) => console.log(`dock-core: could not delete ${this.resultPath}: ${e?.message ?? e}`));
+      setShared(UPDATE_KEY, next);
+      try { notify(resultNote(result)); } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
+      cx.notify();
+    } catch (e) {
+      console.log(`dock-core: update result failed: ${e?.message ?? e}`);
+    } finally {
+      this.consuming = false;
+    }
+  }
+
+  // Each tick: an update with no result for 10 minutes becomes a failure.
+  updateTick() {
+    const next = timedOut(shared(UPDATE_KEY) ?? null, Date.now());
+    if (!next) return;
+    setShared(UPDATE_KEY, next);
+    try {
+      notify({ title: "herdr-dock update failed", body: next.reason, level: "error", action: OPEN_DIALOG });
+    } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
+  }
+
+  // An update.* command: check now, or the dialog opening the update tab. Returns false when c isn't one.
+  updateCommand(c, cx) {
+    const u = parseUpdateCommand(c);
+    if (!u) return false;
+    if (u.cmd === "check") cx.spawn(async (cx) => this.checkUpdate(cx));
+    else setShared(UPDATE_KEY, startState(shared(UPDATE_KEY) ?? null, Date.now()));
+    return true;
   }
 
   // The git/CI collector runs here, in the one top copy: it publishes dock.git.* for dock-git and
@@ -197,6 +325,7 @@ export default class DockCore extends View {
       for (;;) {
         this.collector?.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
         try { this.resolveNotify(); } catch (e) { console.log(`dock-core: notify resolve failed: ${e?.message ?? e}`); }
+        try { this.updateTick(); } catch (e) { console.log(`dock-core: update tick failed: ${e?.message ?? e}`); }
         await cx.sleep(TICK_MS);
       }
     });
@@ -407,6 +536,7 @@ export default class DockCore extends View {
   command(c, cx) {
     if (this.gitCommand(c)) return;
     if (this.notifyCommand(c)) return;
+    if (this.updateCommand(c, cx)) return;
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));
       return;
