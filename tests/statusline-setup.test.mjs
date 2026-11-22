@@ -111,7 +111,8 @@ test("the bundled setup script runs from the CLI with --check", () => {
 
 test("setupNotice: what Quotas says while there's no Claude reading", () => {
   assert.equal(setupNotice(null), null);
-  assert.equal(setupNotice("fed"), null);
+  assert.match(setupNotice("fed").text, /waiting for Claude Code's next reply/);
+  assert.equal(setupNotice("fed").action, null);
   assert.equal(setupNotice("no-claude"), null);
   assert.equal(setupNotice("missing").action, "setup");
   assert.equal(setupNotice("other").action, "setup");

@@ -305,6 +305,12 @@ function setupNotice(state, { busy = false, error = null } = {}) {
         tip: `Your status line is more than one command, so it's left alone. README: "Where the quota and context numbers come from".`,
         action: null
       };
+    case "fed":
+      return {
+        text: "Claude: waiting for Claude Code's next reply",
+        tip: "The status line is set up. The limits arrive with the next reply in any Claude Code session (only on a Claude subscription). Nothing after a reply? Restart Claude Code.",
+        action: null
+      };
     case "invalid":
       return { text: "Claude: ~/.claude/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
     default:
@@ -445,7 +451,10 @@ var Quotas = class extends View {
         const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
         const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 3e4 });
         if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
-        else console.log(`dock-quotas: ${r.stdout.trim()}`);
+        else {
+          this.setup.state = "fed";
+          console.log(`dock-quotas: ${r.stdout.trim()}`);
+        }
       } catch (e) {
         this.setup.error = `couldn't run node: ${e}`;
       } finally {
@@ -544,7 +553,7 @@ var Quotas = class extends View {
     const groups = quotaGroups({ claude: this.statusline, codex: this.codex }, Date.now());
     const setup = this.setupRow(t);
     let n = 0;
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 };
 export {

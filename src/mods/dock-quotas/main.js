@@ -143,7 +143,7 @@ export default class Quotas extends View {
         const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
         const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 30000 });
         if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
-        else console.log(`dock-quotas: ${r.stdout.trim()}`);
+        else { this.setup.state = "fed"; console.log(`dock-quotas: ${r.stdout.trim()}`); } // "waiting" at once
       } catch (e) {
         this.setup.error = `couldn't run node: ${e}`;
       } finally {
@@ -270,7 +270,7 @@ export default class Quotas extends View {
       .child(v_flex().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar()
       .when(Boolean(setup), (el) => el.child(setup))
       .when(!groups.length && !setup, (el) => el.child(div().px(16).py(4).text_size(12).text_color(t.dim)
-        .tooltip("Claude: start Claude Code with the herdr-dock status line. Codex: use it once.")
+        .tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.")
         .child("no usage recorded yet")))
       .children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
