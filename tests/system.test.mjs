@@ -78,8 +78,11 @@ test("herdrUsage: clamps to 0-100", () => {
   assert.equal(herdrUsage({ cpuMs: 500 }, { cpuMs: 100, mem: 1 }, 10000, 4, 1).cpu, 0);
   assert.equal(herdrUsage({ cpuMs: 0 }, { cpuMs: 1e9, mem: 1 }, 10000, 4, 1).cpu, 100);
 });
-test("herdrUsage: 1000 ms over 10 s on 4 cores is 3", () => {
-  assert.deepEqual(herdrUsage({ cpuMs: 0 }, { cpuMs: 1000, mem: 5 }, 10000, 4, 2), { cpu: 3, mem: 5, at: 2 });
+test("herdrUsage: 1000 ms over 10 s on 4 cores is 2.5", () => {
+  assert.deepEqual(herdrUsage({ cpuMs: 0 }, { cpuMs: 1000, mem: 5 }, 10000, 4, 2), { cpu: 2.5, mem: 5, at: 2 });
+});
+test("herdrUsage: a small share keeps one decimal", () => {
+  assert.equal(herdrUsage({ cpuMs: 0 }, { cpuMs: 300, mem: 1 }, 10000, 32, 1).cpu, 0.1);
 });
 test("herdrSampleCommand runs on this machine and parses (skips without herdr)", (t) => {
   const platform = { win32: "windows", darwin: "macos" }[process.platform] ?? "linux";

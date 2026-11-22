@@ -113,5 +113,5 @@ export function parseHerdrProcs(platform, stdout) {
 // Herdr's CPU % of the whole machine between two parsed samples (null without a previous one).
 export function herdrUsage(prev, cur, elapsedMs, cores, now) {
   if (!prev || !(elapsedMs > 0) || !(cores > 0)) return { cpu: null, mem: cur.mem, at: now };
-  return { cpu: pct(100 * (cur.cpuMs - prev.cpuMs) / (elapsedMs * cores)), mem: cur.mem, at: now };
+  return { cpu: Math.round(Math.min(100, Math.max(0, 100 * (cur.cpuMs - prev.cpuMs) / (elapsedMs * cores))) * 10) / 10, mem: cur.mem, at: now };
 }
