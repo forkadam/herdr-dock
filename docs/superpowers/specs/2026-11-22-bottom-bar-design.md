@@ -91,7 +91,7 @@ clears it. The bar is the way into that history.
 - History storage: shared key `dock.notify.history`, newest first, capped at 200 items (the oldest cleared items
   go first, then the oldest overall). Item:
   `{ id, at, title, body, level, icon, action, read, needs, resolved }`.
-  - `needs`: what it waits on, or null. `{ kind: "agent", pane }` for Herdr's agent-needs-you toasts, matched by
+  - `needs`: what it waits on, or null. `{ kind: "agent", terminal }` for Herdr's agent-needs-you toasts, matched by
     their action (it names the agent's pane or terminal). `{ kind: "pipeline", worktree }` for pipeline failure
     alerts (the collector's alert action already carries `worktree`). Other items have `needs: null`.
   - `resolved`: set true once its cause is fixed. The agent's status is no longer `blocked`, or the worktree's

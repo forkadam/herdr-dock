@@ -44,7 +44,7 @@
   - `HISTORY_KEY = "dock.notify.history"`, `CAP = 200`
   - `historyOf(raw) -> Item[]` (junk → `[]`)
   - `Item = { id: string, at: number, title: string, body: string|null, level: string|null, icon: string|null, action: {name, args?}|null, read: boolean, needs: Needs|null, resolved: boolean }`
-  - `Needs = { kind: "pipeline", worktree: string } | { kind: "agent", pane: string }`
+  - `Needs = { kind: "pipeline", worktree: string } | { kind: "agent", terminal: string }`
   - `needsOf(n) -> Needs|null` from a notification's props `{ title, body, level, action }`
   - `addItem(list, n, now, id) -> Item[]` (prepends, applies the cap)
   - `clearItem(list, id) -> Item[]`, `clearAll() -> []`, `markAllRead(list) -> Item[]`
@@ -65,13 +65,13 @@ test("historyOf: junk becomes []", () => {
 test("needsOf: a pipeline alert names its worktree; an agent toast its pane; others null", () => {
   const name = `dock-core.${gitCommandName("git.show", { worktree: "|d:/r/api" })}`;
   assert.deepEqual(needsOf({ title: "Pipeline failed", level: "error", action: { name } }), { kind: "pipeline", worktree: "|d:/r/api" });
-  assert.deepEqual(needsOf(AGENT_TOAST /* the props observed in Step 1 */), { kind: "agent", pane: AGENT_TOAST_PANE });
+  assert.deepEqual(needsOf(AGENT_TOAST /* the props observed in Step 1 */), { kind: "agent", terminal: AGENT_TOAST_TERMINAL });
   assert.equal(needsOf({ title: "Saved", level: "info" }), null);
 });
 test("addItem: newest first, unread, unresolved; cap 200 drops cleared-or-resolved oldest first", () => {
   let l = [];
   for (let i = 0; i < 200; i++) l = addItem(l, { title: `n${i}` }, i, `id${i}`);
-  l = resolveItems(l.map((x) => (x.id === "id150" ? { ...x, needs: { kind: "agent", pane: "gone" } } : x)), { agents: [], gitState: null });
+  l = resolveItems(l.map((x) => (x.id === "id150" ? { ...x, needs: { kind: "agent", terminal: "gone" } } : x)), { agents: [], gitState: null });
   l = addItem(l, { title: "new" }, 999, "idnew");
   assert.equal(l.length, 200); assert.equal(l[0].id, "idnew"); assert.equal(l[0].read, false);
   assert.equal(l.some((x) => x.id === "id150"), false); // the resolved one went first
