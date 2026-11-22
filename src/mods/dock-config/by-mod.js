@@ -6,7 +6,7 @@ import { applyEdit } from "../../shared/edit.js";
 import { modRows } from "../../shared/inventory.js";
 import { segmented, tag, toggle } from "./ui.js";
 
-const SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"]];
+const SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"], ["pages", "Page"]];
 const REASONS = {
   self: "this dialog",
   "hidden-name": "hidden folder",

@@ -23,8 +23,14 @@ function sizeInput(dlg, t, region) {
 function regionControls(dlg, t, region) {
   const r = dlg.session.draft.regions[region];
   const on = dlg.editable();
+  const title = div().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase());
+  // Pages fill the work area one at a time (the Pages list in the left panel opens them): no size, never hidden.
+  if (region === "pages") {
+    return h_flex().h(32).gap(10).items_center().child(title)
+      .child(label(t, "shown one at a time in place of the terminal, from the Pages list (Ctrl+Alt+P cycles)"));
+  }
   const row = h_flex().h(32).gap(10).items_center()
-    .child(div().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase()))
+    .child(title)
     .child(label(t, "size")).child(sizeInput(dlg, t, region));
   if (region === "right" || region === "bottom") {
     // The right panel is shown or hidden per PC (the top-bar button, Ctrl+Alt+N); this switch is the default.
@@ -88,7 +94,7 @@ function addMod(dlg, t, region) {
 
 export function byRegion(dlg, t) {
   const regions = dlg.session.draft.regions;
-  return ["top", "left", "right", "bottom"].map((region) => {
+  return ["top", "left", "right", "bottom", "pages"].map((region) => {
     const list = regions[region].features;
     return v_flex().gap(2).py(8).border_b(1).border_color(t.border)
       .child(regionControls(dlg, t, region))

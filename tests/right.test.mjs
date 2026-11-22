@@ -74,10 +74,10 @@ test("rightFromConfig: a changed config default applies once, a first read keeps
 });
 
 test("rightStateFromShared reads this PC's state for a layout rewrite", () => {
-  assert.deepEqual(rightStateFromShared({ "dock.right.shown": false, "dock.right.active": "changes" }),
-    { rightShown: false, active: "changes" });
-  assert.deepEqual(rightStateFromShared(null), { rightShown: undefined, active: undefined });
-  assert.deepEqual(rightStateFromShared({ "dock.right.shown": "yes", "dock.right.active": 3 }), { rightShown: undefined, active: undefined });
+  assert.deepEqual(rightStateFromShared({ "dock.right.shown": false, "dock.right.active": "changes", "dock.page.active": "dock-overview" }),
+    { rightShown: false, active: "changes", page: "dock-overview" });
+  assert.deepEqual(rightStateFromShared(null), { rightShown: undefined, active: undefined, page: undefined });
+  assert.deepEqual(rightStateFromShared({ "dock.right.shown": "yes", "dock.right.active": 3, "dock.page.active": 1 }), { rightShown: undefined, active: undefined, page: undefined });
 });
 
 // dock-core decides the right panel state from the NEW config before building the layout file,

@@ -2,6 +2,7 @@
   "layout:herdr-dock": {
     "ctrl-alt-b": "dock-core.cycle",
     "ctrl-alt-,": "dock-core.config",
-    "ctrl-alt-n": "dock-core.right"
+    "ctrl-alt-n": "dock-core.right",
+    "ctrl-alt-p": "dock-core.page"
   }
 }

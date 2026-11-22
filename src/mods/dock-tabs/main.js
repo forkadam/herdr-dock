@@ -5,7 +5,8 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, settings } from "herdr";
-import { rightShownOf } from "../../shared/panel.js";
+import { PAGE_KEY, pageActiveOf, rightShownOf } from "../../shared/panel.js";
+import { showTerminal } from "../_page.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -74,6 +75,9 @@ export default class Tabs extends View {
       if (active >= 0) this.scroll.scroll_to_item(active);
     }
     const stop = (_e, cx) => cx.stop_propagation();
+    // While a dock page fills the work area no tab is in front: tabs are drawn dimmed, none raised; a click
+    // brings the terminal back.
+    const onPage = pageActiveOf(shared(PAGE_KEY), shared("dock.config.applied")?.pages?.features) !== null;
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
@@ -83,13 +87,14 @@ export default class Tabs extends View {
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         // A rename or status dot on this or an earlier tab can push the active one out.
         .when(i <= active, el => el.on_size_change((_size, cx) => { this.scroll.scroll_to_item(active); cx.notify(); }))
-        .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
+        .border(1).border_color(c.active && !onPage ? t.border : t.chrome).bg(c.active && !onPage ? t.raised : t.chrome)
+        .text_color(c.active && !onPage ? t.foreground : t.muted).when(onPage, el => el.opacity(0.6))
         .hover(s => s.bg(t.hover))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
         .on_mouse_up("left", () => {
           const from = this.pressed; this.pressed = null;
           if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex(x => x.id === c.id) + 1 });
-          else run("tab.select", { id: c.id });
+          else { showTerminal(); run("tab.select", { id: c.id }); }
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))

@@ -5,7 +5,7 @@ import { parseConfig } from "../src/shared/config.js";
 import { allowedRegions, canTurnOff, draftFromConfig, regionOf, applyEdit, sameDraft } from "../src/shared/edit.js";
 
 const fixture = () => JSON.parse(readFileSync(new URL("./fixtures/dock.json", import.meta.url), "utf8"));
-const REGIONS = ["top", "left", "right", "bottom"];
+const REGIONS = ["top", "left", "right", "bottom", "pages"];
 const names = (d, r) => d.regions[r].features.map((f) => f.mod);
 const base = () => draftFromConfig(fixture(), "any");
 
@@ -18,13 +18,13 @@ test("allowedRegions and canTurnOff", () => {
 });
 
 test("allowedRegions agrees with parseConfig", () => {
-  const mods = ["dock-core", "dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "files", "tabs"];
+  const mods = ["dock-core", "dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages", "dock-overview", "files", "tabs"];
   for (const mod of mods) {
     for (const region of REGIONS) {
       const c = fixture();
       // dock-core is moved (parseConfig tolerates a duplicate, the UI never makes one).
       if (mod === "dock-core") c.regions.top.features.shift();
-      c.regions[region].features.push({ mod });
+      (c.regions[region] ??= { features: [] }).features.push({ mod });
       assert.equal(parseConfig(JSON.stringify(c)).ok, allowedRegions(mod).includes(region), `${mod} in ${region}`);
     }
   }

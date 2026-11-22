@@ -1,5 +1,5 @@
 // Left-panel mode helpers (pure; no Node built-ins).
-import { leftFeatureIds, rightActiveOf } from "./layout.js";
+import { MAIN_ID, WORK_STACK, leftFeatureIds, pageActiveOf, pageChildOf, rightActiveOf } from "./layout.js";
 
 const ORDER = ["expanded", "icons", "hidden"];
 const LEFT = "dock-left";
@@ -210,9 +210,11 @@ export function rightFromConfig(lastConfigHidden, sharedShown, configHidden) {
 export function rightStateFromShared(shared) {
   const shown = shared?.["dock.right.shown"];
   const active = shared?.["dock.right.active"];
+  const page = shared?.[PAGE_KEY];
   return {
     rightShown: typeof shown === "boolean" ? shown : undefined,
     active: typeof active === "string" ? active : undefined,
+    page: typeof page === "string" ? page : undefined,
   };
 }
 
@@ -245,3 +247,43 @@ export function rightConfigUpdate({ prev, merged, saved }) {
     state: { rightShown: rightShownOf(shown, merged.regions), active: typeof active === "string" ? active : undefined },
   };
 }
+
+// ---- Dock pages: one page at a time in place of the terminal ----
+
+// This PC's page shown (a page mod's id), or null for the terminal. Never in the config.
+export const PAGE_KEY = "dock.page.active";
+export { pageActiveOf };
+
+// The work stack as the live tree has it: { active, children } (null when there is no stack).
+export function liveWork(tree) {
+  const stack = findNode(tree, WORK_STACK);
+  if (!stack) return null;
+  return { active: stack.active ?? null, children: (stack.children ?? []).map((c) => c?.id).filter((id) => typeof id === "string") };
+}
+
+// The layout command that shows this PC's page (or the terminal), or [] when the live tree already does or
+// doesn't have that child yet (a page just placed: Herdr hasn't loaded the new layout file).
+export function planPage({ active, features, live }) {
+  if (!live || !features?.length) return [];
+  const child = pageChildOf(active, features);
+  if (!live.children.includes(child) || live.active === child) return [];
+  return [{ command: "layout.select", args: { stack: WORK_STACK, child } }];
+}
+
+// Ctrl+Alt+P: the terminal, then each page in order, then the terminal again.
+export function nextPage(active, features) {
+  const list = (features ?? []).map((f) => f.mod);
+  if (!list.length) return null;
+  const cur = pageActiveOf(active, features);
+  const i = cur === null ? -1 : list.indexOf(cur);
+  return i + 1 < list.length ? list[i + 1] : null;
+}
+
+// A Pages-list click: another page shows it; the page already shown goes back to the terminal.
+export const pageClick = (active, mod) => (active === mod ? null : mod);
+
+// Whether a focus change (another space or tab, from a click, a key or a new tab) should bring the terminal
+// back. `prev` / `now` are "<space>|<tab>" keys; null `prev` is the first look (no change yet).
+export const focusLeavesPage = (prev, now) => prev !== null && prev !== now;
+
+export { MAIN_ID };

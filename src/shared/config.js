@@ -1,10 +1,13 @@
 // Config parsing and per-host merge (pure; no Node built-ins).
 import { buildLayout } from "./layout.js";
 
-export const REGION_NAMES = ["top", "left", "right", "bottom"];
+// "pages": mods shown one at a time in place of the terminal (dock pages), listed by dock-pages in the left panel.
+export const REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 // Core features that draw the left panel modes (icon rail, collapsed header).
-export const LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas"];
+export const LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
+// Pages that only make sense filling the work area.
+export const PAGE_ONLY = ["dock-overview"];
 const NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 
 export const DEFAULT_CONFIG = {
@@ -18,6 +21,7 @@ export const DEFAULT_CONFIG = {
     },
     right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "dock-notifications" }, { mod: "dock-files" }, { mod: "dock-changes" }] },
     bottom: { size: 28, features: [{ mod: "dock-where" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 36 }] },
+    pages: { features: [] },
   },
 };
 
@@ -29,6 +33,8 @@ function checkRegions(regions, where) {
     const at = `${where}.${name}`;
     if (!REGION_NAMES.includes(name)) return `${at}: unknown region`;
     if (!isObj(r)) return `${at}: must be an object`;
+    if (name === "pages" && "size" in r) return `${at}.size: a page fills the work area, it has no size`;
+    if (name === "pages" && r.hidden === true) return `${at}.hidden: pages can't be hidden; remove them instead`;
     if ("size" in r && !(Number.isInteger(r.size) && r.size > 0)) return `${at}.size: must be a positive integer`;
     if ("hidden" in r && typeof r.hidden !== "boolean") return `${at}.hidden: must be a boolean`;
     if ("mode" in r) {
@@ -44,9 +50,11 @@ function checkRegions(regions, where) {
         if (!isObj(f)) return `${fa}: must be an object`;
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
+        if (name === "pages" && "size" in f) return `${fa}.size: a page fills the work area, it has no size`;
         if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
         if ("drag" in f && typeof f.drag !== "boolean") return `${fa}.drag: must be true or false`;
         if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
+        if (name !== "pages" && PAGE_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.pages`;
       }
       if (name === "top" && !r.features.some((f) => f.mod === "dock-core")) return `${at}.features: must include dock-core: ${NEEDS_CORE}`;
     }

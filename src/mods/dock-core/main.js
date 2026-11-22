@@ -1,15 +1,15 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  agents, appHome, checking, exec, layout, nextCommand, notify, openOverlay, panes, playSound, props, readTextFile, run,
+  agents, appHome, checking, exec, focused, layout, nextCommand, notify, openOverlay, panes, playSound, props, readTextFile, run,
   setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
 import { createCollector } from "../../shared/collector.js";
 import { LOCAL_REL, migrateLocal, planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
-  liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightConfigUpdate, rightShownOf, sizesSnapshot,
-  sizeChanges,
+  PAGE_KEY, focusLeavesPage, liveRight, liveSizes, liveWork, modeFromConfig, nextMode, nextPage, planPage, planPanel, planRight,
+  planSync, rightConfigUpdate, rightShownOf, sizesSnapshot, sizeChanges,
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
@@ -546,7 +546,7 @@ export default class DockCore extends View {
         saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) },
       });
       for (const [key, value] of Object.entries(u.set)) setShared(key, value);
-      plan = planApply(configText, this.host, current, this.merged, u.state, localText);
+      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? undefined }, localText);
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
@@ -629,6 +629,12 @@ export default class DockCore extends View {
       setShared(RIGHT_KEY, !this.rightShown());
       return;
     }
+    // Ctrl+Alt+P: the terminal, then each page, then the terminal again. "terminals": back to the terminal.
+    if (c === "page" || c === "terminals") {
+      const next = c === "page" ? nextPage(shared(PAGE_KEY), this.merged?.regions.pages?.features) : null;
+      if ((shared(PAGE_KEY) ?? null) !== next) setShared(PAGE_KEY, next);
+      return;
+    }
     if (c === "config") {
       run("mod.open", { name: "dock-config" });
       return;
@@ -670,6 +676,30 @@ export default class DockCore extends View {
     });
   }
 
+  // Called from render: show this PC's page (or the terminal) in the work stack. Another space or tab
+  // getting focus (a click, a key, a new tab) while a page shows brings the terminal back.
+  syncPage(cx) {
+    if (!this.merged) return;
+    const features = this.merged.regions.pages?.features ?? [];
+    if (!features.length) return;
+    let where = null;
+    try { const f = focused(); where = f ? `${f.space}|${f.tab}` : null; } catch { where = null; }
+    if (where !== null) {
+      const leave = focusLeavesPage(this.focusKey ?? null, where);
+      this.focusKey = where;
+      if (leave && (shared(PAGE_KEY) ?? null) !== null) setShared(PAGE_KEY, null);
+    }
+    let live;
+    try { live = liveWork(layout()); } catch (e) { console.log(`dock-core: layout() failed: ${e}`); return; }
+    const actions = planPage({ active: shared(PAGE_KEY), features, live });
+    if (!actions.length) return;
+    cx.spawn(async (_cx) => {
+      for (const a of actions) {
+        try { run(a.command, a.args); } catch (e) { console.log(`dock-core: ${a.command} failed: ${e}`); }
+      }
+    });
+  }
+
   apply(key, mode, focus, clearFocus) {
     // A newer change was planned before this task ran: its own task applies it.
     if (!this.merged || this.applied !== key) return;
@@ -690,6 +720,7 @@ export default class DockCore extends View {
     if (!isTop()) return div();
     this.sync(cx);
     this.syncRight(cx);
+    this.syncPage(cx);
     const t = theme();
     const mode = this.mode();
     const err = shared(ERROR_KEY);

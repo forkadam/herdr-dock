@@ -1,7 +1,7 @@
 // src/mods/dock-spaces/main.js
 import { View, div as div2, svg as svg2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared as setShared2, watchFolder, window, layout, props } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared as shared2, setShared as setShared3, watchFolder, window, layout, props } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -27,6 +27,17 @@ function iconRail(t, iconPath, title, onClick) {
 function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
+}
+
+// src/mods/_page.js
+import { setShared as setShared2, shared } from "herdr";
+
+// src/shared/panel.js
+var PAGE_KEY = "dock.page.active";
+
+// src/mods/_page.js
+function showTerminal() {
+  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
 // src/mods/dock-spaces/main.js
@@ -407,7 +418,7 @@ var Spaces = class extends View {
   row({ w, i, g, tree }, t) {
     const on = w.active;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex((s) => s.id === this.pressed);
-    const colors = shared("space.colors") ?? {};
+    const colors = shared2("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
     return v_flex2().relative().id(`space-${w.id}`).px(8).h(rowHeight({ tree })).flex_none().justify_center().rounded(8).when(on, (el) => el.bg(t.selected)).when(!on, (el) => el.hover((s) => s.bg(t.hover))).when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5)).when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
@@ -430,14 +441,20 @@ var Spaces = class extends View {
       if (from !== null && over === w.id && from !== w.id) {
         const index = spaces().findIndex((s) => s.id === w.id);
         if (index !== -1) run("space.move", { id: from, index: index + 1 });
-      } else if (from === w.id) run("space.select", { id: w.id });
+      } else if (from === w.id) {
+        showTerminal();
+        run("space.select", { id: w.id });
+      }
       cx.notify();
     }).on_mouse_down("right", () => this.menu(w)).child(
       h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg2("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div2().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div2().flex_1())
     );
   }
   compact({ w, i }, t) {
-    return railCell(h_flex().id(`space-${w.id}`).relative().w(RAIL_CELL).h(26).rounded(6).justify_center().items_center().when(w.active, (el) => el.bg(t.selected)).when(!w.active, (el) => el.hover((s) => s.bg(t.hover))).on_click(() => run("space.select", { id: w.id })).child(div2().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))).child(div2().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
+    return railCell(h_flex().id(`space-${w.id}`).relative().w(RAIL_CELL).h(26).rounded(6).justify_center().items_center().when(w.active, (el) => el.bg(t.selected)).when(!w.active, (el) => el.hover((s) => s.bg(t.hover))).on_click(() => {
+      showTerminal();
+      run("space.select", { id: w.id });
+    }).child(div2().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))).child(div2().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
   // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus).
   header(t, collapsed, onTitle) {
@@ -449,17 +466,17 @@ var Spaces = class extends View {
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const ids = new Set(sp.map((p) => p.id));
-    const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
-    let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
+    const kept = Object.fromEntries(Object.entries(shared2("space.colors") ?? {}).filter(([id]) => ids.has(id)));
+    let changed = Object.keys(kept).length !== Object.keys(shared2("space.colors") ?? {}).length;
     for (const p of sp) {
       if (kept[p.id] || p.name === "~") continue;
       const uses = (c) => Object.values(kept).filter((v) => v === c).length;
       kept[p.id] = palette.reduce((best, c) => uses(c) < uses(best) ? c : best);
       changed = true;
     }
-    if (changed) setShared2("space.colors", kept);
+    if (changed) setShared3("space.colors", kept);
     const myId = props()?.dockFeature ?? "dock-spaces";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
     if (face !== "full") {
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));

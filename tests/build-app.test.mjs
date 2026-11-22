@@ -68,7 +68,7 @@ test("buildApp: writes every app/ file of the Global Constraints", () => {
   for (const p of HAND) assert.ok(!existsSync(join(one, p)), `${p} is hand-written, not built`);
 
   assert.deepEqual(json(one, "keys.json"), { [SECTION]: Object.fromEntries(BINDINGS) });
-  assert.equal(Object.keys(json(one, "keys.json")[SECTION]).length, 3);
+  assert.equal(Object.keys(json(one, "keys.json")[SECTION]).length, 4);
   assert.deepEqual(json(one, "mods/dock-core/source.json"), { mode: "app" });
   assert.equal(read(one, "mods/dock-core/config.json").toString("utf8"),
     read(ROOT, "config/dock.json").toString("utf8").replace(/\r\n/g, "\n"));

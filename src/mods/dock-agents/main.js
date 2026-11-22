@@ -11,6 +11,7 @@ import { agents, terminals, panes, focused, spaces, run, theme, shared, setShare
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
+import { showTerminal } from "../_page.js";
 
 // herdr-dock: per-agent context, refreshed this often and when the Claude agents listed change.
 const CONTEXT_MS = 15000;
@@ -277,7 +278,7 @@ export default class Agents extends View {
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
+      .on_click(() => (this.listed.has(k.address) ? (showTerminal(), run("pane.focus", { terminal: k.address })) : this.peek(k.address)))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
@@ -428,7 +429,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .hover((s) => s.bg(t.hover))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_click(() => { showTerminal(); run("pane.focus", { pane: a.pane }); })
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -472,7 +473,7 @@ export default class Agents extends View {
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
-        .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_click(() => { showTerminal(); run("pane.focus", { pane: a.pane }); })
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();

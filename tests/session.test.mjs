@@ -149,7 +149,7 @@ test("invalid file shows the applied regions when shared", async () => {
   for (const bad of [{ file: "{ nope" }, { local: "{ nope" }]) {
     const { io } = fakeIo({ ...bad, shared: { ...SHARED, "dock.config.applied": applied } });
     const s = await loadSession(io);
-    assert.deepEqual(s.draft, { regions: applied });
+    assert.deepEqual(s.draft, { regions: { pages: { features: [], hidden: false }, ...applied } });
   }
 });
 

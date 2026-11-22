@@ -17,9 +17,10 @@ import {
 } from "herdr";
 
 // src/shared/config.js
-var REGION_NAMES = ["top", "left", "right", "bottom"];
+var REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
 var LEFT_MODES = ["expanded", "icons", "hidden"];
-var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas"];
+var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
+var PAGE_ONLY = ["dock-overview"];
 var NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 var DEFAULT_CONFIG = {
   v: 1,
@@ -31,7 +32,8 @@ var DEFAULT_CONFIG = {
       features: [{ mod: "dock-header", size: 46, drag: true }, { mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-git" }, { mod: "dock-quotas", size: 150 }, { mod: "dock-footer", size: 40 }]
     },
     right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "dock-notifications" }, { mod: "dock-files" }, { mod: "dock-changes" }] },
-    bottom: { size: 28, features: [{ mod: "dock-where" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 36 }] }
+    bottom: { size: 28, features: [{ mod: "dock-where" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 36 }] },
+    pages: { features: [] }
   }
 };
 var isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -41,6 +43,8 @@ function checkRegions(regions, where) {
     const at = `${where}.${name}`;
     if (!REGION_NAMES.includes(name)) return `${at}: unknown region`;
     if (!isObj(r)) return `${at}: must be an object`;
+    if (name === "pages" && "size" in r) return `${at}.size: a page fills the work area, it has no size`;
+    if (name === "pages" && r.hidden === true) return `${at}.hidden: pages can't be hidden; remove them instead`;
     if ("size" in r && !(Number.isInteger(r.size) && r.size > 0)) return `${at}.size: must be a positive integer`;
     if ("hidden" in r && typeof r.hidden !== "boolean") return `${at}.hidden: must be a boolean`;
     if ("mode" in r) {
@@ -56,9 +60,11 @@ function checkRegions(regions, where) {
         if (!isObj(f)) return `${fa}: must be an object`;
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
+        if (name === "pages" && "size" in f) return `${fa}.size: a page fills the work area, it has no size`;
         if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
         if ("drag" in f && typeof f.drag !== "boolean") return `${fa}.drag: must be true or false`;
         if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
+        if (name !== "pages" && PAGE_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.pages`;
       }
       if (name === "top" && !r.features.some((f) => f.mod === "dock-core")) return `${at}.features: must include dock-core: ${NEEDS_CORE}`;
     }
@@ -130,9 +136,11 @@ function parseLocal(text) {
 // src/shared/edit.js
 var LEFT_MODES2 = ["expanded", "icons", "hidden"];
 var FOOTER = "dock-footer";
+var PAGES_NAV = "dock-pages";
 function allowedRegions(mod) {
   if (mod === "dock-core" || mod === "dock-tabs") return ["top"];
   if (LEFT_ONLY.includes(mod)) return ["left"];
+  if (PAGE_ONLY.includes(mod)) return ["pages"];
   return [...REGION_NAMES];
 }
 function canTurnOff(mod) {
@@ -154,16 +162,17 @@ function regionOf(draft, mod) {
 var canonical = (v) => JSON.stringify(v, (_k, x) => x !== null && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x);
 var same = (a, b) => canonical(a) === canonical(b);
 var EDITED = ["size", "hidden", "mode", "features"];
-var fields = (name) => name === "left" ? ["size", "mode", "features"] : ["size", "hidden", "features"];
+var fields = (name) => name === "left" ? ["size", "mode", "features"] : name === "pages" ? ["features"] : ["size", "hidden", "features"];
 function sameDraft(a, b) {
-  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name][k], b.regions[name][k])));
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])));
 }
 function rebaseDraft(baseDraft, draft, freshDraft) {
   const out = JSON.parse(JSON.stringify(freshDraft));
   for (const name of REGION_NAMES) {
     for (const k of fields(name)) {
-      const mine = draft.regions[name][k];
-      if (same(mine, baseDraft.regions[name][k])) continue;
+      const mine = draft.regions[name]?.[k];
+      if (same(mine, baseDraft.regions[name]?.[k])) continue;
+      out.regions[name] ??= { features: [] };
       if (mine === void 0) delete out.regions[name][k];
       else out.regions[name][k] = JSON.parse(JSON.stringify(mine));
     }
@@ -196,7 +205,8 @@ function place(d, { mod, region }) {
   }
   const target = d.regions[region].features;
   const at = mod !== FOOTER && target.at(-1)?.mod === FOOTER ? target.length - 1 : target.length;
-  target.splice(at, 0, feature);
+  target.splice(at, 0, region === "pages" ? feature.props ? { mod, props: feature.props } : { mod } : feature);
+  if (region === "pages" && regionOf(d, PAGES_NAV) === null) place(d, { mod: PAGES_NAV, region: "left" });
   return null;
 }
 function move(d, { region, index, delta }) {
@@ -225,6 +235,7 @@ function applyEdit(draft, op) {
       break;
     case "size":
       if (!d.regions[op.region]) error = `regions.${op.region}: unknown region`;
+      else if (op.region === "pages") error = "regions.pages.size: a page fills the work area, it has no size";
       else if (!isPosInt(op.value)) error = `regions.${op.region}.size: must be a positive integer`;
       else d.regions[op.region].size = op.value;
       break;
@@ -233,6 +244,7 @@ function applyEdit(draft, op) {
       else if (typeof op.value !== "boolean") error = `regions.${op.region}.hidden: must be a boolean`;
       else if (op.region === "top" && op.value) error = "regions.top.hidden: the top bar can't be hidden";
       else if (op.region === "left") error = "regions.left.hidden: use the left mode instead";
+      else if (op.region === "pages") error = "regions.pages.hidden: pages can't be hidden";
       else d.regions[op.region].hidden = op.value;
       break;
     case "mode":
@@ -252,7 +264,8 @@ function machineSection(config, draft) {
     const d = draft.regions[name];
     const diff = {};
     if (d.size !== b.size && d.size !== void 0) diff.size = d.size;
-    if (name === "left") {
+    if (name === "pages") {
+    } else if (name === "left") {
       if (d.mode !== b.mode) diff.mode = d.mode;
       if (config.regions?.left?.hidden === true && d.mode !== "hidden") diff.hidden = false;
     } else if (d.hidden !== b.hidden) {
@@ -478,7 +491,7 @@ async function loadSession(io) {
   if (!parsed.ok) {
     readOnly = true;
     const applied = io.shared("dock.config.applied");
-    draft = applied ? { regions: applied } : draftFromConfig(DEFAULT_CONFIG, host ?? "");
+    draft = applied ? { regions: { pages: { features: [], hidden: false }, ...applied } } : draftFromConfig(DEFAULT_CONFIG, host ?? "");
     error = `${parsed.error} \u2014 fix ${parsed.file} by hand, then reopen`;
   } else {
     draft = parsed.draft;
@@ -561,7 +574,7 @@ function segmented(t, id, options, selected, onPick) {
 var tag = (t, text) => div().flex_none().px(6).py(1).rounded(4).text_size(11).text_color(t.dim).border_1().border_color(t.border).child(text);
 
 // src/mods/dock-config/by-mod.js
-var SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"]];
+var SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"], ["pages", "Page"]];
 var REASONS = {
   self: "this dialog",
   "hidden-name": "hidden folder",
@@ -612,7 +625,11 @@ function sizeInput(dlg, t, region) {
 function regionControls(dlg, t, region) {
   const r = dlg.session.draft.regions[region];
   const on = dlg.editable();
-  const row = h_flex3().h(32).gap(10).items_center().child(div3().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase())).child(label(t, "size")).child(sizeInput(dlg, t, region));
+  const title = div3().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase());
+  if (region === "pages") {
+    return h_flex3().h(32).gap(10).items_center().child(title).child(label(t, "shown one at a time in place of the terminal, from the Pages list (Ctrl+Alt+P cycles)"));
+  }
+  const row = h_flex3().h(32).gap(10).items_center().child(title).child(label(t, "size")).child(sizeInput(dlg, t, region));
   if (region === "right" || region === "bottom") {
     const text = region === "right" ? "shown by default" : "shown";
     return row.child(label(t, text)).child(toggle(
@@ -666,7 +683,7 @@ function addMod(dlg, t, region) {
 }
 function byRegion(dlg, t) {
   const regions = dlg.session.draft.regions;
-  return ["top", "left", "right", "bottom"].map((region) => {
+  return ["top", "left", "right", "bottom", "pages"].map((region) => {
     const list = regions[region].features;
     return v_flex2().gap(2).py(8).border_b(1).border_color(t.border).child(regionControls(dlg, t, region)).children(list.map((_f, i) => featureRow(dlg, t, region, list, i))).when(!list.length, (el) => el.child(div3().pl(LABEL_W + 10).h(24).text_size(12).text_color(t.dim).child("no mods"))).child(addMod(dlg, t, region));
   });

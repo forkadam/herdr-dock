@@ -1,7 +1,7 @@
 // src/mods/dock-git/main.js
 import { View, div as div2, svg as svg2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { theme, shared, setShared as setShared2, props, run as run2, exec, pickFolder, window, openOverlay } from "herdr";
+import { theme, shared as shared2, setShared as setShared3, props, run as run2, exec, pickFolder, window, openOverlay } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -222,6 +222,17 @@ function hideWorktree(hidden, rows, row) {
   return { hidden: [...list, { id: row.id, held: Boolean(row.open) }], removeRepo: null };
 }
 
+// src/mods/_page.js
+import { setShared as setShared2, shared } from "herdr";
+
+// src/shared/panel.js
+var PAGE_KEY = "dock.page.active";
+
+// src/mods/_page.js
+function showTerminal() {
+  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
+}
+
 // src/mods/dock-git/main.js
 var REPOS_KEY = "dock.git.repos";
 var SKIPPED_KEY = "dock.git.skipped";
@@ -236,32 +247,32 @@ var Git = class extends View {
     return { ok: t.ansi2 ?? "#46a758", bad: t.ansi1 ?? "#e5484d", busy: t.accent, dim: t.dim, warn: WARN };
   }
   repoById(id) {
-    const repos = shared("dock.git.state")?.repos;
+    const repos = shared2("dock.git.state")?.repos;
     return Array.isArray(repos) ? repos.find((r) => r.id === id) ?? null : null;
   }
   addRepo(cx) {
     cx.spawn(async () => {
       const picked = await pickFolder({ prompt: "Add a repo" }).catch(() => null);
       if (!picked) return;
-      const next = addRepoPath(shared(REPOS_KEY), slashPath(picked), window()?.platform);
-      if (next) setShared2(REPOS_KEY, next);
+      const next = addRepoPath(shared2(REPOS_KEY), slashPath(picked), window()?.platform);
+      if (next) setShared3(REPOS_KEY, next);
       gitCommand("git.refresh");
     });
   }
   removeRepo(id) {
     const repo = this.repoById(id);
     if (repo) {
-      setShared2(REPOS_KEY, removeRepoPaths(shared(REPOS_KEY), repo, window()?.platform));
-      const skipped = skipAfterRemove(shared(SKIPPED_KEY), repo);
-      if (skipped) setShared2(SKIPPED_KEY, skipped);
+      setShared3(REPOS_KEY, removeRepoPaths(shared2(REPOS_KEY), repo, window()?.platform));
+      const skipped = skipAfterRemove(shared2(SKIPPED_KEY), repo);
+      if (skipped) setShared3(SKIPPED_KEY, skipped);
     }
     this.menu = null;
     gitCommand("git.refresh");
   }
   hideWorktree(rows, row) {
-    const { hidden, removeRepo } = hideWorktree(shared(HIDDEN_KEY), rows, row);
+    const { hidden, removeRepo } = hideWorktree(shared2(HIDDEN_KEY), rows, row);
     if (removeRepo) return this.removeRepo(removeRepo);
-    setShared2(HIDDEN_KEY, hidden);
+    setShared3(HIDDEN_KEY, hidden);
     this.menu = null;
     gitCommand("git.refresh");
   }
@@ -339,7 +350,10 @@ var Git = class extends View {
   worktreeRow(t, w, i) {
     const tones = this.tones(t);
     const select = () => {
-      if (w.open && w.space) run2("space.select", { id: w.space });
+      if (w.open && w.space) {
+        showTerminal();
+        run2("space.select", { id: w.space });
+      }
       gitCommand("git.select", { worktree: w.id });
     };
     return h_flex().id(`git-wt-${i}`).h(24).mx(8).pl(10).pr(8).gap(6).flex_none().items_center().rounded(6).text_size(12.5).cursor_pointer().when(w.selected, (el) => el.bg(t.selected ?? t.hover)).hover((s) => s.bg(t.hover)).on_click(() => select()).on_mouse_down("right", (_e, cx) => this.toggleMenu(w.id, cx)).child(div2().size(6).flex_none().rounded_full().bg(w.open ? tones.ok : "#00000000")).child(div2().id(`git-branch-${i}`).flex_1().min_w(0).truncate().text_color(w.open ? t.foreground : t.muted).tooltip(w.tooltip).child(w.branch)).when(Boolean(w.badge.glyph), (el) => el.child(div2().id(`git-badge-${i}`).flex_none().w(18).h(18).rounded(4).flex().items_center().justify_center().text_size(12).text_color(tones[w.badge.tone] ?? t.dim).hover((s) => s.bg(t.border)).tooltip(w.badgeTip).on_click((_e, cx) => {
@@ -350,8 +364,8 @@ var Git = class extends View {
   render() {
     const t = theme();
     const myId = props()?.dockFeature ?? "dock-git";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
-    const state = shared("dock.git.state");
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
+    const state = shared2("dock.git.state");
     const sum = gitSummary(state);
     if (face === "icon") {
       const rail = iconRail(t, "mods/dock-git/icon.svg", "Git projects", () => requestFocus(myId));
@@ -361,7 +375,7 @@ var Git = class extends View {
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId), sum.text));
     }
-    const rows = gitRows(state, shared("dock.git.selected") ?? null);
+    const rows = gitRows(state, shared2("dock.git.selected") ?? null);
     const children = [];
     rows.forEach((r, i) => {
       if (r.kind === "empty") children.push(div2().px(16).py(4).text_size(12).text_color(t.dim).child(r.text));

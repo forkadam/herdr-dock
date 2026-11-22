@@ -6,6 +6,7 @@ import {
   appHome,
   checking,
   exec,
+  focused,
   layout,
   nextCommand,
   notify,
@@ -1211,6 +1212,31 @@ function rightNodes(regions, state) {
   };
   return { right, rail };
 }
+var WORK_STACK = "dock-work-stack";
+var MAIN_ID = "dock-main";
+function pageActiveOf(active, features) {
+  return typeof active === "string" && (features ?? []).some((f) => f.mod === active) ? active : null;
+}
+function pageChildOf(active, features) {
+  const mod = pageActiveOf(active, features);
+  if (!mod) return MAIN_ID;
+  return blockId("page", features.findIndex((f) => f.mod === mod), mod);
+}
+function workNode(regions, page) {
+  const main = { id: MAIN_ID, type: "block", content: { tab: "active", pane: MAIN_PANE } };
+  const pages = regions.pages?.features ?? [];
+  if (!pages.length) return main;
+  return {
+    id: WORK_STACK,
+    type: "stack",
+    active: pageChildOf(page, pages),
+    children: [main, ...pages.map((f, i) => ({
+      id: blockId("page", i, f.mod),
+      type: "block",
+      content: { mod: f.mod, props: { ...f.props, dockFeature: blockId("page", i, f.mod), dockRegion: "pages" } }
+    }))]
+  };
+}
 function buildLayout(merged, state = {}) {
   const { regions } = merged;
   const top = regionNode(merged, "top", "row", { node: { window_drag: true }, hidden: regions.top.hidden });
@@ -1221,7 +1247,7 @@ function buildLayout(merged, state = {}) {
   });
   const { right, rail } = rightNodes(regions, state);
   const bottom = regionNode(merged, "bottom", "row", { node: {}, hidden: regions.bottom.hidden });
-  const main = { id: "dock-main", type: "block", content: { tab: "active", pane: MAIN_PANE } };
+  const main = workNode(regions, state.page);
   const body = {
     id: "dock-body",
     type: "row",
@@ -1252,9 +1278,10 @@ function leftFeatureIds(merged) {
 }
 
 // src/shared/config.js
-var REGION_NAMES = ["top", "left", "right", "bottom"];
+var REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
 var LEFT_MODES = ["expanded", "icons", "hidden"];
-var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas"];
+var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
+var PAGE_ONLY = ["dock-overview"];
 var NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
 var isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 function checkRegions(regions, where) {
@@ -1263,6 +1290,8 @@ function checkRegions(regions, where) {
     const at = `${where}.${name}`;
     if (!REGION_NAMES.includes(name)) return `${at}: unknown region`;
     if (!isObj(r)) return `${at}: must be an object`;
+    if (name === "pages" && "size" in r) return `${at}.size: a page fills the work area, it has no size`;
+    if (name === "pages" && r.hidden === true) return `${at}.hidden: pages can't be hidden; remove them instead`;
     if ("size" in r && !(Number.isInteger(r.size) && r.size > 0)) return `${at}.size: must be a positive integer`;
     if ("hidden" in r && typeof r.hidden !== "boolean") return `${at}.hidden: must be a boolean`;
     if ("mode" in r) {
@@ -1278,9 +1307,11 @@ function checkRegions(regions, where) {
         if (!isObj(f)) return `${fa}: must be an object`;
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
+        if (name === "pages" && "size" in f) return `${fa}.size: a page fills the work area, it has no size`;
         if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
         if ("drag" in f && typeof f.drag !== "boolean") return `${fa}.drag: must be true or false`;
         if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
+        if (name !== "pages" && PAGE_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.pages`;
       }
       if (name === "top" && !r.features.some((f) => f.mod === "dock-core")) return `${at}.features: must include dock-core: ${NEEDS_CORE}`;
     }
@@ -1596,6 +1627,26 @@ function rightConfigUpdate({ prev, merged, saved }) {
     state: { rightShown: rightShownOf(shown, merged.regions), active: typeof active === "string" ? active : void 0 }
   };
 }
+var PAGE_KEY = "dock.page.active";
+function liveWork(tree) {
+  const stack = findNode(tree, WORK_STACK);
+  if (!stack) return null;
+  return { active: stack.active ?? null, children: (stack.children ?? []).map((c) => c?.id).filter((id) => typeof id === "string") };
+}
+function planPage({ active, features, live }) {
+  if (!live || !features?.length) return [];
+  const child = pageChildOf(active, features);
+  if (!live.children.includes(child) || live.active === child) return [];
+  return [{ command: "layout.select", args: { stack: WORK_STACK, child } }];
+}
+function nextPage(active, features) {
+  const list = (features ?? []).map((f) => f.mod);
+  if (!list.length) return null;
+  const cur = pageActiveOf(active, features);
+  const i = cur === null ? -1 : list.indexOf(cur);
+  return i + 1 < list.length ? list[i + 1] : null;
+}
+var focusLeavesPage = (prev, now) => prev !== null && prev !== now;
 
 // src/shared/notify.js
 var HISTORY_KEY = "dock.notify.history";
@@ -2514,7 +2565,7 @@ var DockCore = class extends View {
         saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) }
       });
       for (const [key, value] of Object.entries(u.set)) setShared(key, value);
-      plan = planApply(configText, this.host, current, this.merged, u.state, localText);
+      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? void 0 }, localText);
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
@@ -2585,6 +2636,11 @@ var DockCore = class extends View {
       setShared(RIGHT_KEY, !this.rightShown());
       return;
     }
+    if (c === "page" || c === "terminals") {
+      const next = c === "page" ? nextPage(shared(PAGE_KEY), this.merged?.regions.pages?.features) : null;
+      if ((shared(PAGE_KEY) ?? null) !== next) setShared(PAGE_KEY, next);
+      return;
+    }
     if (c === "config") {
       run("mod.open", { name: "dock-config" });
       return;
@@ -2636,6 +2692,43 @@ var DockCore = class extends View {
       }
     });
   }
+  // Called from render: show this PC's page (or the terminal) in the work stack. Another space or tab
+  // getting focus (a click, a key, a new tab) while a page shows brings the terminal back.
+  syncPage(cx) {
+    if (!this.merged) return;
+    const features = this.merged.regions.pages?.features ?? [];
+    if (!features.length) return;
+    let where = null;
+    try {
+      const f = focused();
+      where = f ? `${f.space}|${f.tab}` : null;
+    } catch {
+      where = null;
+    }
+    if (where !== null) {
+      const leave = focusLeavesPage(this.focusKey ?? null, where);
+      this.focusKey = where;
+      if (leave && (shared(PAGE_KEY) ?? null) !== null) setShared(PAGE_KEY, null);
+    }
+    let live;
+    try {
+      live = liveWork(layout());
+    } catch (e) {
+      console.log(`dock-core: layout() failed: ${e}`);
+      return;
+    }
+    const actions = planPage({ active: shared(PAGE_KEY), features, live });
+    if (!actions.length) return;
+    cx.spawn(async (_cx) => {
+      for (const a of actions) {
+        try {
+          run(a.command, a.args);
+        } catch (e) {
+          console.log(`dock-core: ${a.command} failed: ${e}`);
+        }
+      }
+    });
+  }
   apply(key, mode, focus, clearFocus) {
     if (!this.merged || this.applied !== key) return;
     let live = null;
@@ -2662,6 +2755,7 @@ var DockCore = class extends View {
     if (!isTop()) return div();
     this.sync(cx);
     this.syncRight(cx);
+    this.syncPage(cx);
     const t = theme();
     const mode = this.mode();
     const err = shared(ERROR_KEY);

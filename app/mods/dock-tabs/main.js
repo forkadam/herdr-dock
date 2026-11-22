@@ -1,12 +1,24 @@
 // src/mods/dock-tabs/main.js
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, setShared, layout, settings } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared as shared2, setShared as setShared2, layout, settings } from "herdr";
+
+// src/shared/layout.js
+function pageActiveOf(active, features) {
+  return typeof active === "string" && (features ?? []).some((f) => f.mod === active) ? active : null;
+}
 
 // src/shared/panel.js
 function rightShownOf(sharedShown, applied) {
   if (typeof sharedShown === "boolean") return sharedShown;
   return applied?.right?.hidden === false;
+}
+var PAGE_KEY = "dock.page.active";
+
+// src/mods/_page.js
+import { setShared, shared } from "herdr";
+function showTerminal() {
+  if ((shared(PAGE_KEY) ?? null) !== null) setShared(PAGE_KEY, null);
 }
 
 // src/mods/dock-tabs/main.js
@@ -66,6 +78,7 @@ var Tabs = class extends View {
       if (active >= 0) this.scroll.scroll_to_item(active);
     }
     const stop = (_e, cx) => cx.stop_propagation();
+    const onPage = pageActiveOf(shared2(PAGE_KEY), shared2("dock.config.applied")?.pages?.features) !== null;
     const button = (id, label2, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_mouse_down("left", stop).on_click(action).child(label2);
     const item = (c, i) => {
       const lead = panes().find((p) => p.tab === c.id && p.program?.agent) ?? panes().find((p) => p.tab === c.id);
@@ -74,7 +87,7 @@ var Tabs = class extends View {
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8).when(i <= active, (el) => el.on_size_change((_size, cx) => {
         this.scroll.scroll_to_item(active);
         cx.notify();
-      })).border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted).hover((s) => s.bg(t.hover)).on_mouse_down("left", (e, cx) => {
+      })).border(1).border_color(c.active && !onPage ? t.border : t.chrome).bg(c.active && !onPage ? t.raised : t.chrome).text_color(c.active && !onPage ? t.foreground : t.muted).when(onPage, (el) => el.opacity(0.6)).hover((s) => s.bg(t.hover)).on_mouse_down("left", (e, cx) => {
         cx.stop_propagation();
         this.pressed = i;
         if (e.click_count === 2) run("tab.rename", { id: c.id });
@@ -82,7 +95,10 @@ var Tabs = class extends View {
         const from = this.pressed;
         this.pressed = null;
         if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex((x) => x.id === c.id) + 1 });
-        else run("tab.select", { id: c.id });
+        else {
+          showTerminal();
+          run("tab.select", { id: c.id });
+        }
       }).on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
         openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } });
@@ -93,10 +109,10 @@ var Tabs = class extends View {
     };
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     const lightsPadding = w?.platform === "macos" && w.titlebar === "none" && !w.fullscreen && root?.traffic_lights ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0)) : 10;
-    const applied = shared("dock.config.applied");
+    const applied = shared2("dock.config.applied");
     const hasRight = (applied?.right?.features?.length ?? 0) > 0;
-    const rightOn = rightShownOf(shared("dock.right.shown"), applied);
-    const rightButton = div().id("dock-right-toggle").size(26).flex_none().flex().items_center().justify_center().rounded(6).bg(rightOn ? t.selected : t.chrome).text_color(rightOn ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(`Right panel (Ctrl+Alt+N)`).on_mouse_down("left", stop).on_click(() => setShared("dock.right.shown", !rightOn)).child(svg("mods/dock-tabs/panel-right.svg").size(15));
+    const rightOn = rightShownOf(shared2("dock.right.shown"), applied);
+    const rightButton = div().id("dock-right-toggle").size(26).flex_none().flex().items_center().justify_center().rounded(6).bg(rightOn ? t.selected : t.chrome).text_color(rightOn ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(`Right panel (Ctrl+Alt+N)`).on_mouse_down("left", stop).on_click(() => setShared2("dock.right.shown", !rightOn)).child(svg("mods/dock-tabs/panel-right.svg").size(15));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border).on_mouse_up("left", () => {
       this.pressed = null;
     }).on_scroll_wheel((e) => this.wheel(e)).child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().track_scroll(this.scroll).on_size_change((_size, cx) => {

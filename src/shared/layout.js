@@ -79,6 +79,43 @@ function rightNodes(regions, state) {
   return { right, rail };
 }
 
+// ---- Dock pages: mods shown one at a time in place of the terminal ----
+
+export const WORK_STACK = "dock-work-stack";
+export const MAIN_ID = "dock-main";
+
+// The page block ids, in config order.
+export function pageIds(merged) {
+  return (merged.regions.pages?.features ?? []).map((f, i) => blockId("page", i, f.mod));
+}
+
+// The page shown: this PC's choice (a page mod's id) when it is still placed, else null (the terminal).
+export function pageActiveOf(active, features) {
+  return typeof active === "string" && (features ?? []).some((f) => f.mod === active) ? active : null;
+}
+
+// The work stack's child for a page (null: the terminal).
+export function pageChildOf(active, features) {
+  const mod = pageActiveOf(active, features);
+  if (!mod) return MAIN_ID;
+  return blockId("page", features.findIndex((f) => f.mod === mod), mod);
+}
+
+// The terminal block alone, or (with pages) a stack of it and one block per page. `page` is this PC's
+// dock.page.active. Page blocks stay mounted while hidden, so switching is instant and keeps their state.
+function workNode(regions, page) {
+  const main = { id: MAIN_ID, type: "block", content: { tab: "active", pane: MAIN_PANE } };
+  const pages = regions.pages?.features ?? [];
+  if (!pages.length) return main;
+  return {
+    id: WORK_STACK, type: "stack", active: pageChildOf(page, pages),
+    children: [main, ...pages.map((f, i) => ({
+      id: blockId("page", i, f.mod), type: "block",
+      content: { mod: f.mod, props: { ...f.props, dockFeature: blockId("page", i, f.mod), dockRegion: "pages" } },
+    }))],
+  };
+}
+
 export function buildLayout(merged, state = {}) {
   const { regions } = merged;
   const top = regionNode(merged, "top", "row", { node: { window_drag: true }, hidden: regions.top.hidden });
@@ -89,7 +126,7 @@ export function buildLayout(merged, state = {}) {
   });
   const { right, rail } = rightNodes(regions, state);
   const bottom = regionNode(merged, "bottom", "row", { node: {}, hidden: regions.bottom.hidden });
-  const main = { id: "dock-main", type: "block", content: { tab: "active", pane: MAIN_PANE } };
+  const main = workNode(regions, state.page);
   const body = {
     id: "dock-body",
     type: "row",

@@ -76,7 +76,8 @@ export async function loadSession(io) {
   if (!parsed.ok) {
     readOnly = true;
     const applied = io.shared("dock.config.applied");
-    draft = applied ? { regions: applied } : draftFromConfig(DEFAULT_CONFIG, host ?? "");
+    // Regions published before dock pages existed have no pages region.
+    draft = applied ? { regions: { pages: { features: [], hidden: false }, ...applied } } : draftFromConfig(DEFAULT_CONFIG, host ?? "");
     error = `${parsed.error} — fix ${parsed.file} by hand, then reopen`;
   } else {
     draft = parsed.draft;

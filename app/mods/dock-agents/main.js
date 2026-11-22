@@ -1,7 +1,7 @@
 // src/mods/dock-agents/main.js
 import { View, div as div2, image, svg as svg2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared as setShared2, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared as shared2, setShared as setShared3, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -121,6 +121,17 @@ function slashPath(p) {
   return s === "" ? "/" : s;
 }
 
+// src/mods/_page.js
+import { setShared as setShared2, shared } from "herdr";
+
+// src/shared/panel.js
+var PAGE_KEY = "dock.page.active";
+
+// src/mods/_page.js
+function showTerminal() {
+  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
+}
+
 // src/mods/dock-agents/main.js
 var CONTEXT_MS = 15e3;
 var LIST_CHECK_MS = 1e3;
@@ -163,7 +174,7 @@ var SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
   { id: "grouped", label: "Grouped by space", icon: "layers" }
 ];
-var sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
+var sortOf = () => SORTS.find((s) => s.id === shared2("agents.sort")) ?? SORTS[0];
 var SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 var SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 function duration(ms) {
@@ -313,7 +324,7 @@ var Agents = class extends View {
   sortMenu(t) {
     const on = sortOf().id;
     return v_flex2().w_full().p(5).bg(t.popover).text_size(12.8).child(div2().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents")).children(SORTS.map((s) => h_flex().id(`sort-${s.id}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground).hover((el) => el.bg(t.hover)).on_click(() => {
-      setShared2("agents.sort", s.id);
+      setShared3("agents.sort", s.id);
       closeOverlay(props().overlay);
     }).child(svg2(`mods/workspace-chrome/${s.icon}.svg`).size(14).flex_none().text_color(t.muted)).child(div2().flex_1().child(s.label)).when(s.id === on, (el) => el.child(svg2("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
@@ -336,7 +347,7 @@ var Agents = class extends View {
     const st = kidStatus(k, this.listed);
     const pic = icon(k.program, 14, t.foreground);
     const on = k.address === shown;
-    return h_flex().id(`sub-${k.address}`).pl(39).pr(8).rounded(8).h(26).flex_none().gap(0).items_center().text_size(12.5).when(on, (el) => el.bg(t.raised)).hover((s2) => s2.bg(t.hover)).on_click(() => this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)).children(s.lines.map((l) => div2().self_start().mt(-4).w(9).h(17).mr(4).flex_none().when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input)).when(l === "\u2514" || l === "\u251C", (el) => el.border_b(1.5).rounded_bl(6)))).when(Boolean(pic), (el) => el.child(div2().mr(8).child(pic))).child(div2().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address)).child(this.status(t, { status: st }, compact));
+    return h_flex().id(`sub-${k.address}`).pl(39).pr(8).rounded(8).h(26).flex_none().gap(0).items_center().text_size(12.5).when(on, (el) => el.bg(t.raised)).hover((s2) => s2.bg(t.hover)).on_click(() => this.listed.has(k.address) ? (showTerminal(), run("pane.focus", { terminal: k.address })) : this.peek(k.address)).children(s.lines.map((l) => div2().self_start().mt(-4).w(9).h(17).mr(4).flex_none().when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input)).when(l === "\u2514" || l === "\u251C", (el) => el.border_b(1.5).rounded_bl(6)))).when(Boolean(pic), (el) => el.child(div2().mr(8).child(pic))).child(div2().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address)).child(this.status(t, { status: st }, compact));
   }
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
@@ -381,7 +392,7 @@ var Agents = class extends View {
     list = [...pinned, ...rest];
     setAgentOrder(list.map((a) => a.address));
     const myId = props()?.dockFeature ?? "dock-agents";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") return iconRail(t, "mods/dock-agents/icon.svg", "Agents", () => requestFocus(myId));
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, sort, () => requestFocus(myId)));
@@ -425,7 +436,10 @@ var Agents = class extends View {
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       const ctx = this.contextFor(a);
       if (collapsed) {
-        return h_flex().id(`ag-${a.address}`).h(26).px(8).flex_none().items_center().gap(4).hover((s) => s.bg(t.hover)).on_click(() => run("pane.focus", { pane: a.pane })).child(div2().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1))).child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
+        return h_flex().id(`ag-${a.address}`).h(26).px(8).flex_none().items_center().gap(4).hover((s) => s.bg(t.hover)).on_click(() => {
+          showTerminal();
+          run("pane.focus", { pane: a.pane });
+        }).child(div2().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1))).child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
@@ -442,7 +456,10 @@ var Agents = class extends View {
         if (on) this.hovered = a.address;
         else if (this.hovered === a.address) this.hovered = null;
         cx2.notify();
-      }).on_click(() => run("pane.focus", { pane: a.pane })).when(Boolean(pic), (el) => el.child(div2().id(`agent-fold-${a.address}`).when(subs.length > 0, (el2) => el2.on_click((_e, cx2) => {
+      }).on_click(() => {
+        showTerminal();
+        run("pane.focus", { pane: a.pane });
+      }).when(Boolean(pic), (el) => el.child(div2().id(`agent-fold-${a.address}`).when(subs.length > 0, (el2) => el2.on_click((_e, cx2) => {
         cx2.stop_propagation();
         this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
         cx2.notify();

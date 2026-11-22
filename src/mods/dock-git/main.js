@@ -8,6 +8,7 @@ import { gitCommand } from "../_git-command.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 import { gitRows, gitSummary, addRepoPath, removeRepoPaths, skipAfterRemove, rowMenu, hideWorktree } from "./view.js";
+import { showTerminal } from "../_page.js";
 
 const REPOS_KEY = "dock.git.repos";
 const SKIPPED_KEY = "dock.git.skipped";
@@ -143,7 +144,7 @@ export default class Git extends View {
   worktreeRow(t, w, i) {
     const tones = this.tones(t);
     const select = () => {
-      if (w.open && w.space) run("space.select", { id: w.space });
+      if (w.open && w.space) { showTerminal(); run("space.select", { id: w.space }); }
       gitCommand("git.select", { worktree: w.id });
     };
     return h_flex().id(`git-wt-${i}`).h(24).mx(8).pl(10).pr(8).gap(6).flex_none().items_center().rounded(6)

@@ -40,7 +40,7 @@ npm run deploy
 ```
 
 `npm run deploy` builds the `dock-*` mods, installs them into the Herdr app home, writes
-`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`, Ctrl+Alt+N runs `dock-core.right`, Ctrl+Alt+, runs `dock-core.config`), and runs
+`layouts/herdr-dock.json`, adds a `layout:herdr-dock` keys section (Ctrl+Alt+B runs `dock-core.cycle`, Ctrl+Alt+N runs `dock-core.right`, Ctrl+Alt+, runs `dock-core.config`, Ctrl+Alt+P runs `dock-core.page`), and runs
 `herdr-app check` on each mod. It exits non-zero if any check fails. Run `npm test` for the unit tests.
 
 - **App home.** Deploy writes to `~/.config/herdr-app`, or to `$HERDR_APP_HOME` when that is set. Pass
@@ -146,6 +146,28 @@ config order (it scrolls when there are many):
   same way `left.mode` does.
 - With no right mods there is no panel and no rail.
 
+## Dock pages
+
+For features bigger than a panel: a **page** fills the work area, in place of the terminal. One page shows at a
+time, for the whole window (not per space or tab), so a page is never open twice.
+
+- **Pages** (`dock-pages`), a left-panel feature, lists the pages in config order. Click one to show it; click the
+  page that's showing to go back to the terminal. In the left panel's icon mode it shows one icon per page.
+- **Ctrl+Alt+P** (`dock-core.page`) cycles: the terminal, each page in turn, the terminal again.
+  `herdr-app do dock-core.terminals` goes straight back.
+- Clicking any tab, space, agent or worktree, or focus moving to another tab (a key, a new tab), brings the
+  terminal back. While a page shows, the tab bar's tabs are dimmed.
+- Pages are ordinary mods placed in the `pages` region. The layout keeps every page mounted while hidden, so
+  switching is instant and a page keeps its scroll and state. The page shown is remembered per PC
+  (`dock.page.active`), never in the config.
+- **Overview** (`dock-overview`) is the first page: every agent in every space, grouped by status (needs you
+  first), as cards; click one to go to it. Its Pages badge counts the agents that need you.
+- A page mod gets `props().dockRegion === "pages"`. It may show a badge in the Pages list by setting the shared key
+  `dock.page.badge.<its mod id>` (a number or a short string), and can call `showTerminal()` (`src/mods/_page.js`)
+  to hand the work area back.
+- Add or remove pages in the Dock layout dialog (Pages section). Placing the first page also adds the Pages list to
+  the left panel. With no pages the layout is exactly as before.
+
 ## Panel modes
 
 The left panel has three modes. Ctrl+Alt+B (or the top-bar toggle) cycles through them:
@@ -183,7 +205,9 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
 - Each region has a `size` in px, an optional `hidden`, and a list of `features`. The left region also has `mode`;
   `"hidden": true` on the left region means mode `hidden`. Changing `mode` in the config switches the panel to it.
 - The top bar must contain `dock-core` and can't be hidden (the toggle, Ctrl+Alt+B and config errors live there).
-  `dock-spaces`, `dock-agents`, `dock-git` and `dock-quotas` can only be placed in the left region.
+  `dock-spaces`, `dock-agents`, `dock-git`, `dock-quotas` and `dock-pages` can only be placed in the left region.
+- `pages` (optional) holds dock pages: `{ "features": [ { "mod": "dock-overview" } ] }`, features only (no size,
+  never hidden). `dock-overview` can only be placed there. See "Dock pages".
 - A feature is `{ "mod": string, "props"?: object, "size"?: px, "drag"?: boolean }`. With no `size`, it gets
   weight 1 and shares the remaining space. With `"drag": true`, dragging the feature moves the window.
 - The left panel starts with `dock-header` (46 px), like the header in Herdr's `main` layout: the Herdr

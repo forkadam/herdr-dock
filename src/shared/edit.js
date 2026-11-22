@@ -1,12 +1,14 @@
 // Placement rules and draft edits for the config UI (pure; no Node built-ins).
-import { LEFT_ONLY, REGION_NAMES, mergeForHost, parseConfig, parseLocal } from "./config.js";
+import { LEFT_ONLY, PAGE_ONLY, REGION_NAMES, mergeForHost, parseConfig, parseLocal } from "./config.js";
 
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
+const PAGES_NAV = "dock-pages";
 
 export function allowedRegions(mod) {
   if (mod === "dock-core" || mod === "dock-tabs") return ["top"];
   if (LEFT_ONLY.includes(mod)) return ["left"];
+  if (PAGE_ONLY.includes(mod)) return ["pages"];
   return [...REGION_NAMES];
 }
 
@@ -39,10 +41,10 @@ const same = (a, b) => canonical(a) === canonical(b);
 
 // The fields the dialog edits, per region: size, hidden (not left), mode (left) and features.
 const EDITED = ["size", "hidden", "mode", "features"];
-const fields = (name) => (name === "left" ? ["size", "mode", "features"] : ["size", "hidden", "features"]);
+const fields = (name) => (name === "left" ? ["size", "mode", "features"] : name === "pages" ? ["features"] : ["size", "hidden", "features"]);
 
 export function sameDraft(a, b) {
-  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name][k], b.regions[name][k])));
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])));
 }
 
 // On a conflict: the fresh draft with only the fields the user changed (draft vs baseDraft) put back on top.
@@ -50,8 +52,9 @@ export function rebaseDraft(baseDraft, draft, freshDraft) {
   const out = JSON.parse(JSON.stringify(freshDraft));
   for (const name of REGION_NAMES) {
     for (const k of fields(name)) {
-      const mine = draft.regions[name][k];
-      if (same(mine, baseDraft.regions[name][k])) continue;
+      const mine = draft.regions[name]?.[k];
+      if (same(mine, baseDraft.regions[name]?.[k])) continue;
+      out.regions[name] ??= { features: [] };
       if (mine === undefined) delete out.regions[name][k];
       else out.regions[name][k] = JSON.parse(JSON.stringify(mine));
     }
@@ -88,7 +91,10 @@ function place(d, { mod, region }) {
   }
   const target = d.regions[region].features;
   const at = mod !== FOOTER && target.at(-1)?.mod === FOOTER ? target.length - 1 : target.length;
-  target.splice(at, 0, feature);
+  // A page keeps only its props (no size, no drag).
+  target.splice(at, 0, region === "pages" ? (feature.props ? { mod, props: feature.props } : { mod }) : feature);
+  // The first page also puts the Pages list in the left panel (else nothing could open it).
+  if (region === "pages" && regionOf(d, PAGES_NAV) === null) place(d, { mod: PAGES_NAV, region: "left" });
   return null;
 }
 
@@ -119,6 +125,7 @@ export function applyEdit(draft, op) {
       break;
     case "size":
       if (!d.regions[op.region]) error = `regions.${op.region}: unknown region`;
+      else if (op.region === "pages") error = "regions.pages.size: a page fills the work area, it has no size";
       else if (!isPosInt(op.value)) error = `regions.${op.region}.size: must be a positive integer`;
       else d.regions[op.region].size = op.value;
       break;
@@ -127,6 +134,7 @@ export function applyEdit(draft, op) {
       else if (typeof op.value !== "boolean") error = `regions.${op.region}.hidden: must be a boolean`;
       else if (op.region === "top" && op.value) error = "regions.top.hidden: the top bar can't be hidden";
       else if (op.region === "left") error = "regions.left.hidden: use the left mode instead";
+      else if (op.region === "pages") error = "regions.pages.hidden: pages can't be hidden";
       else d.regions[op.region].hidden = op.value;
       break;
     case "mode":
@@ -149,7 +157,9 @@ export function machineSection(config, draft) {
     const d = draft.regions[name];
     const diff = {};
     if (d.size !== b.size && d.size !== undefined) diff.size = d.size;
-    if (name === "left") {
+    if (name === "pages") {
+      // Only features: a page has no size and is never hidden.
+    } else if (name === "left") {
       if (d.mode !== b.mode) diff.mode = d.mode;
       // A raw base left.hidden: true would keep forcing the hidden mode through the merge.
       if (config.regions?.left?.hidden === true && d.mode !== "hidden") diff.hidden = false;

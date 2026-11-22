@@ -11,7 +11,7 @@ const STUBS = {
     export const h_flex = () => chain(); export const v_flex = () => chain();`,
   herdr: `export const state = new Map(); export const runs = [];
     const noop = () => {}; const later = () => new Promise(() => {});
-    export const agents = () => []; export const appHome = () => "C:/home/app"; export const flags = { checking: true }; export const checking = () => flags.checking;
+    export const agents = () => []; export const focused = () => null; export const appHome = () => "C:/home/app"; export const flags = { checking: true }; export const checking = () => flags.checking;
     export const exec = async () => ({ code: 0, stdout: "", stderr: "" }); export const layout = () => null;
     export const nextCommand = later; export const notify = noop; export const openOverlay = noop; export const panes = () => [];
     export const files = new Map(); export const reads = []; export const watched = [];
