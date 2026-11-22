@@ -8,15 +8,18 @@ import { paceOf, planLabel } from "../../shared/claude-usage.js";
 export const PROVIDERS = [
   { id: "claude", title: "Claude", agent: "claude", source: "Claude status line" },
   { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" },
+  // `icon`: Herdr's shipped program icon, used when its agent table has no entry under `agent`.
+  { id: "antigravity", title: "Antigravity", agent: "antigravity", icon: "icons/antigravity.svg", source: "Antigravity status line" },
 ];
 const LABELS = { five_hour: "5-hour", weekly: "weekly" };
 
 // Where a reading came from: the claude CLI (what /usage shows) overrides the provider's default source.
 const sourceOf = (usage, provider) => (usage.source === "cli" ? "Claude Code (/usage)" : provider.source);
-const labelOf = (w) => (w.kind === "model" ? `weekly · ${w.label}` : LABELS[w.kind] ?? w.kind);
+// A model's own weekly limit is "weekly · <model>"; a provider's other bucket (Antigravity's) carries its own label.
+const labelOf = (w) => (w.kind === "model" ? `weekly · ${w.label}` : w.kind === "bucket" ? w.label : LABELS[w.kind] ?? w.kind);
 // The strip's short label: 5h, wk, or the model's name.
 const SHORT = { five_hour: "5h", weekly: "wk" };
-const shortOf = (w) => (w.kind === "model" ? w.label : SHORT[w.kind] ?? w.kind);
+const shortOf = (w) => (w.kind === "model" ? w.label : w.kind === "bucket" ? w.short ?? w.label : SHORT[w.kind] ?? w.kind);
 
 const isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 
@@ -67,7 +70,7 @@ export function quotaRows(usage, nowMs, provider) {
 export function quotaGroups(byId, nowMs) {
   return PROVIDERS
     .filter((p) => byId?.[p.id]?.windows?.length)
-    .map((p) => ({ id: p.id, title: p.title, agent: p.agent, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
+    .map((p) => ({ id: p.id, title: p.title, agent: p.agent, icon: p.icon ?? null, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 
 // Icon-rail badge: the highest finite used % (rounded) across readings, leaving out windows past their reset,
@@ -106,6 +109,25 @@ export function setupNotice(state, { busy = false, error = null } = {}) {
   }
 }
 
+// The same self-check for Antigravity's status line (its agy CLI hands it the quota buckets). "no-claude" here means
+// no ~/.gemini/antigravity-cli: Antigravity isn't used, nothing to say.
+export function agySetupNotice(state, { busy = false, error = null } = {}) {
+  if (error) return { text: "Antigravity: set up failed", tip: error, action: "setup" };
+  if (busy) return { text: "Antigravity: setting up…", tip: "Writing ~/.gemini/antigravity-cli/settings.json", action: null };
+  switch (state) {
+    case "missing": return { text: "Antigravity: status line not set up",
+      tip: "agy hands its quota only to a status line. Set up adds one that prints nothing.", action: "setup" };
+    case "other": return { text: "Antigravity: status line doesn't feed Quotas",
+      tip: "Set up puts herdr-dock's writer in front of your status line; it prints the same.", action: "setup" };
+    case "complex": return { text: "Antigravity: add one line to your status line",
+      tip: "Your status line is more than one command, so it's left alone.", action: null };
+    case "fed": return { text: "Antigravity: waiting for an Antigravity session",
+      tip: "The status line is set up. The limits arrive while an agy session runs.", action: null };
+    case "invalid": return { text: "Antigravity: ~/.gemini/antigravity-cli/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
+    default: return null;
+  }
+}
+
 // ---- The bottom-bar strip (dock-limits) ----
 
 // A reading as plain JSON for shared state (dock.quotas.readings): what Quotas shows, without its session map.
@@ -119,7 +141,7 @@ export function publishable(reading) {
 // pace, level, stale, tooltip }] }]. The time to reset shows only from amber up (it's when it matters).
 export function stripItems(groups) {
   return (groups ?? []).map((g) => ({
-    id: g.id, title: g.title, agent: g.agent, plan: g.plan ?? null,
+    id: g.id, title: g.title, agent: g.agent, icon: g.icon ?? null, plan: g.plan ?? null,
     items: g.rows.map((r) => {
       const level = r.percent == null ? "ok" : barLevel(r.percent);
       return { short: r.short, usage: r.usage, reset: level === "ok" ? null : r.reset ?? null, percent: r.percent, pace: r.pace, level, stale: r.stale, tooltip: r.tooltip };

@@ -52,13 +52,15 @@ function planLabel(plan) {
 // src/mods/dock-quotas/view.js
 var PROVIDERS = [
   { id: "claude", title: "Claude", agent: "claude", source: "Claude status line" },
-  { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" }
+  { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" },
+  // `icon`: Herdr's shipped program icon, used when its agent table has no entry under `agent`.
+  { id: "antigravity", title: "Antigravity", agent: "antigravity", icon: "icons/antigravity.svg", source: "Antigravity status line" }
 ];
 var LABELS = { five_hour: "5-hour", weekly: "weekly" };
 var sourceOf = (usage, provider) => usage.source === "cli" ? "Claude Code (/usage)" : provider.source;
-var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : LABELS[w.kind] ?? w.kind;
+var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : w.kind === "bucket" ? w.label : LABELS[w.kind] ?? w.kind;
 var SHORT = { five_hour: "5h", weekly: "wk" };
-var shortOf = (w) => w.kind === "model" ? w.label : SHORT[w.kind] ?? w.kind;
+var shortOf = (w) => w.kind === "model" ? w.label : w.kind === "bucket" ? w.short ?? w.label : SHORT[w.kind] ?? w.kind;
 var isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 function shortReset(resetsMs, nowMs) {
   if (!Number.isFinite(resetsMs) || resetsMs <= nowMs) return null;
@@ -106,7 +108,7 @@ function quotaRows(usage, nowMs, provider) {
   });
 }
 function quotaGroups(byId, nowMs) {
-  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
+  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, icon: p.icon ?? null, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 var barLevel = (p) => p >= 90 ? "high" : p >= 70 ? "warn" : "ok";
 function stripItems(groups) {
@@ -114,6 +116,7 @@ function stripItems(groups) {
     id: g.id,
     title: g.title,
     agent: g.agent,
+    icon: g.icon ?? null,
     plan: g.plan ?? null,
     items: g.rows.map((r) => {
       const level = r.percent == null ? "ok" : barLevel(r.percent);
@@ -131,6 +134,7 @@ var levelColor = (t, level) => ({ ok: t.accent, warn: WARN, high: t.blocked ?? H
 function providerFace(t, g, icons, size = 13) {
   const ic = icons?.[g.agent];
   if (ic) return ic.tint ? svg(ic.icon).size(size).text_color(t.muted) : image(ic.icon).size(size);
+  if (g.icon) return image(g.icon).size(size);
   return div().size(size).flex().items_center().justify_center().text_size(size - 3).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
 }
 function quotaBar(t, r, w = null) {

@@ -198,6 +198,7 @@ function pickNewestUsage(readings) {
 
 // src/shared/statusline.js
 var WRITER_MARK = "herdr-statusline-cache";
+var AGY_MARK = "herdr-agy-statusline";
 var isObj3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function readSettings(text) {
   if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
@@ -243,11 +244,11 @@ function scriptPaths(command, home2) {
   return out;
 }
 var writerCommand = (writer) => `node "${String(writer).replace(/\\/g, "/")}"`;
-function statuslinePlan(settingsText, writer, scriptTexts = []) {
+function statuslinePlan(settingsText, writer, scriptTexts = [], mark = WRITER_MARK) {
   const r = readSettings(settingsText);
   if (!r.ok) return { state: "invalid", error: r.error };
   const { settings, command } = r;
-  if (command && (command.includes(WRITER_MARK) || scriptTexts.some((t) => typeof t === "string" && t.includes(WRITER_MARK)))) {
+  if (command && (command.includes(mark) || scriptTexts.some((t) => typeof t === "string" && t.includes(mark)))) {
     return { state: "fed" };
   }
   const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
@@ -290,13 +291,15 @@ function slashPath(p) {
 // src/mods/dock-quotas/view.js
 var PROVIDERS = [
   { id: "claude", title: "Claude", agent: "claude", source: "Claude status line" },
-  { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" }
+  { id: "codex", title: "Codex", agent: "codex", source: "Codex session logs" },
+  // `icon`: Herdr's shipped program icon, used when its agent table has no entry under `agent`.
+  { id: "antigravity", title: "Antigravity", agent: "antigravity", icon: "icons/antigravity.svg", source: "Antigravity status line" }
 ];
 var LABELS = { five_hour: "5-hour", weekly: "weekly" };
 var sourceOf = (usage, provider) => usage.source === "cli" ? "Claude Code (/usage)" : provider.source;
-var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : LABELS[w.kind] ?? w.kind;
+var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : w.kind === "bucket" ? w.label : LABELS[w.kind] ?? w.kind;
 var SHORT = { five_hour: "5h", weekly: "wk" };
-var shortOf = (w) => w.kind === "model" ? w.label : SHORT[w.kind] ?? w.kind;
+var shortOf = (w) => w.kind === "model" ? w.label : w.kind === "bucket" ? w.short ?? w.label : SHORT[w.kind] ?? w.kind;
 var isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 function shortReset(resetsMs, nowMs) {
   if (!Number.isFinite(resetsMs) || resetsMs <= nowMs) return null;
@@ -344,7 +347,7 @@ function quotaRows(usage, nowMs, provider) {
   });
 }
 function quotaGroups(byId, nowMs) {
-  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
+  return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, icon: p.icon ?? null, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 function iconBadge(readings, nowMs) {
   let best = null;
@@ -391,10 +394,77 @@ function setupNotice(state, { busy = false, error = null } = {}) {
       return null;
   }
 }
+function agySetupNotice(state, { busy = false, error = null } = {}) {
+  if (error) return { text: "Antigravity: set up failed", tip: error, action: "setup" };
+  if (busy) return { text: "Antigravity: setting up\u2026", tip: "Writing ~/.gemini/antigravity-cli/settings.json", action: null };
+  switch (state) {
+    case "missing":
+      return {
+        text: "Antigravity: status line not set up",
+        tip: "agy hands its quota only to a status line. Set up adds one that prints nothing.",
+        action: "setup"
+      };
+    case "other":
+      return {
+        text: "Antigravity: status line doesn't feed Quotas",
+        tip: "Set up puts herdr-dock's writer in front of your status line; it prints the same.",
+        action: "setup"
+      };
+    case "complex":
+      return {
+        text: "Antigravity: add one line to your status line",
+        tip: "Your status line is more than one command, so it's left alone.",
+        action: null
+      };
+    case "fed":
+      return {
+        text: "Antigravity: waiting for an Antigravity session",
+        tip: "The status line is set up. The limits arrive while an agy session runs.",
+        action: null
+      };
+    case "invalid":
+      return { text: "Antigravity: ~/.gemini/antigravity-cli/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
+    default:
+      return null;
+  }
+}
 function publishable(reading) {
   if (!reading) return null;
   const { source = null, plan = null, fetchedMs, stale, windows } = reading;
   return { source, plan, fetchedMs, stale: Boolean(stale), windows: (windows ?? []).map((w) => ({ ...w })) };
+}
+
+// src/shared/antigravity.js
+var AGY_CACHE_REL = ".gemini/antigravity-cli/statusline-cache/agy-statusline.json";
+var AGY_STALE_MS = 15 * 6e4;
+var HOUR2 = 36e5;
+var ALWAYS = { "gemini-5h": "five_hour", "gemini-weekly": "weekly" };
+var NAMED = { "3p-5h": ["other models 5-hour", "3p 5h"], "3p-weekly": ["other models weekly", "3p wk"] };
+var isNum4 = (v) => typeof v === "number" && Number.isFinite(v);
+var durationOf = (key) => /5h$/.test(key) ? 5 * HOUR2 : /weekly$/.test(key) ? 7 * 24 * HOUR2 : /daily$/.test(key) ? 24 * HOUR2 : null;
+function parseAgyCache(text, nowMs) {
+  let d;
+  try {
+    d = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!d || d.provider !== "antigravity" || !isNum4(d.fetched_at_unix) || typeof d.buckets !== "object" || !d.buckets) return null;
+  const windows = [];
+  const order = (k) => k === "gemini-5h" ? 0 : k === "gemini-weekly" ? 1 : 2;
+  for (const key of Object.keys(d.buckets).sort((a, b) => order(a) - order(b) || a.localeCompare(b))) {
+    const b = d.buckets[key];
+    if (!isNum4(b?.remaining_fraction)) continue;
+    const usedPercent = Math.max(0, Math.min(100, (1 - b.remaining_fraction) * 100));
+    if (!ALWAYS[key] && usedPercent <= 0) continue;
+    const t = Date.parse(b.reset_time ?? "");
+    const w = { kind: ALWAYS[key] ?? "bucket", usedPercent, resetsMs: Number.isFinite(t) ? t : null, durationMs: durationOf(key) };
+    if (!ALWAYS[key]) Object.assign(w, { label: NAMED[key]?.[0] ?? key, short: NAMED[key]?.[1] ?? key });
+    windows.push(w);
+  }
+  if (!windows.length) return null;
+  const fetchedMs = d.fetched_at_unix * 1e3;
+  return { source: "agy-statusline", plan: typeof d.plan === "string" && d.plan ? d.plan : null, fetchedMs, stale: nowMs - fetchedMs > AGY_STALE_MS, windows };
 }
 
 // src/mods/dock-quotas/draw.js
@@ -406,6 +476,7 @@ var levelColor = (t, level) => ({ ok: t.accent, warn: WARN, high: t.blocked ?? H
 function providerFace(t, g, icons, size = 13) {
   const ic = icons?.[g.agent];
   if (ic) return ic.tint ? svg2(ic.icon).size(size).text_color(t.muted) : image(ic.icon).size(size);
+  if (g.icon) return image(g.icon).size(size);
   return div2().size(size).flex().items_center().justify_center().text_size(size - 3).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
 }
 function quotaBar(t, r, w = null) {
@@ -427,6 +498,10 @@ var CODEX_ABSENT_MS = 3e5;
 var EMPTY_WATCH_MS = 1e3;
 var TOP_KEY = "dock.quotas.top";
 var READINGS_KEY = "dock.quotas.readings";
+var TOOLS = {
+  claude: { dir: ".claude", writer: "herdr-statusline-cache.mjs", mark: WRITER_MARK, args: [], notice: setupNotice },
+  agy: { dir: ".gemini/antigravity-cli", writer: "herdr-agy-statusline.mjs", mark: AGY_MARK, args: ["--agy"], notice: agySetupNotice }
+};
 var CLI_EVERY_MS = 5 * 6e4;
 var TOP_REFRESH_MS = 55e3;
 var SETUP_CHECK_MS = 6e4;
@@ -437,7 +512,8 @@ var Quotas = class extends View {
     this.cliAt = 0;
     this.codex = null;
     this.icons = {};
-    this.setup = { state: null, busy: false, error: null, nextAt: 0 };
+    this.setups = { claude: { state: null, busy: false, error: null, nextAt: 0 }, agy: { state: null, busy: false, error: null, nextAt: 0 } };
+    this.agy = null;
     if (checking()) return;
     cx.spawn(async (cx2) => {
       try {
@@ -452,8 +528,25 @@ var Quotas = class extends View {
       this.reload(cx2);
       this.reloadCodex(cx2);
       this.reloadCli(cx2);
+      this.reloadAgy(cx2);
     });
     this.reloadCli(cx);
+    this.reloadAgy(cx);
+    cx.spawn(async (cx2) => {
+      const dir2 = `${slashPath(home())}/${AGY_CACHE_REL}`.replace(/\/[^/]+$/, "");
+      for (; ; ) {
+        try {
+          const changed = await watchFolder(dir2);
+          if (!changed?.length) {
+            await cx2.sleep(EMPTY_WATCH_MS);
+            continue;
+          }
+          this.reloadAgy(cx2);
+        } catch {
+          await cx2.sleep(REFRESH_MS);
+        }
+      }
+    });
     const dir = slashPath(home()) + "/.claude/statusline-cache";
     this.reload(cx);
     this.reloadCodex(cx);
@@ -485,7 +578,7 @@ var Quotas = class extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
-          if (!this.statusline) this.checkSetup(cx2);
+          if (!this.claude()) this.checkSetup(cx2, "claude");
           this.publishTop();
           cx2.notify();
         } while (this.again);
@@ -526,7 +619,7 @@ var Quotas = class extends View {
   // The readings for the bottom-bar strip (dock-limits), in shared state, written only when they change (a write
   // re-renders every mod). The strip asks nothing itself, so the claude CLI isn't asked twice.
   publishReadings() {
-    const next = { claude: publishable(this.claude()), codex: publishable(this.codex) };
+    const next = { claude: publishable(this.claude()), codex: publishable(this.codex), antigravity: publishable(this.agy) };
     const text = JSON.stringify(next);
     if (text === this.lastPublished) return;
     this.lastPublished = text;
@@ -552,66 +645,89 @@ var Quotas = class extends View {
       }
     });
   }
-  // No Claude reading: is Claude Code's status line wired to the writer? Reads ~/.claude/settings.json (and the
-  // script its command runs, for a line added by hand); no ~/.claude means Claude Code isn't used here.
-  checkSetup(cx, force = false) {
-    if (this.setup.checking || this.setup.busy || !force && Date.now() < this.setup.nextAt) return;
-    this.setup.checking = true;
+  // No reading from a tool: is its status line wired to herdr-dock's writer? Reads its settings.json (and the script
+  // its command runs, for a line added by hand); no settings folder means the tool isn't used here.
+  checkSetup(cx, tool = "claude", force = false) {
+    const st = this.setups[tool], def = TOOLS[tool];
+    if (st.checking || st.busy || !force && Date.now() < st.nextAt) return;
+    st.checking = true;
     cx.spawn(async (cx2) => {
       try {
         const root = slashPath(home());
-        const text = await readTextFile(root + "/.claude/settings.json").catch(() => null);
+        const dir = `${root}/${def.dir}`;
+        const text = await readTextFile(`${dir}/settings.json`).catch(() => null);
         let state;
         if (text == null) {
-          const probe = listDirCommand(window2()?.platform, root + "/.claude");
+          const probe = listDirCommand(window2()?.platform, dir);
           const r = await exec(probe.command, probe.args).catch(() => null);
           state = r && r.code === 0 ? "missing" : "no-claude";
         } else {
-          const writer = this.writerPath();
-          const first = statuslinePlan(text, writer);
-          state = first.command ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null)))).state : first.state;
+          const writer = this.writerPath(tool);
+          const first = statuslinePlan(text, writer, [], def.mark);
+          state = first.command ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null))), def.mark).state : first.state;
         }
-        this.setup.state = state;
+        st.state = state;
       } catch (e) {
-        console.log(`dock-quotas: status line check failed: ${e}`);
+        console.log(`dock-quotas: ${tool} status line check failed: ${e}`);
       } finally {
-        this.setup.checking = false;
-        this.setup.nextAt = Date.now() + SETUP_CHECK_MS;
+        st.checking = false;
+        st.nextAt = Date.now() + SETUP_CHECK_MS;
         cx2.notify();
       }
     });
   }
-  writerPath() {
-    return slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-cache.mjs";
+  writerPath(tool = "claude") {
+    return `${slashPath(appHome())}/mods/dock-quotas/${TOOLS[tool].writer}`;
   }
-  // Set up: runs the setup script shipped with this mod (it backs up settings.json, then writes it).
-  runSetup(cx) {
-    if (this.setup.busy) return;
-    this.setup.busy = true;
-    this.setup.error = null;
+  // Set up: runs the setup script shipped with this mod (it backs up the settings file, then writes it).
+  runSetup(cx, tool = "claude") {
+    const st = this.setups[tool];
+    if (st.busy) return;
+    st.busy = true;
+    st.error = null;
     cx.notify();
     cx.spawn(async (cx2) => {
       try {
         const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
-        const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 3e4 });
-        if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
+        const r = await exec("node", [script, ...TOOLS[tool].args, "--writer", this.writerPath(tool)], { timeout: 3e4 });
+        if (r.code !== 0) st.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
         else {
-          this.setup.state = "fed";
+          st.state = "fed";
           console.log(`dock-quotas: ${r.stdout.trim()}`);
         }
       } catch (e) {
-        this.setup.error = `couldn't run node: ${e}`;
+        st.error = `couldn't run node: ${e}`;
       } finally {
-        this.setup.busy = false;
-        this.checkSetup(cx2, true);
+        st.busy = false;
+        this.checkSetup(cx2, tool, true);
         cx2.notify();
       }
     });
   }
-  setupRow(t) {
-    const n = this.claude() ? null : setupNotice(this.setup.state, this.setup);
+  // A tool's self-check line, while it has no reading: what's wrong, and Set up when that fixes it.
+  setupRow(t, tool = "claude") {
+    const reading = tool === "claude" ? this.claude() : this.agy;
+    const n = reading ? null : TOOLS[tool].notice(this.setups[tool].state, this.setups[tool]);
     if (!n) return null;
-    return h_flex2().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div3().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex2().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
+    return h_flex2().id(`quota-setup-${tool}`).px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div3().flex_1().min_w(0).truncate().text_size(12).text_color(this.setups[tool].error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex2().id(`quota-setup-run-${tool}`).h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx, tool)).child("Set up")));
+  }
+  // Antigravity's limits, from its status-line cache (herdr-agy-statusline.mjs): fresh while an agy session runs.
+  reloadAgy(cx) {
+    if (this.agyReading) return;
+    this.agyReading = true;
+    cx.spawn(async (cx2) => {
+      try {
+        const text = await readTextFile(`${slashPath(home())}/${AGY_CACHE_REL}`).catch(() => null);
+        this.agy = parseAgyCache(text, Date.now());
+        if (!this.agy) this.checkSetup(cx2, "agy");
+      } catch (e) {
+        console.log(`dock-quotas: Antigravity read failed: ${e}`);
+      } finally {
+        this.agyReading = false;
+        this.publishTop();
+        cx2.notify();
+      }
+    });
   }
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
   // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
@@ -620,7 +736,7 @@ var Quotas = class extends View {
   publishTop() {
     this.publishReadings();
     const now = Date.now();
-    const b = iconBadge([this.claude(), this.codex], now);
+    const b = iconBadge([this.claude(), this.codex, this.agy], now);
     const prev = shared(TOP_KEY) ?? null;
     if (!b) {
       if (prev !== null) setShared2(TOP_KEY, null);
@@ -682,7 +798,7 @@ var Quotas = class extends View {
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
-      const b = iconBadge([this.claude(), this.codex], Date.now());
+      const b = iconBadge([this.claude(), this.codex, this.agy], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
       if (!b) return rail;
       const p = parseInt(b.text, 10);
@@ -692,10 +808,11 @@ var Quotas = class extends View {
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId)));
     }
-    const groups = quotaGroups({ claude: this.claude(), codex: this.codex }, Date.now());
-    const setup = this.setupRow(t);
+    const groups = quotaGroups({ claude: this.claude(), codex: this.codex, antigravity: this.agy }, Date.now());
+    const setup = this.setupRow(t, "claude");
+    const agySetup = this.setupRow(t, "agy");
     let n = 0;
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div3().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(Boolean(agySetup), (el) => el.child(agySetup)).when(!groups.length && !setup, (el) => el.child(div3().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 };
 export {

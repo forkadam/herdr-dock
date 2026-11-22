@@ -9,6 +9,8 @@
 // - a command with shell operators (&&, ;, a pipe...) is left alone: the person adds one line themselves.
 
 export const WRITER_MARK = "herdr-statusline-cache";
+// Antigravity's writer (herdr-agy-statusline.mjs): its status line is set up the same way, in its own settings.
+export const AGY_MARK = "herdr-agy-statusline";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -64,11 +66,12 @@ export const writerCommand = (writer) => `node "${String(writer).replace(/\\/g, 
 //   { state: "other", text, command }    a simple command: `text` wraps it
 //   { state: "complex", command }        a command we won't touch
 //   { state: "invalid", error }          settings.json can't be read as JSON
-export function statuslinePlan(settingsText, writer, scriptTexts = []) {
+// `mark`: what in a command (or its script) shows the writer is already there (Claude's or Antigravity's).
+export function statuslinePlan(settingsText, writer, scriptTexts = [], mark = WRITER_MARK) {
   const r = readSettings(settingsText);
   if (!r.ok) return { state: "invalid", error: r.error };
   const { settings, command } = r;
-  if (command && (command.includes(WRITER_MARK) || scriptTexts.some((t) => typeof t === "string" && t.includes(WRITER_MARK)))) {
+  if (command && (command.includes(mark) || scriptTexts.some((t) => typeof t === "string" && t.includes(mark)))) {
     return { state: "fed" };
   }
   const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";

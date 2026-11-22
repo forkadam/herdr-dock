@@ -1,3 +1,4 @@
+import * as setupNoticeModule from "../src/mods/dock-quotas/view.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -120,4 +121,57 @@ test("setupNotice: what Quotas says while there's no Claude reading", () => {
   assert.equal(setupNotice("invalid").action, null);
   assert.equal(setupNotice("missing", { busy: true }).action, null);
   assert.equal(setupNotice("fed", { error: "boom" }).tip, "boom");
+});
+
+// ---- Antigravity: the same setup, its own settings file and writer ----
+import { AGY_MARK } from "../src/shared/statusline.js";
+
+test("statuslinePlan with Antigravity's mark: Claude's writer doesn't count as Antigravity's", () => {
+  const AW = "/h/.config/herdr-app/mods/dock-quotas/herdr-agy-statusline.mjs";
+  const text = JSON.stringify({ trustedWorkspaces: ["/p"] });
+  const p = statuslinePlan(text, AW, [], AGY_MARK);
+  assert.equal(p.state, "missing");
+  assert.deepEqual(JSON.parse(p.text), { trustedWorkspaces: ["/p"], statusLine: { type: "command", command: `node "${AW}"` } });
+  assert.equal(statuslinePlan(JSON.stringify({ statusLine: { command: `node "${AW}"` } }), AW, [], AGY_MARK).state, "fed");
+  assert.equal(statuslinePlan(JSON.stringify({ statusLine: { command: "node ~/x/herdr-statusline-cache.mjs" } }), AW, [], AGY_MARK).state, "other");
+});
+
+test("setupStatusline for Antigravity: its settings get the agy writer, the rest kept; no folder, nothing", () => {
+  const home = mkdtempSync(join(tmpdir(), "sls-"));
+  const dir = join(home, ".gemini", "antigravity-cli");
+  const AW = "/h/mods/dock-quotas/herdr-agy-statusline.mjs";
+  const agy = { claudeHome: dir, writer: AW, home, mark: AGY_MARK, name: "Antigravity" };
+  assert.equal(setupStatusline(agy).state, "no-claude");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "settings.json"), JSON.stringify({ trustedWorkspaces: ["/p"] }, null, 2));
+  const r = setupStatusline(agy);
+  assert.equal(r.state, "missing");
+  assert.match(r.message, /Antigravity/);
+  const s = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+  assert.deepEqual(s.trustedWorkspaces, ["/p"]);
+  assert.equal(s.statusLine.command, `node "${AW}"`);
+  assert.equal(setupStatusline(agy).state, "fed");
+});
+
+test("the setup script's --agy targets Antigravity's settings with the agy writer beside it", () => {
+  const home = mkdtempSync(join(tmpdir(), "sls-"));
+  const dir = join(home, ".gemini", "antigravity-cli");
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, "..", "src/app/statusline-setup.js"), "--agy", "--check", "--writer", join(import.meta.dirname, "..", "scripts", "herdr-agy-statusline.mjs")],
+    { encoding: "utf8", env: { ...process.env, DOCK_AGY_HOME: dir } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^missing: would add a status line .*Antigravity/);
+});
+
+test("agySetupNotice: Antigravity's own wording and settings file", () => {
+  const { agySetupNotice } = setupNoticeModule;
+  assert.equal(agySetupNotice(null), null);
+  assert.equal(agySetupNotice("no-claude"), null);
+  assert.match(agySetupNotice("missing").text, /^Antigravity: status line not set up$/);
+  assert.match(agySetupNotice("missing").tip, /agy/);
+  assert.equal(agySetupNotice("missing").action, "setup");
+  assert.match(agySetupNotice("fed").text, /waiting for an Antigravity session/);
+  assert.equal(agySetupNotice("fed").action, null);
+  assert.match(agySetupNotice("invalid").text, /antigravity-cli\/settings\.json/);
+  assert.match(agySetupNotice("missing", { busy: true }).tip, /antigravity-cli/);
 });

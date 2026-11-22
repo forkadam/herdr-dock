@@ -13,6 +13,7 @@ export const levelColor = (t, level) => ({ ok: t.accent, warn: WARN, high: t.blo
 export function providerFace(t, g, icons, size = 13) {
   const ic = icons?.[g.agent];
   if (ic) return ic.tint ? svg(ic.icon).size(size).text_color(t.muted) : image(ic.icon).size(size);
+  if (g.icon) return image(g.icon).size(size); // Herdr's shipped program icon
   return div().size(size).flex().items_center().justify_center().text_size(size - 3).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
 }
 

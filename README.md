@@ -285,7 +285,7 @@ layout and shows a red dot on the toggle, so a half-saved file never breaks your
     "left":   { "size": 268, "mode": "expanded",
                 "features": [ { "mod": "dock-header", "size": 46, "drag": true },
                               { "mod": "dock-spaces" }, { "mod": "dock-agents" }, { "mod": "dock-git" },
-                              { "mod": "dock-quotas", "size": 220 }, { "mod": "dock-footer", "size": 40 } ] },
+                              { "mod": "dock-quotas", "size": 270 }, { "mod": "dock-footer", "size": 40 } ] },
     "right":  { "size": 360, "hidden": true,
                 "features": [ { "mod": "dock-pipelines" }, { "mod": "files" }, { "mod": "changes" } ] },
     "bottom": { "size": 28,  "features": [ { "mod": "workspace-status" } ] }
@@ -526,8 +526,17 @@ No Python is needed anywhere; everything runs on Node.
   fine; checked every 30 s, every 5 min while there's no `~/.codex/sessions`). A limit whose reset time has passed
   shows as "reset". Nothing to set up: use Codex once. A custom `CODEX_HOME` isn't followed (mods
   can't read environment variables).
-- **Gemini / Antigravity:** not shown. It keeps no usage record on disk; its quota comes from Google's servers, and
-  herdr-dock won't use your Google login to fetch it.
+- **Antigravity (the `agy` CLI):** its own status line hands its state to a command, like Claude Code's, and that
+  includes its quota buckets and plan. herdr-dock's writer (`mods/dock-quotas/herdr-agy-statusline.mjs`) keeps only
+  those in `~/.gemini/antigravity-cli/statusline-cache/agy-statusline.json` (no paths, prompts or account). Quotas
+  shows an **Antigravity** group: the plan (Google AI Pro, …), Gemini **5-hour** and **weekly** always, and the other
+  buckets (`3p-*`, the third-party models, and any other) only once they're in use. No login or token is used.
+  - **Set up**: `npm run deploy` and the app install set `statusLine` in `~/.gemini/antigravity-cli/settings.json`
+    (backup first: `settings.json.bak-herdr-dock`) when that folder exists, the same way as Claude's: a status line
+    that prints nothing, or the writer in front of yours (`--tee`). By hand: `node <app home>/mods/dock-quotas/
+    herdr-statusline-setup.mjs --agy`. Not set up, Quotas says "Antigravity: status line not set up" with **Set up**.
+  - **When it updates**: while an `agy` session runs (that's when agy runs its status line). Between sessions Quotas
+    keeps the last reading, faded as stale after 15 minutes.
 
 ## Known limitations
 

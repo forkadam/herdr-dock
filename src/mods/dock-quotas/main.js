@@ -7,10 +7,11 @@ import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
 import { mergeClaude, parseUsageOutput } from "../../shared/claude-usage.js";
 import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
-import { scriptPaths, statuslinePlan } from "../../shared/statusline.js";
+import { AGY_MARK, WRITER_MARK, scriptPaths, statuslinePlan } from "../../shared/statusline.js";
 import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { quotaGroups, iconBadge, barLevel, setupNotice, publishable } from "./view.js";
+import { quotaGroups, iconBadge, barLevel, setupNotice, agySetupNotice, publishable } from "./view.js";
+import { AGY_CACHE_REL, parseAgyCache } from "../../shared/antigravity.js";
 import { WARN, HIGH, groupHeaderEl, quotaRowEl } from "./draw.js";
 
 const REFRESH_MS = 30000;
@@ -21,6 +22,12 @@ const EMPTY_WATCH_MS = 1000;
 const TOP_KEY = "dock.quotas.top";
 // Quotas' readings for the bottom-bar strip (dock-limits): { claude, codex }, each publishable() or null.
 const READINGS_KEY = "dock.quotas.readings";
+// The tools whose status line feeds Quotas: where their settings live, the writer that line runs, how it's recognised,
+// the setup script's extra argument, and the self-check's wording.
+const TOOLS = {
+  claude: { dir: ".claude", writer: "herdr-statusline-cache.mjs", mark: WRITER_MARK, args: [], notice: setupNotice },
+  agy: { dir: ".gemini/antigravity-cli", writer: "herdr-agy-statusline.mjs", mark: AGY_MARK, args: ["--agy"], notice: agySetupNotice },
+};
 // Claude's limits from the claude CLI (get_usage, what /usage shows): asked this often. Cheap (~1 s), no model use.
 const CLI_EVERY_MS = 5 * 60e3;
 // dock.quotas.top's `at` is refreshed once it is this old (with the 30 s timer: at most ~60 s old).
@@ -35,7 +42,9 @@ export default class Quotas extends View {
     this.cliAt = 0;
     this.codex = null;
     this.icons = {}; // agent key -> { icon, tint } from Herdr's agent table
-    this.setup = { state: null, busy: false, error: null, nextAt: 0 }; // the status-line self-check
+    // The status-line self-checks, per tool (TOOLS): Claude Code's and Antigravity's.
+    this.setups = { claude: { state: null, busy: false, error: null, nextAt: 0 }, agy: { state: null, busy: false, error: null, nextAt: 0 } };
+    this.agy = null; // Antigravity's reading (its status-line cache)
     if (checking()) return;
     cx.spawn(async (cx) => {
       try {
@@ -45,8 +54,21 @@ export default class Quotas extends View {
     });
     this.codexNextAt = 0;
     // Claude reloads on every status-line write (the watch below) and on the timer; Codex only on the timer.
-    cx.timer.every(REFRESH_MS, (cx) => { this.reload(cx); this.reloadCodex(cx); this.reloadCli(cx); });
+    cx.timer.every(REFRESH_MS, (cx) => { this.reload(cx); this.reloadCodex(cx); this.reloadCli(cx); this.reloadAgy(cx); });
     this.reloadCli(cx);
+    this.reloadAgy(cx);
+    // Antigravity's cache changes on every status-line update while agy runs: follow it (the timer covers a folder
+    // that doesn't exist yet).
+    cx.spawn(async (cx) => {
+      const dir = `${slashPath(home())}/${AGY_CACHE_REL}`.replace(/\/[^/]+$/, "");
+      for (;;) {
+        try {
+          const changed = await watchFolder(dir);
+          if (!changed?.length) { await cx.sleep(EMPTY_WATCH_MS); continue; }
+          this.reloadAgy(cx);
+        } catch { await cx.sleep(REFRESH_MS); }
+      }
+    });
     const dir = slashPath(home()) + "/.claude/statusline-cache";
     this.reload(cx);
     this.reloadCodex(cx);
@@ -73,7 +95,7 @@ export default class Quotas extends View {
           this.again = false;
           const text = await readTextFile(slashPath(home()) + "/.claude/statusline-cache/claude-statusline.json").catch(() => null);
           this.statusline = parseStatusline(text, Date.now());
-          if (!this.statusline) this.checkSetup(cx);
+          if (!this.claude()) this.checkSetup(cx, "claude");
           this.publishTop();
           cx.notify();
         } while (this.again);
@@ -116,7 +138,7 @@ export default class Quotas extends View {
   // The readings for the bottom-bar strip (dock-limits), in shared state, written only when they change (a write
   // re-renders every mod). The strip asks nothing itself, so the claude CLI isn't asked twice.
   publishReadings() {
-    const next = { claude: publishable(this.claude()), codex: publishable(this.codex) };
+    const next = { claude: publishable(this.claude()), codex: publishable(this.codex), antigravity: publishable(this.agy) };
     const text = JSON.stringify(next);
     if (text === this.lastPublished) return;
     this.lastPublished = text;
@@ -143,70 +165,94 @@ export default class Quotas extends View {
     });
   }
 
-  // No Claude reading: is Claude Code's status line wired to the writer? Reads ~/.claude/settings.json (and the
-  // script its command runs, for a line added by hand); no ~/.claude means Claude Code isn't used here.
-  checkSetup(cx, force = false) {
-    if (this.setup.checking || this.setup.busy || (!force && Date.now() < this.setup.nextAt)) return;
-    this.setup.checking = true;
+  // No reading from a tool: is its status line wired to herdr-dock's writer? Reads its settings.json (and the script
+  // its command runs, for a line added by hand); no settings folder means the tool isn't used here.
+  checkSetup(cx, tool = "claude", force = false) {
+    const st = this.setups[tool], def = TOOLS[tool];
+    if (st.checking || st.busy || (!force && Date.now() < st.nextAt)) return;
+    st.checking = true;
     cx.spawn(async (cx) => {
       try {
         const root = slashPath(home());
-        const text = await readTextFile(root + "/.claude/settings.json").catch(() => null);
+        const dir = `${root}/${def.dir}`;
+        const text = await readTextFile(`${dir}/settings.json`).catch(() => null);
         let state;
         if (text == null) {
-          const probe = listDirCommand(window()?.platform, root + "/.claude");
+          const probe = listDirCommand(window()?.platform, dir);
           const r = await exec(probe.command, probe.args).catch(() => null);
           state = r && r.code === 0 ? "missing" : "no-claude";
         } else {
-          const writer = this.writerPath();
-          const first = statuslinePlan(text, writer);
+          const writer = this.writerPath(tool);
+          const first = statuslinePlan(text, writer, [], def.mark);
           state = first.command
-            ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null)))).state
+            ? statuslinePlan(text, writer, await Promise.all(scriptPaths(first.command, root).map((p) => readTextFile(p).catch(() => null))), def.mark).state
             : first.state;
         }
-        this.setup.state = state;
+        st.state = state;
       } catch (e) {
-        console.log(`dock-quotas: status line check failed: ${e}`);
+        console.log(`dock-quotas: ${tool} status line check failed: ${e}`);
       } finally {
-        this.setup.checking = false;
-        this.setup.nextAt = Date.now() + SETUP_CHECK_MS;
+        st.checking = false;
+        st.nextAt = Date.now() + SETUP_CHECK_MS;
         cx.notify();
       }
     });
   }
 
-  writerPath() { return slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-cache.mjs"; }
+  writerPath(tool = "claude") { return `${slashPath(appHome())}/mods/dock-quotas/${TOOLS[tool].writer}`; }
 
-  // Set up: runs the setup script shipped with this mod (it backs up settings.json, then writes it).
-  runSetup(cx) {
-    if (this.setup.busy) return;
-    this.setup.busy = true;
-    this.setup.error = null;
+  // Set up: runs the setup script shipped with this mod (it backs up the settings file, then writes it).
+  runSetup(cx, tool = "claude") {
+    const st = this.setups[tool];
+    if (st.busy) return;
+    st.busy = true;
+    st.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         const script = slashPath(appHome()) + "/mods/dock-quotas/herdr-statusline-setup.mjs";
-        const r = await exec("node", [script, "--writer", this.writerPath()], { timeout: 30000 });
-        if (r.code !== 0) this.setup.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
-        else { this.setup.state = "fed"; console.log(`dock-quotas: ${r.stdout.trim()}`); } // "waiting" at once
+        const r = await exec("node", [script, ...TOOLS[tool].args, "--writer", this.writerPath(tool)], { timeout: 30000 });
+        if (r.code !== 0) st.error = (r.stderr || r.stdout || `exit ${r.code}`).trim();
+        else { st.state = "fed"; console.log(`dock-quotas: ${r.stdout.trim()}`); } // "waiting" at once
       } catch (e) {
-        this.setup.error = `couldn't run node: ${e}`;
+        st.error = `couldn't run node: ${e}`;
       } finally {
-        this.setup.busy = false;
-        this.checkSetup(cx, true);
+        st.busy = false;
+        this.checkSetup(cx, tool, true);
         cx.notify();
       }
     });
   }
 
-  setupRow(t) {
-    const n = this.claude() ? null : setupNotice(this.setup.state, this.setup);
+  // A tool's self-check line, while it has no reading: what's wrong, and Set up when that fixes it.
+  setupRow(t, tool = "claude") {
+    const reading = tool === "claude" ? this.claude() : this.agy;
+    const n = reading ? null : TOOLS[tool].notice(this.setups[tool].state, this.setups[tool]);
     if (!n) return null;
-    return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip)
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? (t.blocked ?? HIGH) : t.muted).child(n.text))
-      .when(n.action === "setup", (el) => el.child(h_flex().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6)
+    return h_flex().id(`quota-setup-${tool}`).px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip)
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.setups[tool].error ? (t.blocked ?? HIGH) : t.muted).child(n.text))
+      .when(n.action === "setup", (el) => el.child(h_flex().id(`quota-setup-run-${tool}`).h(22).px(8).flex_none().items_center().rounded(6)
         .border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer()
-        .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
+        .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx, tool)).child("Set up")));
+  }
+
+  // Antigravity's limits, from its status-line cache (herdr-agy-statusline.mjs): fresh while an agy session runs.
+  reloadAgy(cx) {
+    if (this.agyReading) return;
+    this.agyReading = true;
+    cx.spawn(async (cx) => {
+      try {
+        const text = await readTextFile(`${slashPath(home())}/${AGY_CACHE_REL}`).catch(() => null);
+        this.agy = parseAgyCache(text, Date.now());
+        if (!this.agy) this.checkSetup(cx, "agy");
+      } catch (e) {
+        console.log(`dock-quotas: Antigravity read failed: ${e}`);
+      } finally {
+        this.agyReading = false;
+        this.publishTop();
+        cx.notify();
+      }
+    });
   }
 
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
@@ -216,7 +262,7 @@ export default class Quotas extends View {
   publishTop() {
     this.publishReadings();
     const now = Date.now();
-    const b = iconBadge([this.claude(), this.codex], now);
+    const b = iconBadge([this.claude(), this.codex, this.agy], now);
     const prev = shared(TOP_KEY) ?? null;
     if (!b) { if (prev !== null) setShared(TOP_KEY, null); return; }
     const p = parseInt(b.text, 10), stale = b.stale;
@@ -279,7 +325,7 @@ export default class Quotas extends View {
     const myId = props()?.dockFeature ?? "dock-quotas";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
-      const b = iconBadge([this.claude(), this.codex], Date.now());
+      const b = iconBadge([this.claude(), this.codex, this.agy], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
       if (!b) return rail;
       const p = parseInt(b.text, 10);
@@ -293,13 +339,15 @@ export default class Quotas extends View {
       return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
         .child(this.header(t, () => requestFocus(myId)));
     }
-    const groups = quotaGroups({ claude: this.claude(), codex: this.codex }, Date.now());
-    const setup = this.setupRow(t);
+    const groups = quotaGroups({ claude: this.claude(), codex: this.codex, antigravity: this.agy }, Date.now());
+    const setup = this.setupRow(t, "claude");
+    const agySetup = this.setupRow(t, "agy");
     let n = 0;
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
       .child(this.header(t, null))
       .child(v_flex().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar()
       .when(Boolean(setup), (el) => el.child(setup))
+      .when(Boolean(agySetup), (el) => el.child(agySetup))
       .when(!groups.length && !setup, (el) => el.child(div().px(16).py(4).text_size(12).text_color(t.dim)
         .tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.")
         .child("no usage recorded yet")))

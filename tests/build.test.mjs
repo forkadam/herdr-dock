@@ -30,8 +30,10 @@ after(() => { for (const d of repos) rmSync(d, { recursive: true, force: true })
 // Deploy also installs the status-line writer into ~/.claude: tests point it at a temp folder.
 // DOCK_REPO points deploy's config (and the migration) at a temp repo, never this one.
 const noClaude = join(tmpdir(), "dock-no-claude-" + process.pid);
+// The same for Antigravity's settings (~/.gemini/antigravity-cli): never the real ones.
+const noAgy = join(tmpdir(), "dock-no-agy-" + process.pid);
 const run = (args, env = {}) =>
-  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, DOCK_REPO: cleanRepo, ...env } });
+  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, DOCK_AGY_HOME: noAgy, DOCK_REPO: cleanRepo, ...env } });
 const tmpHome = () => mkdtempSync(join(tmpdir(), "dock-app-"));
 
 test("deploy --dry-run into a temp app home writes nothing and lists actions", () => {
@@ -257,4 +259,26 @@ test("deploy records the repo's commit in source.json (null when the repo isn't 
     assert.equal(p.status, 0, p.stderr + p.stdout);
     assert.equal(JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8")).commit, null);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy sets up Antigravity's status line too, when its folder exists", () => {
+  const tmp = tmpHome();
+  const agy = mkdtempSync(join(tmpdir(), "dock-agy-"));
+  try {
+    writeFileSync(join(agy, "settings.json"), JSON.stringify({ trustedWorkspaces: ["/p"] }));
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_AGY_HOME: agy });
+    assert.equal(r.status, 0, r.stderr);
+    const s = JSON.parse(readFileSync(join(agy, "settings.json"), "utf8"));
+    assert.deepEqual(s.trustedWorkspaces, ["/p"]);
+    assert.equal(s.statusLine.command, `node "${slashPath(join(tmp, "mods/dock-quotas/herdr-agy-statusline.mjs"))}"`);
+    assert.ok(existsSync(join(tmp, "mods/dock-quotas/herdr-agy-statusline.mjs")));
+    assert.match(r.stdout, /Antigravity status line: /);
+    // No Antigravity folder: nothing is created.
+    const r2 = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r2.status, 0, r2.stderr);
+    assert.equal(existsSync(noAgy), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(agy, { recursive: true, force: true });
+  }
 });

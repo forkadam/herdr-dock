@@ -10,6 +10,7 @@ import { slashPath } from "../src/shared/path.js";
 import { BINDINGS, mergeKeys, SECTION } from "./keys.mjs";
 import { resolveAppHome } from "./app-home.mjs";
 import { setupStatusline } from "../src/app/statusline-setup.js";
+import { AGY_MARK } from "../src/shared/statusline.js";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
@@ -131,6 +132,18 @@ if (existsSync(claudeHome)) {
   }
 } else {
   console.log(`no ${claudeHome}: skipping the status-line writer (install Claude Code, then re-run deploy)`);
+}
+
+// Antigravity's status line (its quota buckets for Quotas): its agy CLI runs the writer installed with dock-quotas.
+// Only where Antigravity keeps its settings folder; DOCK_AGY_HOME overrides (tests). Nothing is created otherwise.
+const agyHome = resolve(process.env.DOCK_AGY_HOME || join(homedir(), ".gemini", "antigravity-cli"));
+if (existsSync(agyHome) && !noStatusline) {
+  try {
+    const r = setupStatusline({ claudeHome: agyHome, writer: slashPath(join(appHome, "mods/dock-quotas/herdr-agy-statusline.mjs")), dry, mark: AGY_MARK, name: "Antigravity" });
+    say(`Antigravity status line: ${r.message}`);
+  } catch (e) {
+    console.error(`Antigravity status line setup failed (Quotas offers Set up): ${e.message}`);
+  }
 }
 
 if (!hasKeys) {

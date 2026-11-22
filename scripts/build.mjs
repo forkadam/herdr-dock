@@ -43,6 +43,7 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
       // run with node from the installed mod: the Quotas panel's Set up button, the app install, deploy).
       copyFileSync(join(ROOT, "scripts/herdr-statusline-cache.mjs"), join(dest, "herdr-statusline-cache.mjs"));
       copyFileSync(join(ROOT, "scripts/herdr-claude-usage.mjs"), join(dest, "herdr-claude-usage.mjs")); // Claude's limits from the CLI
+      copyFileSync(join(ROOT, "scripts/herdr-agy-statusline.mjs"), join(dest, "herdr-agy-statusline.mjs")); // Antigravity's status line
       await build({
         entryPoints: [join(ROOT, "src/app/statusline-setup.js")], outfile: join(dest, "herdr-statusline-setup.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,

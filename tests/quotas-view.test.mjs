@@ -8,7 +8,7 @@ const CLAUDE = PROVIDERS.find((p) => p.id === "claude");
 const CODEX = PROVIDERS.find((p) => p.id === "codex");
 
 test("providers: Claude then Codex, each naming its source", () => {
-  assert.deepEqual(PROVIDERS.map((p) => p.id), ["claude", "codex"]);
+  assert.deepEqual(PROVIDERS.map((p) => p.id), ["claude", "codex", "antigravity"]);
   assert.equal(CLAUDE.title, "Claude"); assert.equal(CLAUDE.source, "Claude status line");
   assert.equal(CODEX.title, "Codex"); assert.equal(CODEX.source, "Codex session logs");
 });
@@ -140,4 +140,23 @@ test("stripItems: per provider, each window short; the time to reset only from a
   assert.deepEqual(s[0].items.map((i) => [i.short, i.usage, i.reset, i.level]), [["5h", "92%", "38m", "high"], ["wk", "20%", null, "ok"]]);
   assert.ok(s[0].items[0].pace > 0);
   assert.deepEqual(stripItems([]), []);
+});
+
+// ---- Antigravity ----
+test("Antigravity: its group, a bucket's own label and short label, the status line as source", () => {
+  const now = 1_000_000;
+  const agy = { source: "agy-statusline", plan: "Google AI Pro", fetchedMs: now, stale: false, windows: [
+    { kind: "five_hour", usedPercent: 3, resetsMs: null, durationMs: 5 * 3600e3 },
+    { kind: "bucket", label: "other models weekly", short: "3p wk", usedPercent: 50, resetsMs: null, durationMs: 7 * 86400e3 }] };
+  const g = quotaGroups({ antigravity: agy }, now);
+  assert.deepEqual(g.map((x) => [x.id, x.title, x.agent, x.plan]), [["antigravity", "Antigravity", "antigravity", "Google AI Pro"]]);
+  assert.deepEqual(g[0].rows.map((r) => [r.label, r.short]), [["5-hour", "5h"], ["other models weekly", "3p wk"]]);
+  assert.match(g[0].rows[0].tooltip, /source: Antigravity status line$/);
+});
+
+test("Antigravity's group carries Herdr's shipped icon as a fallback (its agent key may not be in the table)", () => {
+  const now = 1_000_000;
+  const agy = { source: "agy-statusline", plan: null, fetchedMs: now, stale: false, windows: [{ kind: "five_hour", usedPercent: 3, resetsMs: null, durationMs: 1 }] };
+  assert.equal(quotaGroups({ antigravity: agy }, now)[0].icon, "icons/antigravity.svg");
+  assert.equal(quotaGroups({ claude: S() }, now)[0].icon, null);
 });
