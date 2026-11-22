@@ -224,6 +224,26 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   `mock-token`) with 30 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.
 
+## Render
+
+**Render** (`dock-render`, a right-panel mod: its rail icon is the last one) draws what your agent wrote, beside the
+terminal, so you keep Claude Code's own terminal UI:
+
+- **Answer**: the focused agent's latest reply (what came after your last message), formatted (headings, lists,
+  tables, code), with each ```` ```mermaid ```` block drawn as a diagram. It follows the agent you're looking at (the
+  focused pane's, else the tab's first) and updates as the reply arrives.
+- **Diagrams**: every Mermaid diagram of the session, newest first.
+- **Files**: the Markdown files under the agent's folder (plans, specs), newest first; one opens formatted, with its
+  diagrams drawn.
+- Click a diagram to open it large. A diagram that doesn't parse shows its error and source.
+- **Claude Code** is read from its session transcript (`~/.claude/projects/…/<session>.jsonl`), **Codex** from its
+  newest rollout started in the agent's folder. Remote agents aren't followed.
+- Diagrams are drawn by `beautiful-mermaid` (MIT, pure JavaScript, no browser), bundled into the mod's helper
+  (`mods/dock-render/herdr-render.mjs`): nothing to install, on Windows, macOS and Linux. Each is rendered once into
+  `<app home>/herdr-dock/render/`, in your theme's colours. Making its SVG drawable by Herdr's renderer (no CSS
+  variables, `color-mix()` or web fonts) is ported from [herdr-chat](https://github.com/ChmaraX/herdr-chat) (MIT).
+- **Keys**: `dock-render.answer|diagrams|files|refresh`, and in Files `next|prev|open|back`.
+
 ## Panel modes
 
 The left panel has three modes. Ctrl+Alt+B (or the top-bar toggle) cycles through them:

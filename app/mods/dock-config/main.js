@@ -31,7 +31,7 @@ var DEFAULT_CONFIG = {
       mode: "expanded",
       features: [{ mod: "dock-header", size: 46, drag: true }, { mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-git" }, { mod: "dock-quotas", size: 220 }, { mod: "dock-footer", size: 40 }]
     },
-    right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "dock-notifications" }, { mod: "dock-files" }, { mod: "dock-changes" }] },
+    right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "dock-notifications" }, { mod: "dock-files" }, { mod: "dock-changes" }, { mod: "dock-render" }] },
     bottom: { size: 28, features: [{ mod: "dock-where" }, { mod: "dock-limits" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 36 }] },
     pages: { features: [] }
   }

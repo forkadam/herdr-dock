@@ -1,0 +1,128 @@
+// The Render panel's helper: an agent's session log (or a Markdown file) in, Markdown segments and rendered Mermaid
+// diagrams out, for dock-render. Bundled with beautiful-mermaid (MIT) into mods/dock-render/herdr-render.mjs, so
+// nothing needs installing. Run with one JSON argument; prints one JSON line.
+//
+//   { mode: "claude", transcript, cacheDir, relBase, theme }        Claude Code's session transcript
+//   { mode: "codex", cwd, codexHome?, now?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
+//   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file
+//   { mode: "list", cwd }                                           the Markdown files under cwd
+//
+// Each diagram is rendered once: <cacheDir>/<hash of source>-<hash of theme>.svg, shown by the mod as
+// image("<relBase>/<that file>"). A diagram that doesn't render gives { error, source } instead.
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
+import { renderMermaidSVG } from "beautiful-mermaid";
+import { flattenSvg, mix } from "../shared/render/flatten.js";
+import { hashText, splitSegments } from "../shared/render/markdown.js";
+import { codexCwd, readClaude, readCodex } from "../shared/render/transcript.js";
+import { slashPath } from "../shared/path.js";
+
+const MAX_LOG = 64 * 1024 * 1024; // a session log bigger than this is read from its last 64 MB
+const MAX_FILE = 2 * 1024 * 1024;
+const MAX_SOURCE = 32 * 1024;
+const MAX_DIAGRAMS = 40;
+
+function readText(path, max) {
+  const size = statSync(path).size;
+  if (size <= max) return readFileSync(path, "utf8");
+  const buf = readFileSync(path);
+  return buf.subarray(buf.length - max).toString("utf8");
+}
+
+function colors(t) {
+  return {
+    bg: t.background, fg: t.foreground, line: mix(t.foreground, 0.5, t.background), accent: t.accent, muted: t.muted,
+    surface: mix(t.foreground, t.dark ? 0.06 : 0.04, t.background), border: t.border, font: "sans-serif",
+  };
+}
+
+// One diagram -> { svg: "<relBase>/<file>" } or { error }.
+function render(source, req, themeId) {
+  try {
+    if (source.length > MAX_SOURCE) throw new Error(`diagram too large (${Math.round(source.length / 1024)} KiB)`);
+    const name = `${hashText(source)}-${themeId}.svg`;
+    const file = join(req.cacheDir, name);
+    if (!existsSync(file)) {
+      const svg = flattenSvg(renderMermaidSVG(source, colors(req.theme)), req.theme.background);
+      mkdirSync(req.cacheDir, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, svg);
+      renameSync(tmp, file);
+    }
+    // Its own size (the root's width/height), so the panel can scale it to its width.
+    const head = readFileSync(file, "utf8").slice(0, 600);
+    const w = Number(/\bwidth="([\d.]+)"/.exec(head)?.[1]), h = Number(/\bheight="([\d.]+)"/.exec(head)?.[1]);
+    return { svg: `${req.relBase}/${name}`, ...(w > 0 && h > 0 ? { w, h } : {}) };
+  } catch (e) {
+    return { error: String(e?.message ?? e).split("\n")[0].slice(0, 300) };
+  }
+}
+
+function segments(text, req, themeId) {
+  return splitSegments(text).map((s) => (s.kind === "mermaid" ? { ...s, ...render(s.source, req, themeId) } : s));
+}
+
+function fromLog(read, lines, req, extra) {
+  const themeId = hashText(JSON.stringify(req.theme));
+  const r = read(lines);
+  return {
+    ok: true, ...extra, prompt: r.prompt,
+    answer: r.answer ? { at: r.answer.at, segments: segments(r.answer.text, req, themeId) } : null,
+    diagrams: r.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d.source, req, themeId) })),
+  };
+}
+
+// Codex's rollouts of the last two weeks, newest file first.
+function codexRollouts(codexHome, now) {
+  const out = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(now - i * 86400e3);
+    const dir = join(codexHome, "sessions", String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
+    let names;
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const n of names) if (/^rollout-.*\.jsonl$/.test(n)) out.push(join(dir, n));
+  }
+  return out.map((p) => ({ p, m: statSync(p).mtimeMs })).sort((a, b) => b.m - a.m).map((x) => x.p);
+}
+
+const SKIP = new Set(["node_modules", ".git", "dist", "build", "target", ".venv", "vendor"]);
+function listMarkdown(cwd, depth = 3, out = [], dir = cwd) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    if (e.isDirectory()) { if (depth > 0 && !SKIP.has(e.name) && !e.name.startsWith(".")) listMarkdown(cwd, depth - 1, out, join(dir, e.name)); }
+    else if (/\.(md|markdown)$/i.test(e.name)) {
+      const path = join(dir, e.name);
+      out.push({ path: slashPath(path), name: e.name, rel: slashPath(relative(cwd, path)), mtimeMs: statSync(path).mtimeMs });
+    }
+  }
+  return out;
+}
+
+function main(req) {
+  switch (req?.mode) {
+    case "claude":
+      return fromLog(readClaude, readText(req.transcript, MAX_LOG).split("\n"), req, { source: "claude", file: req.transcript });
+    case "codex": {
+      const home = req.codexHome || join(homedir(), ".codex");
+      for (const file of codexRollouts(home, req.now ?? Date.now())) {
+        const lines = readText(file, MAX_LOG).split("\n");
+        if (codexCwd(lines) === req.cwd) return fromLog(readCodex, lines, req, { source: "codex", file });
+      }
+      return { ok: false, error: "no Codex session started in this folder in the last two weeks" };
+    }
+    case "file": {
+      const themeId = hashText(JSON.stringify(req.theme));
+      return { ok: true, path: req.path, segments: segments(readText(req.path, MAX_FILE), req, themeId) };
+    }
+    case "list":
+      return { ok: true, files: listMarkdown(req.cwd).sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 80) };
+    default:
+      return { ok: false, error: `unknown mode ${JSON.stringify(req?.mode)}` };
+  }
+}
+
+let out;
+try { out = main(JSON.parse(process.argv[2] ?? "")); } catch (e) { out = { ok: false, error: String(e?.message ?? e) }; }
+process.stdout.write(JSON.stringify(out) + "\n");

@@ -30,6 +30,14 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
       if (f === "mod.json" || f === "manifest.json" || f.endsWith(".svg")) copyFileSync(join(src, f), join(dest, f));
     }
     if (!existsSync(join(dest, manifest.icon))) throw new Error(`${name}: icon ${manifest.icon} not found`);
+    if (name === "dock-render") {
+      // The Render panel's helper, with beautiful-mermaid (and its elkjs) bundled in: nothing to install.
+      await build({
+        entryPoints: [join(ROOT, "src/app/render-helper.js")], outfile: join(dest, "herdr-render.mjs"),
+        bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
+        banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+      });
+    }
     if (name === "dock-quotas") {
       // The status-line writer Claude Code runs, and the setup that puts it in ~/.claude/settings.json (one file,
       // run with node from the installed mod: the Quotas panel's Set up button, the app install, deploy).

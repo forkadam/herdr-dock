@@ -1,0 +1,9 @@
+{"type":"user","message":{"role":"user","content":"Draw the login flow"},"timestamp":"2026-11-22T10:00:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"}]},"timestamp":"2026-11-22T10:00:01.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here is the flow:\n\n```mermaid\nflowchart LR\n  A[Login] --> B[Token]\n```\n\nDone."}]},"timestamp":"2026-11-22T10:00:02.000Z"}
+{"type":"user","message":{"role":"user","content":"Now the sequence, and check the code"},"timestamp":"2026-11-22T10:01:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me look."},{"type":"tool_use","id":"t1","name":"Read","input":{}}]},"timestamp":"2026-11-22T10:01:01.000Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file text with ```mermaid\nflowchart TD\n X-->Y\n``` inside"}]},"timestamp":"2026-11-22T10:01:02.000Z"}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>meta</system-reminder>"},"timestamp":"2026-11-22T10:01:02.500Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"## Sequence\n\n~~~Mermaid\nsequenceDiagram\n  U->>S: login\n~~~\n\n```js\nconst x = 1;\n```"}]},"timestamp":"2026-11-22T10:01:03.000Z"}
+not json at all

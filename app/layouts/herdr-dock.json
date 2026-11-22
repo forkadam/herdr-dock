@@ -269,6 +269,20 @@
                               "dockRegion": "right"
                             }
                           }
+                        },
+                        {
+                          "id": "dock-right-4-dock-render",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "dock-render",
+                            "props": {
+                              "dockFeature": "dock-right-4-dock-render",
+                              "dockRegion": "right"
+                            }
+                          }
                         }
                       ]
                     }

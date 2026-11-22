@@ -1,0 +1,1 @@
+{ "id": "dock-render", "name": "Render", "icon": "icon.svg", "regions": ["right"], "settings": {} }
