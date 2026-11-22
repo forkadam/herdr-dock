@@ -242,11 +242,22 @@ terminal, so you keep Claude Code's own terminal UI:
   (`mods/dock-render/herdr-render.mjs`): nothing to install, on Windows, macOS and Linux. Each is rendered once into
   `<app home>/herdr-dock/render/`, in your theme's colours. Making its SVG drawable by Herdr's renderer (no CSS
   variables, `color-mix()` or web fonts) is ported from [herdr-chat](https://github.com/ChmaraX/herdr-chat) (MIT).
-- **The cache**: rendered diagrams are SVG files in `<app home>/herdr-dock/render/` (`~/.config/herdr-app/herdr-dock/render`
-  by default), one per diagram and theme. It tidies itself after each read: a diagram not shown for 14 days goes,
-  and past the 300 most recently used; showing one again keeps it. `dock-render.clear` empties it (what's on screen
-  is drawn again).
 - **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
+
+### Where Render keeps its diagrams
+
+- **Where**: `<app home>/herdr-dock/render/`, which is `~/.config/herdr-app/herdr-dock/render/` by default (or
+  `$HERDR_APP_HOME/herdr-dock/render/`). One `.svg` per diagram and theme, named `<hash of the diagram>-<hash of the
+  theme>.svg`, so each is drawn once and switching themes draws fresh copies.
+- **Kept while used**: each time a diagram is shown again, its file date is refreshed.
+- **Tidied automatically**, after each read:
+  - a diagram not shown for **14 days** is deleted;
+  - past the **300** most recently used, the oldest are deleted;
+  - a temp file left by an interrupted write is deleted after an hour;
+  - any other file in the folder is left alone.
+- **Cleared by hand**: `herdr-app do dock-render.clear` (or bind `dock-render.clear` to a key) deletes every diagram.
+  Whatever is on screen is drawn again.
+- Deleting the folder yourself is safe too: it is only a cache.
 
 ## Panel modes
 
