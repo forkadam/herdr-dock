@@ -142,3 +142,8 @@ test("the default left panel lists Git projects after Agents", async () => {
   const shipped = parseConfig(readFileSync("config/dock.json", "utf8")).config.regions.left.features.map((f) => f.mod);
   assert.deepEqual(shipped.slice(2, 4), ["dock-agents", "dock-git"]);
 });
+
+test("buildLayout root names dock-toast as the notification toast", () => {
+  const m = mergeForHost(parseConfig(readFileSync("tests/fixtures/dock.json", "utf8")).config, "nohost");
+  assert.equal(buildLayout(m).toast, "dock-toast");
+});

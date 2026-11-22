@@ -109,7 +109,7 @@ test("deploy writes the hostname into source.json and leaves no temp folders", a
     const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
     assert.equal(src.hostname, hostname().toLowerCase());
     assert.deepEqual(readdirSync(tmp).sort(), ["keys.json", "layouts", "mods"]);
-    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-pipelines", "dock-quotas", "dock-rail", "dock-spaces", "dock-tabs"]);
+    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-pipelines", "dock-quotas", "dock-rail", "dock-spaces", "dock-tabs", "dock-toast"]);
     assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });

@@ -106,6 +106,7 @@ export function buildLayout(merged, state = {}) {
   };
   return {
     id: "root",
+    toast: "dock-toast",
     type: "row",
     titlebar: "none",
     background: "canvas",
