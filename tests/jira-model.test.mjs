@@ -14,6 +14,8 @@ const rows = issues.map((i) => issueRow(i, BASE));
 
 test("BUILTIN_FILTERS: Assigned to me first, each with an id, a name and JQL", () => {
   assert.equal(BUILTIN_FILTERS[0].id, "mine");
+  // As the spec names it: Jira's own history of the issues you opened.
+  assert.deepEqual(BUILTIN_FILTERS.find((f) => f.id === "recent"), { id: "recent", name: "Recently viewed", jql: "issuekey in issueHistory() ORDER BY lastViewed DESC" });
   assert.match(BUILTIN_FILTERS[0].jql, /assignee = currentUser\(\) AND resolution = Unresolved/);
   for (const f of BUILTIN_FILTERS) assert.ok(f.id && f.name && f.jql);
   assert.equal(new Set(BUILTIN_FILTERS.map((f) => f.id)).size, BUILTIN_FILTERS.length);

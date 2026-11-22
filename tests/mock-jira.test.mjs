@@ -182,3 +182,22 @@ test("search: escaped quotes and backslashes inside a quoted value", async () =>
   assert.deepEqual(keys(await search('summary ~ "\\"quota\\""')), []);
   assert.equal((await search('text ~ "quota" AND project = API')).data.total, 1);
 });
+
+test("issueHistory(): the issues opened, most recently viewed first", async () => {
+  const fresh = await startMock({ port: 0 });
+  try {
+    const get = (p) => call(p, { base: fresh.url });
+    const viewed = async () => (await call(`/rest/api/2/search?jql=${encodeURIComponent("issuekey in issueHistory() ORDER BY lastViewed DESC")}`, { base: fresh.url })).data;
+    assert.equal((await viewed()).total, 0);
+    await get("/rest/api/2/issue/WEB-1");
+    await new Promise((r) => setTimeout(r, 5));
+    await get("/rest/api/2/issue/API-3");
+    assert.deepEqual((await viewed()).issues.map((i) => i.key), ["API-3", "WEB-1"]);
+    await new Promise((r) => setTimeout(r, 5));
+    await get("/rest/api/2/issue/WEB-1");
+    assert.deepEqual((await viewed()).issues.map((i) => i.key), ["WEB-1", "API-3"]);
+    // A search's results are not "viewed"; an unknown key isn't either.
+    await get("/rest/api/2/issue/NOPE-1");
+    assert.equal((await viewed()).total, 2);
+  } finally { await fresh.close(); }
+});

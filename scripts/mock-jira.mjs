@@ -71,6 +71,8 @@ const UNIT = { d: DAY, h: 3600e3, w: 7 * DAY, m: 60e3 };
 
 function clause(text, ctx) {
   let m;
+  // Jira's history of the issues this user opened (GET /issue/{key}).
+  if (/^(issuekey|key)\s+in\s+issueHistory\(\)$/i.test(text)) return (i) => ctx.viewed?.has(i.key) ?? false;
   if ((m = /^(assignee|reporter)\s+is\s+(not\s+)?empty$/i.exec(text))) {
     const field = m[1].toLowerCase(), not = Boolean(m[2]);
     return (i) => (i.fields[field] == null) !== not;
@@ -139,10 +141,11 @@ export function parseJql(jql, ctx) {
   })();
   if (/\bor\b/i.test(where.replace(/"(?:[^"\\]|\\.)*"/g, ""))) throw new JqlError("Error in the JQL Query: OR is not supported by the mock.");
   const tests = where ? splitTop(where, "and").map((c) => clause(c, ctx)) : [];
+  const sorts = { ...ORDER, lastviewed: (i) => ctx.viewed?.get(i.key) ?? -Infinity };
   const keys = order.split(",").map((s) => {
     const m = /^(\w+)(?:\s+(asc|desc))?$/i.exec(s.trim());
-    if (!m || !ORDER[m[1].toLowerCase()]) throw new JqlError(`Error in the JQL Query: Not able to sort using field '${s.trim()}'.`);
-    return { get: ORDER[m[1].toLowerCase()], dir: (m[2] ?? "asc").toLowerCase() === "desc" ? -1 : 1 };
+    if (!m || !sorts[m[1].toLowerCase()]) throw new JqlError(`Error in the JQL Query: Not able to sort using field '${s.trim()}'.`);
+    return { get: sorts[m[1].toLowerCase()], dir: (m[2] ?? "asc").toLowerCase() === "desc" ? -1 : 1 };
   });
   return {
     filter: (i) => tests.every((t) => t(i)),
@@ -181,6 +184,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
   let base = "";
   const self = (path) => `${base}${path}`;
   let commentId = 90000;
+  const viewed = new Map(); // issue key -> when GET /issue last returned it (issueHistory(), lastViewed)
 
   const find = (key) => issues.find((i) => i.key.toLowerCase() === String(key).toLowerCase());
   const available = (issue) => workflow.transitions.filter((t) => t.from.includes(issue.fields.status.id));
@@ -203,7 +207,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
       const startAt = Math.max(0, Number(url.searchParams.get("startAt") ?? 0) || 0);
       const maxResults = Math.min(100, Math.max(0, Number(url.searchParams.get("maxResults") ?? 50) || 50));
       let q;
-      try { q = parseJql(url.searchParams.get("jql") ?? "", { me, now: clock(), projects }); } catch (e) {
+      try { q = parseJql(url.searchParams.get("jql") ?? "", { me, now: clock(), projects, viewed }); } catch (e) {
         if (e instanceof JqlError) return [400, err([e.message])];
         throw e;
       }
@@ -223,7 +227,11 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
     const touch = () => { issue.fields.updated = jiraTime(clock()); };
     const sub = m[2] ?? "";
 
-    if (req.method === "GET" && sub === "") return [200, pick(issue, url.searchParams.get("fields"))];
+    if (req.method === "GET" && sub === "") {
+      viewed.delete(issue.key); // most recent last, whatever the clock's resolution
+      viewed.set(issue.key, clock() + viewed.size * 1e-3);
+      return [200, pick(issue, url.searchParams.get("fields"))];
+    }
     if (req.method === "GET" && sub === "/transitions") {
       return [200, { expand: "transitions", transitions: available(issue).map((t) => ({
         id: t.id, name: t.name, to: statusObj(statusById[t.to]), hasScreen: t.hasScreen, isGlobal: false, isInitial: false, isConditional: false,

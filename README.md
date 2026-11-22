@@ -183,12 +183,14 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters.
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
-    **Disconnect** empties both.
+    The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
+  - `jira-work.body`, in the same folder: with the curl connection, a request's body (a comment) while it runs,
+    emptied afterwards, so its text is never on curl's command line.
 - **Connection**: *Herdr (fetch)* by default, or *curl*. Herdr's fetch reports any failure to connect the same way,
   so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
   **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
   reaches curl only through the private `-K` file, never on its command line.
-- **Filters**: Assigned to me (the default), Reported by me, Mine updated recently, then your Jira favourite
+- **Filters**: Assigned to me (the default), Reported by me, Recently viewed (Jira's `issueHistory()`), then your Jira favourite
   filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
   filter (Enter). The choice and the List / Board view are remembered per PC.
 - **List** groups by To do / In progress / Done; **Board** has one column per status, in Jira's own order.
@@ -198,9 +200,14 @@ board, an issue's detail beside them, quick actions, and **Start work**.
 - **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
   from your template, then shows the terminal. Placeholders: `{key} {summary} {url} {type} {status} {priority}
   {assignee} {description}`; type `\n` for a line break. For example `/init-ticket {key}` hands it to your own skill.
-  Settings previews the message for the selected issue.
+  Settings previews the message for the selected issue, and so does the ▶'s tooltip. **Mind `{description}`:**
+  anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
+  description could try to steer the agent. Use it only for issues from people you trust, or leave it out and let
+  your skill fetch the issue.
 - **Refresh**: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your open issues),
-  and no sooner than 5 minutes after a failure. The refresh button reconnects at once.
+  and no sooner than 5 minutes after a failure. A rejected token stops the polling (and clears the badge) until you
+  press **Connect again** or **Try again**. The refresh button reconnects at once. A new address forgets the old
+  site's issues.
 - **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
   `keys.json`.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token

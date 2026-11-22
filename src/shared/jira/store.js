@@ -75,6 +75,20 @@ export async function saveToken(io, site, text) {
   return lockFiles(io, paths);
 }
 
+// Makes the curl config match the token file (the one the page reads), after a hand edit of either or a save that
+// failed between its two writes: curl and fetch must use the same token. -> { ok, changed } or { ok: false, error }.
+export async function syncCurlConfig(io, site, token) {
+  const paths = jiraPaths(io.appHome, site);
+  const want = curlConfig(token);
+  const now = await io.readTextFile(paths.curlConfigPath).catch(() => null);
+  if (now === want) return { ok: true, changed: false };
+  const err = await makeFolder(io, paths.secretsDir, "private");
+  if (err) return { ok: false, error: `couldn't make the secrets folder private: ${err}` };
+  try { await put(io, paths.curlConfigPath, want); } catch (e) { return { ok: false, error: `couldn't update the curl config: ${e?.message ?? e}` }; }
+  const locked = await lockFiles(io, paths);
+  return locked.ok ? { ok: true, changed: true } : locked;
+}
+
 // Disconnect: both files emptied (Herdr has no delete).
 export async function clearToken(io, site) {
   const paths = jiraPaths(io.appHome, site);

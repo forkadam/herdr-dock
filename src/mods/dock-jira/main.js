@@ -10,11 +10,11 @@ import { createClient } from "../../shared/jira/client.js";
 import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
-  PAGE_SIZE, actionOutcome, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail, pageState, pickFilter, pollDue,
-  refreshSize, startWork, withComment,
+  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail,
+  pageState, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
-import { clearToken, loadJira, saveSettings, saveToken } from "../../shared/jira/store.js";
+import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 
@@ -50,6 +50,7 @@ export default class Jira extends View {
     this.fetchedAt = null;
     this.lastPollAt = undefined;
     this.pollFailed = false;
+    this.paused = false; // after a rejected token: no polling until the user acts (afterProblem)
     this.selected = null;
     this.detail = null;
     this.detailLoading = false;
@@ -137,8 +138,9 @@ export default class Jira extends View {
   client(cx) {
     const { settings, token, paths } = this.jira;
     return createClient({
-      base: settings.baseUrl, transport: settings.transport, token, curlConfigPath: paths.curlConfigPath, caFile: settings.caFile || undefined,
-      io: { fetch: (u, o) => fetch(u, o), exec, sleep: (ms) => cx.sleep(ms) },
+      base: settings.baseUrl, transport: settings.transport, token, curlConfigPath: paths.curlConfigPath, curlBodyPath: paths.bodyPath,
+      caFile: settings.caFile || undefined,
+      io: { fetch: (u, o) => fetch(u, o), exec, sleep: (ms) => cx.sleep(ms), readTextFile, writeTextFile },
     });
   }
 
@@ -149,12 +151,19 @@ export default class Jira extends View {
   async connect(cx) {
     this.checkingNow = true;
     this.problem = null;
+    this.paused = false;
     cx.notify();
+    // curl reads the token from its own file: make sure it's the token the page has.
+    if (this.jira.settings.transport === "curl") {
+      const sync = await syncCurlConfig(this.io(), this.site, this.jira.token);
+      if (!sync.ok) console.log(`dock-jira: ${sync.error}`);
+    }
     const me = await this.client(cx).myself();
     this.checkingNow = false;
     if (!me.ok) {
       this.problem = me.problem;
       this.connected = false;
+      this.paused = afterProblem(me.problem.kind).pause;
       this.lastPollAt = Date.now();
       this.pollFailed = true;
       setShared(BADGE_KEY, null);
@@ -193,7 +202,13 @@ export default class Jira extends View {
     this.lastPollAt = Date.now();
     this.pollFailed = !r.ok;
     if (!r.ok) {
-      if (PAGE_PROBLEMS.includes(r.problem.kind)) { this.problem = r.problem; this.connected = r.problem.kind !== "auth"; }
+      if (PAGE_PROBLEMS.includes(r.problem.kind)) {
+        const effect = afterProblem(r.problem.kind);
+        this.problem = r.problem;
+        this.connected = effect.connected;
+        this.paused = effect.pause;
+        if (effect.clearBadge) setShared(BADGE_KEY, null);
+      }
       else this.listProblem = r.problem;
       cx.notify();
       return;
@@ -217,7 +232,7 @@ export default class Jira extends View {
   }
 
   tick(cx) {
-    if (!this.jira || this.editing || this.checkingNow) return;
+    if (!this.jira || this.editing || this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
     if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now() })) return;
     cx.spawn(async (cx) => {
@@ -363,6 +378,8 @@ export default class Jira extends View {
           const t = await saveToken(io, this.site, typed);
           if (!t.ok) { this.formError = t.error; return; }
         }
+        // Another Jira: forget the old one's issues, open issue and filters, so nothing asks the new site for them.
+        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.connected = false; setShared(BADGE_KEY, null); }
         const settings = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
           startTask: this.taskInput.value(), caFile: this.caInput.value().trim() };
         const s = await saveSettings(io, this.site, settings, this.jira.settingsText ?? undefined);
@@ -384,7 +401,7 @@ export default class Jira extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, { connected: false, me: null, rows: [], total: undefined, selected: null, detail: null, problem: null });
+      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false });
       setShared(BADGE_KEY, null);
       cx.notify();
     });
@@ -454,10 +471,7 @@ export default class Jira extends View {
   preview(t) {
     const issue = this.detail ?? this.rows[0];
     if (!issue) return div();
-    const typed = this.taskInput.value();
-    // A list row has no description: say so rather than preview it empty (Start work fetches it).
-    const shown = !("description" in issue) && needsDetail(typed) ? { ...issue, description: "(its description, fetched when you start)" } : issue;
-    const text = startWork(shown, typed)?.args.task ?? "";
+    const text = previewTask(issue, this.taskInput.value());
     return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
       .child(div().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`))
       .children(text.split("\n").map((l) => div().text_size(12).text_color(t.muted).child(l || " ")));
@@ -473,7 +487,7 @@ export default class Jira extends View {
         .child(h_flex().gap(8).pt(8)
           .child(this.button(t, "jira-retry", "Try again", (cx) => cx.spawn(async (cx) => this.reload(cx)), { primary: true }))
           .when((p.kind === "tls" || p.kind === "offline") && this.jira?.settings.transport !== "curl", (el) => el.child(this.button(t, "jira-use-curl", "Switch to curl", (cx) => this.useCurl(cx))))
-          .child(this.button(t, "jira-open-settings", "Settings", (cx) => this.openSettings(cx)))));
+          .child(this.button(t, "jira-open-settings", p.kind === "auth" || p.kind === "forbidden" ? "Connect again" : "Settings", (cx) => this.openSettings(cx)))));
   }
 
   header(t) {
@@ -531,7 +545,7 @@ export default class Jira extends View {
       .child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned"))
       .child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now())))
       .child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim)
-        .hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key} (a Claude tab)`)
+        .hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with\n${previewTask(r, this.jira?.settings.startTask)}`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); this.startWork(r, cx); })
         .child(svg("mods/dock-jira/play.svg").size(11)));
@@ -565,6 +579,7 @@ export default class Jira extends View {
       .child(h_flex().gap(6).items_center()
         .child(this.typeMark(t, r))
         .child(div().text_size(11.5).text_color(t.dim).child(r.key))
+        .when(Boolean(r.priority), (el) => el.child(div().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN : t.dim).child(r.priority)))
         .child(div().flex_1())
         .child(div().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
   }

@@ -19,8 +19,9 @@ function errorText(e) {
 }
 
 // io: { fetch(url, options) -> { status, text() }, exec(command, args, { timeout }) -> { code, stdout, stderr },
-//       sleep?(ms) -> Promise } (without sleep a fetch has no timeout of its own).
-export function createClient({ base, transport = "fetch", token, curlConfigPath, caFile, io, timeoutMs = 20000 }) {
+//       sleep?(ms) -> Promise, readTextFile?, writeTextFile? } (without sleep a fetch has no timeout of its own).
+// curlBodyPath (with io's file calls): curl reads request bodies from that private file, emptied after each request.
+export function createClient({ base, transport = "fetch", token, curlConfigPath, curlBodyPath, caFile, io, timeoutMs = 20000 }) {
   const root = String(base ?? "").replace(/\/+$/, "");
   const api = (path) => `${root}/rest/api/2${path}`;
   const issuePath = (key) => `/issue/${encodeURIComponent(key)}`;
@@ -40,12 +41,26 @@ export function createClient({ base, transport = "fetch", token, curlConfigPath,
     return answer(r.status, text);
   }
 
+  // Writes `text` to the body file whatever it holds now (Herdr's writeTextFile wants the current text).
+  async function putBody(text) {
+    const now = await io.readTextFile(curlBodyPath).catch(() => null);
+    if (now !== text) await io.writeTextFile(curlBodyPath, text, now);
+  }
+
   async function viaCurl(method, url, body) {
+    const useFile = body !== undefined && curlBodyPath && io.writeTextFile && io.readTextFile;
+    if (useFile) {
+      try { await putBody(JSON.stringify(body)); } catch (e) {
+        return { ok: false, problem: { kind: "unknown", message: `Couldn't prepare the request: ${e?.message ?? e}`, hint: "Check the herdr-dock/secrets folder, or switch the connection to fetch." } };
+      }
+    }
     let res;
     try {
-      res = await io.exec("curl", curlArgs({ method, url, configPath: curlConfigPath, body, timeoutMs, caFile }), { timeout: timeoutMs + 10000 });
+      res = await io.exec("curl", curlArgs({ method, url, configPath: curlConfigPath, body, bodyPath: useFile ? curlBodyPath : undefined, timeoutMs, caFile }), { timeout: timeoutMs + 10000 });
     } catch (e) {
       return { ok: false, problem: { kind: "nocurl", message: `Couldn't run curl: ${e?.message ?? e}`, hint: "Install curl, or switch the connection to fetch in Settings." } };
+    } finally {
+      if (useFile) await putBody("").catch(() => {});
     }
     const p = parseCurl(res);
     if ("curlCode" in p) return { ok: false, problem: classify(p.curlCode === -1 ? { error: p.stderr } : { curlCode: p.curlCode }) };

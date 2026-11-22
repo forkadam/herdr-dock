@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, wr
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { DEFAULT_SETTINGS, formatSettings, jiraPaths, normalizeBaseUrl, parseSettings, siteName, validateToken } from "../src/shared/jira/settings.js";
-import { clearToken, loadJira, saveSettings, saveToken } from "../src/shared/jira/store.js";
+import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../src/shared/jira/store.js";
 import { curlConfig } from "../src/shared/jira/transport.js";
 
 const POSIX = process.platform !== "win32";
@@ -23,6 +23,7 @@ test("siteName and jiraPaths", () => {
     secretsDir: "C:/Users/a/.config/herdr-app/herdr-dock/secrets",
     tokenPath: "C:/Users/a/.config/herdr-app/herdr-dock/secrets/jira-work.token",
     curlConfigPath: "C:/Users/a/.config/herdr-app/herdr-dock/secrets/jira-work.curlrc",
+    bodyPath: "C:/Users/a/.config/herdr-app/herdr-dock/secrets/jira-work.body",
   });
   assert.equal(jiraPaths("/home/u/.config/herdr-app", "../x").settingsPath, "/home/u/.config/herdr-app/herdr-dock/jira-work.json");
 });
@@ -179,5 +180,18 @@ test("loadJira reports a broken settings file and still gives defaults", async (
     const j = await loadJira(h.io, "work");
     assert.deepEqual(j.settings, DEFAULT_SETTINGS);
     assert.match(j.problem, /jira-work\.json/);
+  } finally { h.done(); }
+});
+
+test("syncCurlConfig: a curl config that drifted from the token file is rewritten to match (and kept private)", async () => {
+  const h = fakeHerdr();
+  try {
+    await saveToken(h.io, "work", "right");
+    const p = jiraPaths(h.home, "work");
+    writeFileSync(p.curlConfigPath, curlConfig("stale")); // a hand edit, or a save that failed halfway
+    assert.deepEqual(await syncCurlConfig(h.io, "work", "right"), { ok: true, changed: true });
+    assert.equal(readFileSync(p.curlConfigPath, "utf8"), curlConfig("right"));
+    if (POSIX) assert.equal(statSync(p.curlConfigPath).mode & 0o777, 0o600);
+    assert.deepEqual(await syncCurlConfig(h.io, "work", "right"), { ok: true, changed: false });
   } finally { h.done(); }
 });

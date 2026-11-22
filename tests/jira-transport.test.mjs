@@ -64,3 +64,10 @@ test("parseJson: JSON or null", () => {
   assert.equal(parseJson(""), null);
   assert.equal(parseJson("<html>"), null);
 });
+
+test("curlArgs with a body file: curl reads the body from it, the text is not in the arguments", () => {
+  const args = curlArgs({ method: "POST", url: "u", configPath: "/c", body: { body: "secret plans" }, bodyPath: "/s/jira-work.body" });
+  assert.equal(args[args.indexOf("--data-binary") + 1], "@/s/jira-work.body");
+  assert.ok(!args.join(" ").includes("secret plans"));
+  assert.ok(args.includes("Content-Type: application/json"));
+});

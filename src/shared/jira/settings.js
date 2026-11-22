@@ -3,6 +3,7 @@
 //   herdr-dock/jira-<site>.json             base URL, connection, CA file, Start-work template, extra filters
 //   herdr-dock/secrets/jira-<site>.token    the personal access token (private: folder 700, file 600)
 //   herdr-dock/secrets/jira-<site>.curlrc   the same token as a curl config, for the curl connection
+//   herdr-dock/secrets/jira-<site>.body     a curl request's body while it runs (a comment), then emptied
 import { slashPath } from "../path.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
@@ -25,6 +26,7 @@ export function jiraPaths(appHome, site) {
     secretsDir,
     tokenPath: `${secretsDir}/jira-${name}.token`,
     curlConfigPath: `${secretsDir}/jira-${name}.curlrc`,
+    bodyPath: `${secretsDir}/jira-${name}.body`, // a curl request's body (a comment), emptied after each request
   };
 }
 

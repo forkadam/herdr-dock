@@ -19,10 +19,11 @@ export function curlConfig(token) {
   return `header = "Authorization: Bearer ${t}"\n`;
 }
 
-// curl's arguments. -w adds the HTTP status as the last line of stdout; --globoff keeps [ ] in URLs literal.
-export function curlArgs({ method = "GET", url, configPath, body, timeoutMs = DEFAULT_TIMEOUT_MS, caFile }) {
+// curl's arguments. -w adds the HTTP status as the last line of stdout; --globoff keeps [ ] in URLs literal. With
+// `bodyPath`, curl reads the request body from that (private) file, so a comment's text isn't in the arguments either.
+export function curlArgs({ method = "GET", url, configPath, body, bodyPath, timeoutMs = DEFAULT_TIMEOUT_MS, caFile }) {
   const args = ["-sS", "--globoff", "-K", configPath, "-X", method, "-H", "Accept: application/json"];
-  if (body !== undefined) args.push("-H", "Content-Type: application/json", "--data-binary", JSON.stringify(body));
+  if (body !== undefined) args.push("-H", "Content-Type: application/json", "--data-binary", bodyPath ? `@${bodyPath}` : JSON.stringify(body));
   if (caFile) args.push("--cacert", caFile);
   args.push("--max-time", String(Math.max(1, Math.round(timeoutMs / 1000))), "-w", "\n%{http_code}", url);
   return args;

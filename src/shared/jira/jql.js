@@ -4,7 +4,7 @@
 export const BUILTIN_FILTERS = [
   { id: "mine", name: "Assigned to me", jql: "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
   { id: "reported", name: "Reported by me", jql: "reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
-  { id: "recent", name: "Mine, updated recently", jql: "assignee = currentUser() AND updated >= -14d ORDER BY updated DESC" },
+  { id: "recent", name: "Recently viewed", jql: "issuekey in issueHistory() ORDER BY lastViewed DESC" },
 ];
 
 // What a search asks for: just what a list row or a board card shows.

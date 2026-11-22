@@ -125,3 +125,29 @@ test("needsDetail: a list row lacks the description, so a template using it need
   assert.equal(needsDetail(""), false); // the default template
   assert.equal(needsDetail(undefined), false);
 });
+
+// ---- Deferred minors ----
+import { CLEARED_VIEW, afterProblem, previewTask } from "../src/shared/jira/page.js";
+
+test("afterProblem: a rejected token clears the badge and stops polling until the user acts; others keep retrying", () => {
+  assert.deepEqual(afterProblem("auth"), { connected: false, clearBadge: true, pause: true });
+  assert.deepEqual(afterProblem("forbidden"), { connected: false, clearBadge: true, pause: true });
+  assert.deepEqual(afterProblem("offline"), { connected: true, clearBadge: false, pause: false });
+  assert.deepEqual(afterProblem("server"), { connected: true, clearBadge: false, pause: false });
+});
+
+test("previewTask: the message as it will be sent; from a row, the description is named, not left empty", () => {
+  const row = { key: "A-1", summary: "s", url: "u" };
+  assert.equal(previewTask(row, "/t {key}"), "/t A-1");
+  assert.equal(previewTask(row, "{key} {description}"), "A-1 (its description, fetched when you start)");
+  assert.equal(previewTask({ ...row, description: "real" }, "{key} {description}"), "A-1 real");
+  assert.equal(previewTask(null, "x"), "");
+});
+
+test("CLEARED_VIEW: what a new Jira address (or Disconnect) forgets", () => {
+  for (const k of ["rows", "total", "selected", "detail", "favourites", "statusOrder", "me", "fetchedAt", "listProblem", "transitions", "actionMsg"]) {
+    assert.ok(k in CLEARED_VIEW, k);
+  }
+  assert.deepEqual(CLEARED_VIEW.rows, []);
+  assert.ok(Object.isFrozen(CLEARED_VIEW));
+});

@@ -19,7 +19,7 @@ var pageShown = (myMod) => shared(PAGE_KEY) === myMod;
 var BUILTIN_FILTERS = [
   { id: "mine", name: "Assigned to me", jql: "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
   { id: "reported", name: "Reported by me", jql: "reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
-  { id: "recent", name: "Mine, updated recently", jql: "assignee = currentUser() AND updated >= -14d ORDER BY updated DESC" }
+  { id: "recent", name: "Recently viewed", jql: "issuekey in issueHistory() ORDER BY lastViewed DESC" }
 ];
 var ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated"];
 var quote = (text) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -215,9 +215,9 @@ function curlConfig(token) {
   return `header = "Authorization: Bearer ${t}"
 `;
 }
-function curlArgs({ method = "GET", url, configPath, body, timeoutMs = DEFAULT_TIMEOUT_MS, caFile }) {
+function curlArgs({ method = "GET", url, configPath, body, bodyPath, timeoutMs = DEFAULT_TIMEOUT_MS, caFile }) {
   const args = ["-sS", "--globoff", "-K", configPath, "-X", method, "-H", "Accept: application/json"];
-  if (body !== void 0) args.push("-H", "Content-Type: application/json", "--data-binary", JSON.stringify(body));
+  if (body !== void 0) args.push("-H", "Content-Type: application/json", "--data-binary", bodyPath ? `@${bodyPath}` : JSON.stringify(body));
   if (caFile) args.push("--cacert", caFile);
   args.push("--max-time", String(Math.max(1, Math.round(timeoutMs / 1e3))), "-w", "\n%{http_code}", url);
   return args;
@@ -261,7 +261,7 @@ function errorText(e) {
   for (let c = e?.cause, n = 0; c && n < 3; c = c.cause, n++) parts.push(c.code, c.message);
   return parts.filter(Boolean).join(" ");
 }
-function createClient({ base, transport = "fetch", token, curlConfigPath, caFile, io, timeoutMs = 2e4 }) {
+function createClient({ base, transport = "fetch", token, curlConfigPath, curlBodyPath, caFile, io, timeoutMs = 2e4 }) {
   const root = String(base ?? "").replace(/\/+$/, "");
   const api = (path) => `${root}/rest/api/2${path}`;
   const issuePath = (key) => `/issue/${encodeURIComponent(key)}`;
@@ -283,12 +283,27 @@ function createClient({ base, transport = "fetch", token, curlConfigPath, caFile
     }
     return answer(r.status, text);
   }
+  async function putBody(text) {
+    const now = await io.readTextFile(curlBodyPath).catch(() => null);
+    if (now !== text) await io.writeTextFile(curlBodyPath, text, now);
+  }
   async function viaCurl(method, url, body) {
+    const useFile = body !== void 0 && curlBodyPath && io.writeTextFile && io.readTextFile;
+    if (useFile) {
+      try {
+        await putBody(JSON.stringify(body));
+      } catch (e) {
+        return { ok: false, problem: { kind: "unknown", message: `Couldn't prepare the request: ${e?.message ?? e}`, hint: "Check the herdr-dock/secrets folder, or switch the connection to fetch." } };
+      }
+    }
     let res;
     try {
-      res = await io.exec("curl", curlArgs({ method, url, configPath: curlConfigPath, body, timeoutMs, caFile }), { timeout: timeoutMs + 1e4 });
+      res = await io.exec("curl", curlArgs({ method, url, configPath: curlConfigPath, body, bodyPath: useFile ? curlBodyPath : void 0, timeoutMs, caFile }), { timeout: timeoutMs + 1e4 });
     } catch (e) {
       return { ok: false, problem: { kind: "nocurl", message: `Couldn't run curl: ${e?.message ?? e}`, hint: "Install curl, or switch the connection to fetch in Settings." } };
+    } finally {
+      if (useFile) await putBody("").catch(() => {
+      });
     }
     const p = parseCurl(res);
     if ("curlCode" in p) return { ok: false, problem: classify(p.curlCode === -1 ? { error: p.stderr } : { curlCode: p.curlCode }) };
@@ -383,6 +398,30 @@ function needsDetail(template) {
   const t = typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK;
   return /\{description\}/.test(t);
 }
+function afterProblem(kind) {
+  const token = kind === "auth" || kind === "forbidden";
+  return { connected: !token, clearBadge: token, pause: token };
+}
+function previewTask(issue, template) {
+  if (!issue?.key) return "";
+  const shown = !("description" in issue) && needsDetail(template) ? { ...issue, description: "(its description, fetched when you start)" } : issue;
+  return startWork(shown, template)?.args.task ?? "";
+}
+var CLEARED_VIEW = Object.freeze({
+  me: null,
+  rows: [],
+  total: void 0,
+  fetchedAt: null,
+  listProblem: null,
+  selected: null,
+  detail: null,
+  detailProblem: null,
+  favourites: [],
+  statusOrder: [],
+  transitions: null,
+  transOpen: false,
+  actionMsg: null
+});
 
 // src/shared/path.js
 function slashPath(p) {
@@ -410,7 +449,9 @@ function jiraPaths(appHome2, site) {
     settingsPath: `${dir}/jira-${name}.json`,
     secretsDir,
     tokenPath: `${secretsDir}/jira-${name}.token`,
-    curlConfigPath: `${secretsDir}/jira-${name}.curlrc`
+    curlConfigPath: `${secretsDir}/jira-${name}.curlrc`,
+    bodyPath: `${secretsDir}/jira-${name}.body`
+    // a curl request's body (a comment), emptied after each request
   };
 }
 var JIRA_PAGES = /\/(browse|secure|projects|issues|rest|plugins|servicedesk|login\.jsp|dashboards?)(\/|$|\?|\.)/i;
@@ -537,6 +578,21 @@ async function saveToken(io, site, text) {
   }
   return lockFiles(io, paths);
 }
+async function syncCurlConfig(io, site, token) {
+  const paths = jiraPaths(io.appHome, site);
+  const want = curlConfig(token);
+  const now = await io.readTextFile(paths.curlConfigPath).catch(() => null);
+  if (now === want) return { ok: true, changed: false };
+  const err = await makeFolder(io, paths.secretsDir, "private");
+  if (err) return { ok: false, error: `couldn't make the secrets folder private: ${err}` };
+  try {
+    await put(io, paths.curlConfigPath, want);
+  } catch (e) {
+    return { ok: false, error: `couldn't update the curl config: ${e?.message ?? e}` };
+  }
+  const locked = await lockFiles(io, paths);
+  return locked.ok ? { ok: true, changed: true } : locked;
+}
 async function clearToken(io, site) {
   const paths = jiraPaths(io.appHome, site);
   try {
@@ -597,6 +653,7 @@ var Jira = class extends View {
     this.fetchedAt = null;
     this.lastPollAt = void 0;
     this.pollFailed = false;
+    this.paused = false;
     this.selected = null;
     this.detail = null;
     this.detailLoading = false;
@@ -707,8 +764,9 @@ var Jira = class extends View {
       transport: settings.transport,
       token,
       curlConfigPath: paths.curlConfigPath,
+      curlBodyPath: paths.bodyPath,
       caFile: settings.caFile || void 0,
-      io: { fetch: (u, o) => fetch(u, o), exec, sleep: (ms) => cx.sleep(ms) }
+      io: { fetch: (u, o) => fetch(u, o), exec, sleep: (ms) => cx.sleep(ms), readTextFile, writeTextFile }
     });
   }
   filters() {
@@ -721,12 +779,18 @@ var Jira = class extends View {
   async connect(cx) {
     this.checkingNow = true;
     this.problem = null;
+    this.paused = false;
     cx.notify();
+    if (this.jira.settings.transport === "curl") {
+      const sync = await syncCurlConfig(this.io(), this.site, this.jira.token);
+      if (!sync.ok) console.log(`dock-jira: ${sync.error}`);
+    }
     const me = await this.client(cx).myself();
     this.checkingNow = false;
     if (!me.ok) {
       this.problem = me.problem;
       this.connected = false;
+      this.paused = afterProblem(me.problem.kind).pause;
       this.lastPollAt = Date.now();
       this.pollFailed = true;
       setShared2(BADGE_KEY, null);
@@ -766,8 +830,11 @@ var Jira = class extends View {
     this.pollFailed = !r.ok;
     if (!r.ok) {
       if (PAGE_PROBLEMS.includes(r.problem.kind)) {
+        const effect = afterProblem(r.problem.kind);
         this.problem = r.problem;
-        this.connected = r.problem.kind !== "auth";
+        this.connected = effect.connected;
+        this.paused = effect.pause;
+        if (effect.clearBadge) setShared2(BADGE_KEY, null);
       } else this.listProblem = r.problem;
       cx.notify();
       return;
@@ -792,7 +859,7 @@ var Jira = class extends View {
     if (r.ok) setShared2(BADGE_KEY, badgeFor(r.data?.total));
   }
   tick(cx) {
-    if (!this.jira || this.editing || this.checkingNow) return;
+    if (!this.jira || this.editing || this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
     if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now() })) return;
     cx.spawn(async (cx2) => {
@@ -972,6 +1039,11 @@ var Jira = class extends View {
             return;
           }
         }
+        if (url.url !== this.jira.settings.baseUrl) {
+          Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)));
+          this.connected = false;
+          setShared2(BADGE_KEY, null);
+        }
         const settings = {
           ...this.jira.settings,
           baseUrl: url.url,
@@ -1000,7 +1072,7 @@ var Jira = class extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, { connected: false, me: null, rows: [], total: void 0, selected: null, detail: null, problem: null });
+      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false });
       setShared2(BADGE_KEY, null);
       cx2.notify();
     });
@@ -1048,14 +1120,12 @@ var Jira = class extends View {
   preview(t) {
     const issue = this.detail ?? this.rows[0];
     if (!issue) return div();
-    const typed = this.taskInput.value();
-    const shown = !("description" in issue) && needsDetail(typed) ? { ...issue, description: "(its description, fetched when you start)" } : issue;
-    const text = startWork(shown, typed)?.args.task ?? "";
+    const text = previewTask(issue, this.taskInput.value());
     return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`)).children(text.split("\n").map((l) => div().text_size(12).text_color(t.muted).child(l || " ")));
   }
   problemView(t) {
     const p = this.problem;
-    return v_flex().size_full().items_center().justify_center().p(24).child(v_flex().max_w(520).gap(10).items_center().child(div().text_size(16).font_semibold().child(p.message.split(". ")[0].replace(/\.$/, "") + ".")).when(p.message.includes(". "), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(p.message.slice(p.message.indexOf(". ") + 2)))).child(div().text_size(12.5).text_color(t.dim).child(p.hint ?? "")).child(h_flex().gap(8).pt(8).child(this.button(t, "jira-retry", "Try again", (cx) => cx.spawn(async (cx2) => this.reload(cx2)), { primary: true })).when((p.kind === "tls" || p.kind === "offline") && this.jira?.settings.transport !== "curl", (el) => el.child(this.button(t, "jira-use-curl", "Switch to curl", (cx) => this.useCurl(cx)))).child(this.button(t, "jira-open-settings", "Settings", (cx) => this.openSettings(cx)))));
+    return v_flex().size_full().items_center().justify_center().p(24).child(v_flex().max_w(520).gap(10).items_center().child(div().text_size(16).font_semibold().child(p.message.split(". ")[0].replace(/\.$/, "") + ".")).when(p.message.includes(". "), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(p.message.slice(p.message.indexOf(". ") + 2)))).child(div().text_size(12.5).text_color(t.dim).child(p.hint ?? "")).child(h_flex().gap(8).pt(8).child(this.button(t, "jira-retry", "Try again", (cx) => cx.spawn(async (cx2) => this.reload(cx2)), { primary: true })).when((p.kind === "tls" || p.kind === "offline") && this.jira?.settings.transport !== "curl", (el) => el.child(this.button(t, "jira-use-curl", "Switch to curl", (cx) => this.useCurl(cx)))).child(this.button(t, "jira-open-settings", p.kind === "auth" || p.kind === "forbidden" ? "Connect again" : "Settings", (cx) => this.openSettings(cx)))));
   }
   header(t) {
     const f = this.filter();
@@ -1089,7 +1159,8 @@ var Jira = class extends View {
   row(t, r, i) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
-    return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? "")).child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key} (a Claude tab)`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
+    return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? "")).child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
+${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
       cx.stop_propagation();
       this.startWork(r, cx);
     }).child(svg("mods/dock-jira/play.svg").size(11)));
@@ -1114,7 +1185,7 @@ var Jira = class extends View {
   }
   card(t, r) {
     const on = this.selected === r.key;
-    return v_flex().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(div().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex().gap(6).items_center().child(this.typeMark(t, r)).child(div().text_size(11.5).text_color(t.dim).child(r.key)).child(div().flex_1()).child(div().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
+    return v_flex().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(div().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex().gap(6).items_center().child(this.typeMark(t, r)).child(div().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN : t.dim).child(r.priority))).child(div().flex_1()).child(div().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
   }
   boardView(t) {
     const cols = boardColumns(this.rows, this.statusOrder);

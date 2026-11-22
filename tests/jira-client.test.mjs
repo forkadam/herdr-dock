@@ -118,3 +118,28 @@ test("a fetch that throws something odd still resolves", async () => {
   assert.equal(r.ok, false);
   assert.equal(r.problem.kind, "unknown");
 });
+
+test("curl: a request body goes through the private body file, which is emptied afterwards", { skip: hasCurl ? false : "curl not installed" }, async (t) => {
+  const { readFileSync, existsSync, renameSync } = await import("node:fs");
+  const own = await startMock({ port: 0 });
+  t.after(() => own.close());
+  const bodyPath = join(dir, "jira-work.body");
+  const seen = [];
+  const files = {
+    readTextFile: async (p) => (existsSync(p) ? readFileSync(p, "utf8") : null),
+    writeTextFile: async (p, text, expected) => {
+      const now = existsSync(p) ? readFileSync(p, "utf8") : null;
+      if (now !== expected) throw new Error("stale");
+      writeFileSync(`${p}.tmp`, text); renameSync(`${p}.tmp`, p);
+    },
+  };
+  const curlConfigPath = join(dir, "body-test.curlrc");
+  writeFileSync(curlConfigPath, curlConfig("mock-token"));
+  const c = createClient({ base: own.url, transport: "curl", token: "mock-token", curlConfigPath, curlBodyPath: bodyPath,
+    io: { ...io, ...files, exec: (cmd, args, o) => { seen.push(args.join(" ")); return exec(cmd, args, o); } } });
+  const r = await c.comment("WEB-1", "company secret text");
+  assert.equal(r.ok, true);
+  assert.equal(r.data.body, "company secret text");
+  assert.ok(seen.length && seen.every((a) => !a.includes("company secret text")));
+  assert.equal(readFileSync(bodyPath, "utf8"), "");
+});

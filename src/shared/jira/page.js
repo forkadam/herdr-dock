@@ -100,3 +100,27 @@ export function needsDetail(template) {
   const t = typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK;
   return /\{description\}/.test(t);
 }
+
+// ---- After a problem, and starting over ----
+
+// What a failed request means for the page. A rejected or forbidden token clears the badge and stops polling until
+// the user acts (Connect again, Try again): retrying the same token every 5 minutes can't succeed and can lock an
+// account. Anything else (offline, a server error, a timeout) keeps the connection and retries on the poll.
+export function afterProblem(kind) {
+  const token = kind === "auth" || kind === "forbidden";
+  return { connected: !token, clearBadge: token, pause: token };
+}
+
+// The Start-work message for a preview or a tooltip: as it will be sent, except that a list row's missing
+// description is named rather than shown empty (Start work fetches it).
+export function previewTask(issue, template) {
+  if (!issue?.key) return "";
+  const shown = !("description" in issue) && needsDetail(template) ? { ...issue, description: "(its description, fetched when you start)" } : issue;
+  return startWork(shown, template)?.args.task ?? "";
+}
+
+// The view state a new Jira address or Disconnect forgets (copy it before assigning: its arrays are shared).
+export const CLEARED_VIEW = Object.freeze({
+  me: null, rows: [], total: undefined, fetchedAt: null, listProblem: null, selected: null, detail: null, detailProblem: null,
+  favourites: [], statusOrder: [], transitions: null, transOpen: false, actionMsg: null,
+});
