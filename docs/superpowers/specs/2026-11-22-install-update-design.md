@@ -50,7 +50,7 @@ The user wants three things:
    1. stops with a clear message if the repo has local changes (`git status --porcelain` not empty) or is not on
       `main`;
    2. runs `git pull --ff-only` and stops if that fails;
-   3. runs `npm install` only if `package.json` or `package-lock.json` changed between the old and new HEAD;
+   3. runs `npm ci` only if `package.json` or `package-lock.json` changed between the deployed commit (source.json `commit`) and the new HEAD, or `node_modules` is missing; when nothing was pulled but HEAD differs from the deployed commit, it still installs and deploys (finishing an update that failed after the pull);
    4. runs `node scripts/deploy.mjs`;
    5. reports the result to dock-core, which updates the strip and posts a notification for success or failure.
 
@@ -58,7 +58,7 @@ The user wants three things:
 8. **`INSTALL.md` for agents,** a checklist an agent follows on a new machine:
    1. check Node ≥ 22, git and Herdr;
    2. clone (with `gh` for the private repo) to a sensible folder;
-   3. `npm install`, then `npm run deploy`, and confirm `herdr-app status` shows no errors;
+   3. `npm ci`, then `npm run deploy`, and confirm `herdr-app status` shows no errors;
    4. find the user's Claude Code status-line script (from `~/.claude/settings.json` `statusLine.command`) and add
       the one line from the README, asking first;
    5. optionally install and log in to `gh`/`glab` for pipelines, asking first;

@@ -60,3 +60,8 @@ test("no state yet: not checked, Check now", () => {
   assert.deepEqual(updateStrip(null, NOW), { text: "herdr-dock · not checked yet", tone: "dim", action: CHECK });
   assert.deepEqual(updateStrip({ status: "idle", current: null, checkedAt: null }, NOW).text, "herdr-dock · up to date");
 });
+
+test("redeploy: not deployed yet, deployed → current, Update", () => {
+  assert.deepEqual(updateStrip(st({ status: "available", behind: 0, redeploy: true, deployed: "1a2b3c4" }), NOW),
+    { text: "Not deployed yet · 1a2b3c4 → e0aa740", tone: "accent", action: UPDATE });
+});

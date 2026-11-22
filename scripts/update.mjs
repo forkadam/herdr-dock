@@ -1,12 +1,14 @@
 // npm run update: check the repo is clean and on main, pull, install packages only if they changed, deploy,
 // and report through <app home>/herdr-dock/update-result.json (dock-core reads and deletes it).
-import { mkdirSync, writeFileSync } from "node:fs";
+// The commit the last deploy recorded (mods/dock-core/source.json) is compared with HEAD, so an update whose
+// install or deploy failed after the pull is finished by the next run instead of reported as up to date.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { ROOT } from "./build.mjs";
 import { resolveAppHome } from "./app-home.mjs";
 import { RESULT_REL } from "../src/shared/update.js";
-import { needsInstall, parseDirty, preflight, resultOf } from "./update-steps.mjs";
+import { installNeeded, parseDirty, planAfterPull, preflight, resultOf } from "./update-steps.mjs";
 
 const appHome = resolveAppHome(process.argv.slice(2));
 if (!appHome) { console.error("usage: node scripts/update.mjs [--app-home <dir>]"); process.exit(1); }
@@ -19,8 +21,9 @@ function finish(fields) {
     mkdirSync(dirname(resultPath), { recursive: true });
     writeFileSync(resultPath, JSON.stringify(r, null, 2) + "\n");
   } catch (e) { console.error(`could not write ${resultPath}: ${e.message}`); }
-  if (r.ok) console.log(r.commits ? `\nUpdated ${r.from} -> ${r.to} (${r.commits} commits).` : "\nAlready up to date.");
-  else console.error(`\nUpdate failed: ${r.reason}`);
+  if (!r.ok) console.error(`\nUpdate failed: ${r.reason}`);
+  else if (r.from === r.to) console.log("\nAlready up to date.");
+  else console.log(`\nUpdated ${r.from ?? "?"} -> ${r.to} (${r.commits} commit${r.commits === 1 ? "" : "s"}).`);
   process.exit(r.ok ? 0 : 1);
 }
 
@@ -34,6 +37,15 @@ function run(cmd, args, { show = false } = {}) {
   }
   return String(r.stdout ?? "").trimEnd();
 }
+
+// The commit the last deploy recorded, or null (no source.json, or written before deploy recorded it).
+function deployedCommit() {
+  try {
+    const src = JSON.parse(readFileSync(join(appHome, "mods/dock-core/source.json"), "utf8").replace(/^\uFEFF/, ""));
+    return typeof src?.commit === "string" && src.commit.trim() ? src.commit.trim() : null;
+  } catch { return null; }
+}
+const count = (range) => { try { return Number(run("git", ["rev-list", "--count", range])) || 0; } catch { return 0; } };
 
 let from = null, to = null, commits = 0, step = "check";
 try {
@@ -49,26 +61,39 @@ try {
   say("pull origin main");
   run("git", ["pull", "--ff-only", "origin", "main"], { show: true });
   to = run("git", ["rev-parse", "--short", "HEAD"]);
-  if (to === from) {
-    console.log("already up to date");
+  const deployed = deployedCommit();
+  const plan = planAfterPull({ from, to, deployed });
+  if (plan.action === "none") {
+    console.log(`already up to date (deployed ${deployed})`);
     finish({ from, to, commits: 0, ok: true });
   }
-  commits = Number(run("git", ["rev-list", "--count", `${from}..${to}`])) || 0;
-  console.log(`${commits} new commits: ${from} -> ${to}`);
+  if (plan.action === "redeploy") {
+    // Report the update as running from what was deployed.
+    from = deployed;
+    commits = deployed ? count(`${deployed}..${to}`) : 0;
+    console.log(`nothing new to pull, but ${deployed ? `the deployed commit is ${deployed}` : "no deployed commit is recorded"}: installing ${to}`);
+  } else {
+    commits = count(`${from}..${to}`);
+    console.log(`${commits} new commits: ${from} -> ${to}`);
+  }
 
-  step = "npm install";
+  step = "npm ci";
   say("packages");
-  const changed = run("git", ["diff", "--name-only", from, to]).split(/\r?\n/).filter(Boolean);
-  if (needsInstall(changed)) run("npm", ["install"], { show: true });
-  else console.log("package files unchanged: skipping npm install");
+  let changed = null;
+  if (plan.base) {
+    try { changed = run("git", ["diff", "--name-only", plan.base, to]).split(/\r?\n/).filter(Boolean); } catch { changed = null; }
+  }
+  if (installNeeded({ changed, hasNodeModules: existsSync(join(ROOT, "node_modules")) })) run("npm", ["ci"], { show: true });
+  else console.log("package files unchanged: skipping npm ci");
 
   step = "deploy";
   say("deploy");
-  run("node", ["scripts/deploy.mjs", "--app-home", appHome], { show: true });
+  run(process.execPath, ["scripts/deploy.mjs", "--app-home", appHome], { show: true });
   finish({ from, to, commits, ok: true });
 } catch (e) {
   // After a successful pull the new commit and count are kept, and the reason names the failed step.
-  const pulled = commits > 0;
+  const pulled = to !== null && step !== "pull";
+  const what = commits > 0 ? `pulling ${commits} commit${commits === 1 ? "" : "s"}` : "the pull";
   finish({ from, to: pulled ? to : null, commits, ok: false,
-    reason: pulled ? `${step} failed after pulling ${commits} commit${commits === 1 ? "" : "s"}: ${e.message}` : e.message });
+    reason: pulled ? `${step} failed after ${what}: ${e.message}` : e.message });
 }

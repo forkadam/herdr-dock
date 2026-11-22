@@ -16,6 +16,10 @@ export function updateStrip(state, now) {
     case "updating":
       return { text: 'Updating… see the "Update herdr-dock" tab', tone: "dim", action: null };
     case "available": {
+      // HEAD isn't the deployed commit (an update that stopped after the pull): Update deploys it.
+      if (state.redeploy) {
+        return { text: `Not deployed yet · ${state.deployed ?? "?"} → ${state.current ?? "?"}`, tone: "accent", action: UPDATE };
+      }
       const latest = state.subject ? ` (latest: "${state.subject}")` : "";
       return { text: `Update available · ${plural(state.behind ?? 0, "new commit")}${latest}`, tone: "accent", action: UPDATE };
     }

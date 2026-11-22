@@ -29,3 +29,25 @@ test("parseDirty keeps whole names", () => {
   assert.deepEqual(parseDirty(" M a\nM  b\n?? c\nR  old -> new\n"), ["a", "b", "c", "new"]);
   assert.deepEqual(parseDirty(""), []);
 });
+
+import { planAfterPull, installNeeded } from "../scripts/update-steps.mjs";
+test("planAfterPull: new commits deploy, diffing from the deployed commit when known", () => {
+  assert.deepEqual(planAfterPull({ from: "a1", to: "b2", deployed: "a1" }), { action: "deploy", base: "a1" });
+  // A half-finished earlier update: the packages are compared with what was last deployed.
+  assert.deepEqual(planAfterPull({ from: "a1", to: "b2", deployed: "z9" }), { action: "deploy", base: "z9" });
+  assert.deepEqual(planAfterPull({ from: "a1", to: "b2", deployed: null }), { action: "deploy", base: "a1" });
+});
+test("planAfterPull: nothing pulled and deployed matches HEAD -> up to date", () => {
+  assert.deepEqual(planAfterPull({ from: "b2", to: "b2", deployed: "b2" }), { action: "none" });
+});
+test("planAfterPull: nothing pulled but HEAD isn't what was deployed (or unknown) -> redeploy", () => {
+  assert.deepEqual(planAfterPull({ from: "b2", to: "b2", deployed: "a1" }), { action: "redeploy", base: "a1" });
+  assert.deepEqual(planAfterPull({ from: "b2", to: "b2", deployed: null }), { action: "redeploy", base: null });
+  assert.deepEqual(planAfterPull({ from: "b2", to: "b2", deployed: undefined }), { action: "redeploy", base: null });
+});
+test("installNeeded: package files changed, node_modules missing, or the diff is unknown", () => {
+  assert.equal(installNeeded({ changed: ["src/a.js"], hasNodeModules: true }), false);
+  assert.equal(installNeeded({ changed: ["package-lock.json"], hasNodeModules: true }), true);
+  assert.equal(installNeeded({ changed: [], hasNodeModules: false }), true);
+  assert.equal(installNeeded({ changed: null, hasNodeModules: true }), true);
+});

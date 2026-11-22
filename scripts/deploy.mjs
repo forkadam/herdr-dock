@@ -75,10 +75,13 @@ if (migration) {
 
 // source.json goes into the built dock-core before it is copied, so the installed mod never
 // runs without it. It points at this repo and its config (re-run deploy after moving the repo) and
-// carries the hostname dock-core falls back on when it can't run the hostname command.
-say("write mods/dock-core/source.json");
+// carries the hostname dock-core falls back on when it can't run the hostname command, and the commit
+// deployed (null without git): the update check and npm run update compare it with HEAD.
+const rev = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" });
+const commit = rev.status === 0 ? rev.stdout.trim() || null : null;
+say(`write mods/dock-core/source.json (commit ${commit ?? "unknown"})`);
 writeFileSync(join(ROOT, "dist/mods/dock-core/source.json"),
-  JSON.stringify({ config: slashPath(configPath), hostname: host, repo: slashPath(repo) }, null, 2) + "\n");
+  JSON.stringify({ config: slashPath(configPath), hostname: host, repo: slashPath(repo), commit }, null, 2) + "\n");
 
 // Each mod is copied to a staging folder in the app home, then swapped in by rename, so Herdr
 // never sees a half-copied or missing mod folder.

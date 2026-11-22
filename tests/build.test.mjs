@@ -233,3 +233,20 @@ test("an invalid local file aborts deploy before anything is written", () => {
     assert.deepEqual(readdirSync(tmp), ["herdr-dock"]);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
+
+test("deploy records the repo's commit in source.json (null when the repo isn't a git repo)", () => {
+  const tmp = tmpHome();
+  const plain = mkdtempSync(join(tmpdir(), "dock-plain-"));
+  repos.push(plain);
+  try {
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
+    assert.equal(src.commit, git(cleanRepo, "rev-parse", "--short", "HEAD").trim());
+    mkdirSync(join(plain, "config"));
+    writeFileSync(join(plain, "config/dock.json"), HEAD_CONFIG);
+    const p = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_REPO: plain, GIT_CEILING_DIRECTORIES: tmpdir() });
+    assert.equal(p.status, 0, p.stderr + p.stdout);
+    assert.equal(JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8")).commit, null);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});

@@ -2,8 +2,9 @@
 // dock.update.state for the Dock layout dialog, notifies once per new upstream commit, and reads the result
 // file the update script (scripts/update.mjs) writes.
 //
-// dock.update.state = { status, current, latest, behind, subject, checkedAt, reason, startedAt } (+ commits
-// after an update). status: "idle" (up to date) | "checking" | "available" | "updating" | "updated" |
+// dock.update.state = { status, current, deployed, latest, behind, subject, checkedAt, reason, startedAt } (+ commits
+// after an update; + redeploy: true when HEAD isn't the commit the last deploy recorded in source.json and nothing
+// is behind, e.g. an update whose install or deploy failed after the pull: Update finishes it). status: "idle" (up to date) | "checking" | "available" | "updating" | "updated" |
 // "failed" | "blocked". reason: for "blocked", why Update can't run ("on branch X", "N local commits",
 // "local changes in the repo": the dialog shows "Can't update: <reason>"); for "failed", the sentence to show
 // after a failed check ("Can't check: <git's first line>") or what went wrong in an update.
@@ -34,8 +35,8 @@ function blockReason({ branch, ahead, behind, dirty }) {
 
 // The state after a check. prev (optional) is the state before it: a check right after an update keeps
 // "updated" (so the strip still says "Updated to …") while HEAD is still that commit and nothing is newer.
-export function updateState({ fetchOk, fetchError, branch, ahead, behind, latest, subject, current, dirty }, now, prev = null) {
-  const common = { current: current ?? prev?.current ?? null, checkedAt: now, startedAt: null };
+export function updateState({ fetchOk, fetchError, branch, ahead, behind, latest, subject, current, dirty, deployed }, now, prev = null) {
+  const common = { current: current ?? prev?.current ?? null, deployed: deployed ?? prev?.deployed ?? null, checkedAt: now, startedAt: null };
   if (!fetchOk) {
     return {
       status: "failed", latest: prev?.latest ?? null, behind: prev?.behind ?? null, subject: prev?.subject ?? null,
@@ -43,18 +44,21 @@ export function updateState({ fetchOk, fetchError, branch, ahead, behind, latest
     };
   }
   const s = { status: "idle", ...common, latest: latest ?? null, behind: behind ?? 0, subject: subject ?? null, reason: null };
-  const reason = blockReason({ branch, ahead: ahead ?? 0, behind: behind ?? 0, dirty: !!dirty });
+  // HEAD isn't what was deployed: Update redeploys it (local changes block that too: the script refuses them).
+  const redeploy = s.behind === 0 && !!s.deployed && !!s.current && s.deployed !== s.current;
+  const reason = blockReason({ branch, ahead: ahead ?? 0, behind: redeploy ? 1 : s.behind, dirty: !!dirty });
   if (reason) return { ...s, status: "blocked", reason };
   if (s.behind > 0) return { ...s, status: "available" };
+  if (redeploy) return { ...s, status: "available", redeploy: true };
   if (prev?.status === "updated" && prev.current && prev.current === s.current) {
     return { ...s, status: "updated", commits: prev.commits ?? null };
   }
   return s;
 }
 
-// Notify only for an available update whose upstream sha hasn't been notified yet.
+// Notify only for an available update whose upstream sha hasn't been notified yet (a redeploy has no toast).
 export function shouldNotify(state, notifiedSha) {
-  return state?.status === "available" && !!state.latest && state.latest !== notifiedSha;
+  return state?.status === "available" && !state.redeploy && !!state.latest && state.latest !== notifiedSha;
 }
 
 // The toast for an available update.
@@ -67,12 +71,12 @@ export function resultToState(result, prev, _now) {
   if (result == null || typeof result !== "object" || Array.isArray(result)) return null;
   const p = prev && typeof prev === "object" ? prev : {};
   const s = {
-    status: "idle", current: p.current ?? null, latest: p.latest ?? null, behind: p.behind ?? null, subject: p.subject ?? null,
+    status: "idle", current: p.current ?? null, deployed: p.deployed ?? null, latest: p.latest ?? null, behind: p.behind ?? null, subject: p.subject ?? null,
     checkedAt: p.checkedAt ?? null, reason: null, startedAt: null,
   };
   if (result.ok) {
     const to = result.to ?? p.latest ?? null;
-    return { ...s, status: "updated", current: to, latest: to, behind: 0, commits: result.commits ?? null };
+    return { ...s, status: "updated", current: to, deployed: to, latest: to, behind: 0, commits: result.commits ?? null };
   }
   return { ...s, status: "failed", reason: firstLine(result.reason) || "unknown error" };
 }

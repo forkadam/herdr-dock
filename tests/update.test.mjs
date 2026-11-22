@@ -21,7 +21,7 @@ test("keys and paths", () => {
 test("updateState: available (on main, ahead 0, behind 3)", () => {
   const s = updateState({ ...base, behind: 3, latest: "def5678", current: "abc1234" }, NOW);
   assert.deepEqual(s, {
-    status: "available", current: "abc1234", latest: "def5678", behind: 3, subject: "Fix the bar", checkedAt: NOW,
+    status: "available", current: "abc1234", deployed: null, latest: "def5678", behind: 3, subject: "Fix the bar", checkedAt: NOW,
     reason: null, startedAt: null,
   });
 });
@@ -96,7 +96,7 @@ test("resultToState: success and failure shapes", () => {
   const prev = { status: "updating", current: "abc1234", latest: "def5678", behind: 3, subject: "Fix", checkedAt: 5, reason: null, startedAt: NOW - 1000 };
   const ok = resultToState({ ok: true, from: "abc1234", to: "def5678", commits: 3, reason: null, at: NOW - 10 }, prev, NOW);
   assert.deepEqual(ok, {
-    status: "updated", current: "def5678", latest: "def5678", behind: 0, subject: "Fix", checkedAt: 5, reason: null,
+    status: "updated", current: "def5678", deployed: "def5678", latest: "def5678", behind: 0, subject: "Fix", checkedAt: 5, reason: null,
     startedAt: null, commits: 3,
   });
   const bad = resultToState({ ok: false, from: "abc1234", to: null, commits: 0, reason: "cannot fast-forward", at: NOW }, prev, NOW);
@@ -142,4 +142,42 @@ test("parseUpdateCommand: update.check and update.start", () => {
   assert.equal(parseUpdateCommand("update.check.x"), null);
   assert.equal(parseUpdateCommand("git.refresh"), null);
   assert.equal(parseUpdateCommand(undefined), null);
+});
+
+test("updateState: publishes deployed; a deployed commit behind HEAD with nothing to pull is a redeploy", () => {
+  const s = updateState({ ...base, deployed: "0ld0000" }, NOW);
+  assert.equal(s.status, "available");
+  assert.equal(s.redeploy, true);
+  assert.equal(s.behind, 0);
+  assert.equal(s.deployed, "0ld0000");
+  assert.equal(s.current, "abc1234");
+  // Deployed matches HEAD, or unknown: up to date, no redeploy flag.
+  const same = updateState({ ...base, deployed: "abc1234" }, NOW);
+  assert.equal(same.status, "idle");
+  assert.equal(same.deployed, "abc1234");
+  assert.equal(same.redeploy, undefined);
+  assert.equal(updateState(base, NOW).status, "idle");
+  assert.equal(updateState(base, NOW).deployed, null);
+  // Commits to pull win (a normal update also deploys).
+  const behind = updateState({ ...base, behind: 2, latest: "def5678", deployed: "0ld0000" }, NOW);
+  assert.equal(behind.status, "available");
+  assert.equal(behind.redeploy, undefined);
+  // Blocks still apply (the update script refuses them); local changes block a redeploy too.
+  const off = updateState({ ...base, branch: "feat/x", deployed: "0ld0000" }, NOW);
+  assert.equal(off.status, "blocked");
+  assert.equal(off.deployed, "0ld0000");
+  assert.equal(updateState({ ...base, dirty: true, deployed: "0ld0000" }, NOW).reason, "local changes in the repo");
+  // A failed fetch keeps the last known deployed commit.
+  assert.equal(updateState({ fetchOk: false, fetchError: "x" }, NOW, s).deployed, "0ld0000");
+});
+
+test("shouldNotify: no toast for a redeploy", () => {
+  const s = updateState({ ...base, latest: "abc1234", deployed: "0ld0000" }, NOW);
+  assert.equal(shouldNotify(s, null), false);
+});
+
+test("resultToState: a successful update records the deployed commit; a failed one keeps it", () => {
+  const prev = { status: "updating", current: "b2", deployed: "a1", latest: "b2", behind: 0, startedAt: NOW };
+  assert.equal(resultToState({ ok: true, from: "a1", to: "b2", commits: 0 }, prev, NOW).deployed, "b2");
+  assert.equal(resultToState({ ok: false, reason: "deploy failed" }, prev, NOW).deployed, "a1");
 });

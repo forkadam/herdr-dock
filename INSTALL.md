@@ -26,7 +26,7 @@ cd <dir>
 ## 3. Install and deploy
 
 ```
-npm install
+npm ci
 npm run deploy
 herdr-app status
 ```

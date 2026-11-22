@@ -64,6 +64,8 @@ const SAMPLE_TIMEOUT_MS = 4000;
 // Herdr's own processes (CPU % and memory, for the bar tooltips): a ps / Get-Process call every 10 s.
 const HERDR_MS = 10000;
 const HERDR_TIMEOUT_MS = 5000;
+// While an update runs, the result file is looked for every this many ticks (besides the folder watch).
+const RESULT_EVERY_TICKS = 5;
 
 const isTop = () => props()?.dockRegion === "top";
 
@@ -81,6 +83,8 @@ export default class DockCore extends View {
     this.resultPath = null; // <app home>/herdr-dock/update-result.json
     this.updateBusy = false; // an update check is running
     this.consuming = false; // the result file is being read
+    this.sourcePath = null; // <app home>/mods/dock-core/source.json (its commit: what was last deployed)
+    this.updateTicks = 0; // ticks while "updating", to look for the result file every RESULT_EVERY_TICKS
     this.collector = null;
     this.notifySeq = 0; // with Date.now(), makes this PC's history item ids unique
     this.startedAt = Date.now(); // agents() can be [] just after start, before programs re-report
@@ -132,6 +136,7 @@ export default class DockCore extends View {
     this.repo = repo;
     setShared(REPO_KEY, repo);
     this.resultPath = `${home}/${RESULT_REL}`;
+    this.sourcePath = `${home}/mods/dock-core/source.json`;
     // A result left from an update (deploy restarted dock-core before it was seen), then the 6 h check.
     await this.consumeResult(cx);
     cx.spawn(async (cx) => {
@@ -210,7 +215,7 @@ export default class DockCore extends View {
     cx.notify();
     let next;
     try {
-      next = updateState(await this.gitUpdateInfo(), Date.now(), prev);
+      next = updateState({ ...(await this.gitUpdateInfo()), deployed: await this.deployedCommit() }, Date.now(), prev);
     } catch (e) {
       next = updateState({ fetchOk: false, fetchError: e?.message ?? String(e) }, Date.now(), prev);
     } finally {
@@ -224,6 +229,14 @@ export default class DockCore extends View {
       setShared(NOTIFIED_KEY, next.latest);
     }
     cx.notify();
+  }
+
+  // The commit the last deploy recorded in source.json (re-read each check), or null.
+  async deployedCommit() {
+    try {
+      const src = JSON.parse((await readTextFile(this.sourcePath)) ?? "null");
+      return typeof src?.commit === "string" && src.commit.trim() ? src.commit.trim() : null;
+    } catch { return null; }
   }
 
   // What updateState needs, from git in the repo. A failed fetch returns fetchOk false; any other failed git
@@ -288,14 +301,26 @@ export default class DockCore extends View {
     }
   }
 
-  // Each tick: an update with no result for 10 minutes becomes a failure.
-  updateTick() {
-    const next = timedOut(shared(UPDATE_KEY) ?? null, Date.now());
-    if (!next) return;
-    setShared(UPDATE_KEY, next);
-    try {
-      notify({ title: "herdr-dock update failed", body: next.reason, level: "error", action: OPEN_DIALOG });
-    } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
+  // Each tick while "updating": every RESULT_EVERY_TICKS ticks, look for the result file (the folder watch
+  // can miss one written before it started), and once more right before an update with no result for
+  // 10 minutes becomes a failure.
+  updateTick(cx) {
+    const state = shared(UPDATE_KEY) ?? null;
+    if (state?.status !== "updating") { this.updateTicks = 0; return; }
+    this.updateTicks = (this.updateTicks + 1) % RESULT_EVERY_TICKS;
+    const late = timedOut(state, Date.now());
+    if (!late && this.updateTicks !== 0) return;
+    cx.spawn(async (cx) => {
+      await this.consumeResult(cx);
+      if (!late) return;
+      const next = timedOut(shared(UPDATE_KEY) ?? null, Date.now());
+      if (!next) return;
+      setShared(UPDATE_KEY, next);
+      try {
+        notify({ title: "herdr-dock update failed", body: next.reason, level: "error", action: OPEN_DIALOG });
+      } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
+      cx.notify();
+    });
   }
 
   // An update.* command: check now, or the dialog opening the update tab. Returns false when c isn't one.
@@ -328,7 +353,7 @@ export default class DockCore extends View {
       for (;;) {
         this.collector?.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
         try { this.resolveNotify(); } catch (e) { console.log(`dock-core: notify resolve failed: ${e?.message ?? e}`); }
-        try { this.updateTick(); } catch (e) { console.log(`dock-core: update tick failed: ${e?.message ?? e}`); }
+        try { this.updateTick(cx); } catch (e) { console.log(`dock-core: update tick failed: ${e?.message ?? e}`); }
         await cx.sleep(TICK_MS);
       }
     });
