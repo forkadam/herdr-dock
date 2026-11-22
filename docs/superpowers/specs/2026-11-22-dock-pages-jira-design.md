@@ -1,6 +1,7 @@
 # Dock pages, and a Jira page — design
 
-Date: 2026-11-22. Status: Part 1 built (see "As built"); Part 2 needs more planning.
+Date: 2026-11-22. Status: Part 1 built (see "As built"); Part 2 planned (decisions below, plan in
+`docs/superpowers/plans/2026-11-22-jira-page.md`).
 
 ## Intent
 
@@ -90,8 +91,13 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
 - **Filters:** built in — *Assigned to me* (`assignee = currentUser() AND resolution = Unresolved ORDER BY updated
   DESC`), *Reported by me*, *Recently viewed*; plus the user's own saved JQL filters (from Jira's favourite
   filters, and any listed in `props.filters`).
-- **List:** issues grouped by status category (To do, In progress, Done), each row: type icon, key, summary,
-  priority, assignee, updated ("2h"). A badge with the count of *Assigned to me* shows in the Pages nav.
+- **Two views, a toggle in the header** (remembered per PC):
+  - **List:** issues grouped by status category (To do, In progress, Done), each row: type icon, key, summary,
+    priority, assignee, updated ("2h"). Dense; the default.
+  - **Board:** one column per status (ordered by category, then by the order Jira returns them), cards with key,
+    summary, priority and assignee; columns scroll on their own. The same issues as the list (the filter's), not a
+    Jira agile board.
+- A badge with the count of *Assigned to me* shows in the Pages bar.
 - **Detail** (click a row; a split on the right of the page): summary, status, description (plain text; Jira
   wiki markup shown as text in v1), the last 5 comments, links.
 - **Actions** in the detail:
@@ -105,14 +111,15 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
 
 ### Start work
 
-- Picks the space: the selected space by default, or one chosen from a menu of spaces whose repo matches the
-  issue's project (a mapping `props.projects: {"PROJ": "<repo path>"}`, optional).
-- Optional branch / worktree: off by default; when on, a branch `proj-123-short-summary` (a git worktree through
-  the same code dock-git uses for worktrees).
-- Runs `tab.new {space, name: "PROJ-123", argv: ["claude"], task}` where `task` is the issue's key, summary,
-  description and URL, and an instruction to read the issue first.
-- Optionally (a setting) moves the issue to "In Progress" and assigns it to the user.
-- Switches the work area back to terminals so the new tab is in front.
+The user's own Claude skills do the real work (initialize the ticket, sync it to their Obsidian note, read it and
+investigate). So Start work only opens the tab and hands Claude the issue; it creates no branch and changes nothing
+in Jira.
+
+- Runs `tab.new {name: "PROJ-123", argv: ["claude"], task}` in the selected space, then shows the terminal.
+- `task` comes from a template, `props.startTask`, with `{key}`, `{summary}`, `{url}`, `{type}`, `{status}`,
+  `{priority}` and `{description}` filled in. Default: `Work on Jira issue {key}: {summary}\n{url}`. The user sets it
+  to call their skill, e.g. `/init-ticket {key}`.
+- The button's tooltip shows the message it will send.
 
 ### Access to Jira
 
@@ -120,8 +127,10 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
   the list shows, `maxResults` 50, paging), `GET /rest/api/2/issue/{key}` (detail, `expand=renderedFields` not
   used in v1), `GET /rest/api/2/filter/favourite`, `GET|POST /rest/api/2/issue/{key}/transitions`,
   `PUT /rest/api/2/issue/{key}/assignee`, `POST /rest/api/2/issue/{key}/comment`.
-- **Auth:** `Authorization: Bearer <PAT>`. The PAT is the one the Jira MCP already uses (Jira → Profile →
-  Personal Access Tokens).
+- **Auth:** `Authorization: Bearer <PAT>`. The PAT is the one the Jira MCP already uses: the MCP is
+  **mcp-atlassian** (sooperset), so its entry in the Claude config holds `JIRA_URL` (the base URL),
+  `JIRA_PERSONAL_TOKEN` (the PAT) and maybe `JIRA_SSL_VERIFY` (false means an internal certificate: see the TLS risk).
+  The Connect form asks for the URL and the token; the user copies them from there.
 - **Where settings live:**
   - Shared config / `local.json` page `props`: `site` name, `baseUrl`, filters, project → repo mapping. Never the
     token.
@@ -130,8 +139,8 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
     not in shared state. The README says so.
   - Considered: the OS keychain (`security` on macOS, `secret-tool` on Linux, Credential Manager on Windows).
     Better at rest, but three code paths and no simple Windows CLI; a later step.
-  - Considered: reading the token from the MCP's config (`~/.claude.json` env). Convenient, but it reaches into
-    another tool's secrets; offered only as an explicit "Use the token from my Jira MCP" button, if at all.
+  - Rejected for v1: reading the token from the MCP's config. It reaches into another tool's settings; the user
+    chose the private file.
 - **Calls:** Herdr's `fetch` from the mod. Polling: every 2 min while the page is shown, every 10 min while hidden
   (for the nav badge), never while Jira is unreachable more often than every 5 min.
 - **Risk, to check first at the office:** the company's TLS certificate. If Jira uses an internal CA, Herdr's
@@ -161,17 +170,12 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
 
 ## Order of work
 
-1. Pages: config region, layout stack, `dock.page.active`, `dock-pages` nav, dock-core switching and the back-to-
-   terminals rules, a trivial `dock-page-demo` to prove it; dialog column.
-2. Mock Jira server and fixtures.
-3. `dock-jira` read-only against the mock: connect form, token file, filters, list, detail, errors.
-4. Actions: transitions, assign, comment.
-5. Start work.
-6. At the office: point it at the real Jira, check TLS, PAT, JQL, the workflow's transitions; fix the gaps.
+Part 1 is done. Part 2: `docs/superpowers/plans/2026-11-22-jira-page.md`.
 
 ## Open questions
 
 - Jira version at work (Server 8.x vs Data Center 9/10): PATs need 8.14+.
 - Does the company Jira need a proxy or VPN from the office network, and does its certificate come from an
   internal CA?
-- Which projects map to which repos (for Start work's space choice)?
+- The exact first message for Start work (the user's skill name), set in `props.startTask`.
+- Whether `JIRA_SSL_VERIFY` is false in the MCP's config (an internal CA): if so, plan on the `curl` transport.
