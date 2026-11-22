@@ -11,9 +11,11 @@ const QUOTA_MAX_AGE_MS = 120000;
 const DISK_WARN_FREE_PERCENT = 10;
 
 // Prints one JSON line {"cpu","mem","diskFree"} (percent) plus "cores". CPU is busy time over a short window;
-// the disk is the system drive root on Windows, else the home folder (null if statfs fails).
+// the disk is the system drive root on Windows, else the home folder (null if statfs fails). On macOS it also
+// prints `vm_stat`'s text and the total memory, because freemem there leaves out the cache macOS reclaims at
+// will and so reads 90%+ all the time; parseSample works out "Memory Used" from them (macUsedPercent).
 const SCRIPT = `
-const os = require("os"), fs = require("fs");
+const os = require("os"), fs = require("fs"), cp = require("child_process");
 const times = () => os.cpus().reduce((a, c) => {
   const t = c.times;
   a.total += t.user + t.nice + t.sys + t.idle + t.irq;
@@ -32,7 +34,11 @@ setTimeout(() => {
     const s = fs.statfsSync(root);
     diskFree = 100 * s.bavail / s.blocks;
   } catch {}
-  console.log(JSON.stringify({ cpu, mem, diskFree, cores: os.cpus().length }));
+  const out = { cpu, mem, diskFree, cores: os.cpus().length };
+  if (process.platform === "darwin") {
+    try { out.vm = cp.execFileSync("vm_stat", { encoding: "utf8", timeout: 2000 }); out.total = os.totalmem(); } catch {}
+  }
+  console.log(JSON.stringify(out));
 }, ${CPU_WINDOW_MS});
 `;
 
@@ -42,14 +48,35 @@ export function sampleCommand() {
 
 const pct = (n) => Math.min(100, Math.max(0, Math.round(n)));
 
-// The sample out of sampleCommand's stdout, stamped with `now`; null when it isn't one.
+// macOS "Memory Used" as Activity Monitor counts it, in percent of `totalBytes`, from `vm_stat` text:
+// app memory (anonymous pages minus purgeable) + wired + compressed. Without the anonymous-pages line (older
+// macOS) it uses active + wired + compressed. Null when the text or total can't be used.
+export function macUsedPercent(vmStat, totalBytes) {
+  const text = String(vmStat ?? "");
+  const size = Number(/page size of (\d+) bytes/.exec(text)?.[1]);
+  if (!(size > 0) || !(totalBytes > 0)) return null;
+  const pages = (label) => {
+    const m = new RegExp(`^${label}:\\s+(\\d+)\\.?\\s*$`, "m").exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const wired = pages("Pages wired down"), compressed = pages("Pages occupied by compressor");
+  if (wired == null || compressed == null) return null;
+  const anon = pages("Anonymous pages"), purgeable = pages("Pages purgeable") ?? 0, active = pages("Pages active");
+  const app = anon != null ? Math.max(0, anon - purgeable) : active;
+  if (app == null) return null;
+  return pct(100 * (app + wired + compressed) * size / totalBytes);
+}
+
+// The sample out of sampleCommand's stdout, stamped with `now`; null when it isn't one. On macOS the memory
+// comes from vm_stat when it was readable (see SCRIPT), else the freemem figure stays.
 export function parseSample(stdout, now) {
   let o;
   try { o = JSON.parse(String(stdout ?? "").trim().split(/\r?\n/).pop()); } catch { return null; }
   if (!o || typeof o.cpu !== "number" || typeof o.mem !== "number" || !Number.isFinite(o.cpu + o.mem)) return null;
   const d = typeof o.diskFree === "number" && Number.isFinite(o.diskFree) ? pct(o.diskFree) : null;
   const cores = Number.isInteger(o.cores) && o.cores > 0 ? o.cores : null;
-  return { cpu: pct(o.cpu), mem: pct(o.mem), diskFree: d, cores, at: now };
+  const mac = typeof o.vm === "string" ? macUsedPercent(o.vm, o.total) : null;
+  return { cpu: pct(o.cpu), mem: mac ?? pct(o.mem), diskFree: d, cores, at: now };
 }
 
 // What the bottom bar flags, in display order: running pipelines (with their worktree ids), quota near its

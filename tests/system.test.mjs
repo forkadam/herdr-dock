@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { HERDR_KEY, SAMPLE_KEY, herdrSampleCommand, herdrUsage, parseHerdrProcs, sampleCommand, parseSample, warningsFor } from "../src/shared/system.js";
+import { HERDR_KEY, SAMPLE_KEY, herdrSampleCommand, herdrUsage, parseHerdrProcs, sampleCommand, parseSample, warningsFor, macUsedPercent } from "../src/shared/system.js";
 
 test("SAMPLE_KEY", () => assert.equal(SAMPLE_KEY, "dock.system.sample"));
 test("parseSample: good line is clamped and rounded", () => {
@@ -91,4 +91,42 @@ test("herdrSampleCommand runs on this machine and parses (skips without herdr)",
   const r = parseHerdrProcs(platform, out);
   if (!r) return t.skip("no herdr process running");
   assert.ok(r.mem > 0 && r.cpuMs >= 0);
+});
+
+// A real macOS `vm_stat` (16 KiB pages). Activity Monitor's "Memory Used" = app memory (anonymous minus
+// purgeable) + wired + compressed: (258839 - 9157 + 125468 + 176870) × 16384 = 9.04 GB of 16 GiB → 53%.
+const VM_STAT = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                3264.
+Pages active:                            178383.
+Pages inactive:                          175936.
+Pages speculative:                         2236.
+Pages throttled:                              0.
+Pages wired down:                        125468.
+Pages purgeable:                           9157.
+"Translation faults":                 1056195046.
+Pages copy-on-write:                   38693958.
+File-backed pages:                       97716.
+Anonymous pages:                         258839.
+Pages stored in compressor:              592316.
+Pages occupied by compressor:            176870.
+`;
+const GIB16 = 16 * 2 ** 30;
+
+test("macUsedPercent: app memory + wired + compressed, like Activity Monitor", () => {
+  assert.equal(macUsedPercent(VM_STAT, GIB16), 53);
+});
+
+test("macUsedPercent: falls back to active + wired + compressed without anonymous pages; null on junk", () => {
+  const noAnon = VM_STAT.split("\n").filter((l) => !l.startsWith("Anonymous") && !l.startsWith("Pages purgeable")).join("\n");
+  assert.equal(macUsedPercent(noAnon, GIB16), Math.round(100 * (178383 + 125468 + 176870) * 16384 / GIB16));
+  assert.equal(macUsedPercent("", GIB16), null);
+  assert.equal(macUsedPercent(VM_STAT, 0), null);
+  assert.equal(macUsedPercent("Pages wired down: 5.", GIB16), null); // no page size line
+});
+
+test("parseSample: on macOS the memory comes from vm_stat, not freemem", () => {
+  const line = JSON.stringify({ cpu: 10, mem: 97, diskFree: 40, cores: 8, vm: VM_STAT, total: GIB16 });
+  assert.equal(parseSample(line, 1).mem, 53);
+  // vm_stat unreadable → keep the freemem figure
+  assert.equal(parseSample(JSON.stringify({ cpu: 10, mem: 97, diskFree: 40, cores: 8, vm: "", total: GIB16 }), 1).mem, 97);
 });
