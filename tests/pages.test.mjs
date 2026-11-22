@@ -4,7 +4,7 @@ import { DEFAULT_CONFIG, mergeForHost, parseConfig, planApply } from "../src/sha
 import { buildLayout, pageActiveOf, pageChildOf, pageIds } from "../src/shared/layout.js";
 import { focusLeavesPage, liveWork, nextPage, pageClick, planPage } from "../src/shared/panel.js";
 import { applyEdit, draftFromConfig, planSave } from "../src/shared/edit.js";
-import { badgeText, pageMeta } from "../src/mods/dock-pages/view.js";
+import { badgeOf, badgeText, pageMeta } from "../src/mods/dock-pages/view.js";
 import { overviewModel } from "../src/mods/dock-overview/view.js";
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -90,6 +90,7 @@ test("dialog: placing a page also adds the Pages list to the left panel, before 
   assert.deepEqual(r.draft.regions.pages.features, [{ mod: "dock-overview" }]);
   const left = r.draft.regions.left.features.map((f) => f.mod);
   assert.deepEqual(left.slice(-2), ["dock-pages", "dock-footer"]);
+  assert.equal(r.draft.regions.left.features.find((f) => f.mod === "dock-pages").size, 52);
   assert.match(applyEdit(draft, { type: "place", mod: "dock-overview", region: "left" }).error, /regions\.pages/);
   assert.match(applyEdit(draft, { type: "size", region: "pages", value: 2 }).error, /no size/);
   const saved = planSave(JSON.stringify(DEFAULT_CONFIG), null, "pc", r.draft);
@@ -111,6 +112,10 @@ test("Pages list helpers: title, icon and badge", () => {
   assert.equal(badgeText(250), "99+");
   assert.equal(badgeText(" new "), "new");
   assert.equal(badgeText(null), null);
+  assert.deepEqual(badgeOf({ count: 2, tone: "bad" }), { text: "2", tone: "bad" });
+  assert.deepEqual(badgeOf({ count: 0, tone: "bad" }), null);
+  assert.deepEqual(badgeOf({ text: "new", tone: "odd" }), { text: "new", tone: "info" });
+  assert.deepEqual(badgeOf(7), { text: "7", tone: "info" });
 });
 
 test("Overview groups agents by status, needs-you first, newest first", () => {

@@ -17,7 +17,7 @@ export default class Overview extends View {
     try { list = agents(); } catch { list = []; }
     const m = overviewModel(list);
     // Mounted while hidden too, so the badge stays current.
-    if ((shared(BADGE_KEY) ?? 0) !== m.counts.blocked) setShared(BADGE_KEY, m.counts.blocked);
+    if ((shared(BADGE_KEY)?.count ?? 0) !== m.counts.blocked) setShared(BADGE_KEY, { count: m.counts.blocked, tone: "bad" });
     const stat = (s) => v_flex().flex_1().min_w(0).p(14).gap(4).rounded(10).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
       .child(div().text_size(12).text_color(t.dim).child(STATUS_TITLE[s]))
       .child(div().text_size(26).font_semibold().text_color(m.counts[s] && (s === "blocked" || s === "done") ? t[s] : t.foreground).child(String(m.counts[s])));

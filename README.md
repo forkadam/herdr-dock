@@ -151,8 +151,10 @@ config order (it scrolls when there are many):
 For features bigger than a panel: a **page** fills the work area, in place of the terminal. One page shows at a
 time, for the whole window (not per space or tab), so a page is never open twice.
 
-- **Pages** (`dock-pages`), a left-panel feature, lists the pages in config order. Click one to show it; click the
-  page that's showing to go back to the terminal. In the left panel's icon mode it shows one icon per page.
+- **The Pages bar** (`dock-pages`, a 52 px left-panel feature, after cockpit's app bar): one row of icons on a
+  raised strip, the Terminal first, then each page in config order, each with a count badge in its corner (red when
+  something needs you, amber for a warning). The one shown sits on a raised tile; hover for its name. Click a page to
+  show it; click it again, or the Terminal, to go back. In the left panel's icon mode it is a column of icons.
 - **Ctrl+Alt+P** (`dock-core.page`) cycles: the terminal, each page in turn, the terminal again.
   `herdr-app do dock-core.terminals` goes straight back.
 - Clicking any tab, space, agent or worktree, or focus moving to another tab (a key, a new tab), brings the
@@ -162,10 +164,10 @@ time, for the whole window (not per space or tab), so a page is never open twice
   (`dock.page.active`), never in the config.
 - **Overview** (`dock-overview`) is the first page: every agent in every space, grouped by status (needs you
   first), as cards; click one to go to it. Its Pages badge counts the agents that need you.
-- A page mod gets `props().dockRegion === "pages"`. It may show a badge in the Pages list by setting the shared key
-  `dock.page.badge.<its mod id>` (a number or a short string), and can call `showTerminal()` (`src/mods/_page.js`)
+- A page mod gets `props().dockRegion === "pages"`. It may show a badge in the Pages bar by setting the shared key
+  `dock.page.badge.<its mod id>` (a number, a short string, or `{ "count": 3, "tone": "bad" | "warn" | "info" }`), and can call `showTerminal()` (`src/mods/_page.js`)
   to hand the work area back.
-- Add or remove pages in the Dock layout dialog (Pages section). Placing the first page also adds the Pages list to
+- Add or remove pages in the Dock layout dialog (Pages section). Placing the first page also adds the Pages bar to
   the left panel. With no pages the layout is exactly as before.
 
 ## Panel modes

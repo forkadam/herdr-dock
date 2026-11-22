@@ -4,6 +4,7 @@ import { LEFT_ONLY, PAGE_ONLY, REGION_NAMES, mergeForHost, parseConfig, parseLoc
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
 const PAGES_NAV = "dock-pages";
+export const PAGES_NAV_PX = 52;
 
 export function allowedRegions(mod) {
   if (mod === "dock-core" || mod === "dock-tabs") return ["top"];
@@ -94,7 +95,11 @@ function place(d, { mod, region }) {
   // A page keeps only its props (no size, no drag).
   target.splice(at, 0, region === "pages" ? (feature.props ? { mod, props: feature.props } : { mod }) : feature);
   // The first page also puts the Pages list in the left panel (else nothing could open it).
-  if (region === "pages" && regionOf(d, PAGES_NAV) === null) place(d, { mod: PAGES_NAV, region: "left" });
+  if (region === "pages" && regionOf(d, PAGES_NAV) === null) {
+    place(d, { mod: PAGES_NAV, region: "left" });
+    // A one-row bar: the header's height plus the strip.
+    d.regions.left.features.find((f) => f.mod === PAGES_NAV).size = PAGES_NAV_PX;
+  }
   return null;
 }
 

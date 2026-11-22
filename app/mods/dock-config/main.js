@@ -137,6 +137,7 @@ function parseLocal(text) {
 var LEFT_MODES2 = ["expanded", "icons", "hidden"];
 var FOOTER = "dock-footer";
 var PAGES_NAV = "dock-pages";
+var PAGES_NAV_PX = 52;
 function allowedRegions(mod) {
   if (mod === "dock-core" || mod === "dock-tabs") return ["top"];
   if (LEFT_ONLY.includes(mod)) return ["left"];
@@ -206,7 +207,10 @@ function place(d, { mod, region }) {
   const target = d.regions[region].features;
   const at = mod !== FOOTER && target.at(-1)?.mod === FOOTER ? target.length - 1 : target.length;
   target.splice(at, 0, region === "pages" ? feature.props ? { mod, props: feature.props } : { mod } : feature);
-  if (region === "pages" && regionOf(d, PAGES_NAV) === null) place(d, { mod: PAGES_NAV, region: "left" });
+  if (region === "pages" && regionOf(d, PAGES_NAV) === null) {
+    place(d, { mod: PAGES_NAV, region: "left" });
+    d.regions.left.features.find((f) => f.mod === PAGES_NAV).size = PAGES_NAV_PX;
+  }
   return null;
 }
 function move(d, { region, index, delta }) {

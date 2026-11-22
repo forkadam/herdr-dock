@@ -77,7 +77,9 @@ A fifth region, `pages`, in `config/dock.json` and the per-PC `local.json`:
 - dock-core: `syncPage` in render (select the child; a space/tab focus change clears the page), commands `page`
   and `terminals`; key `ctrl-alt-p`.
 - Tabs, Spaces, Agents and Git projects call `showTerminal()` on click; Tabs dims while a page shows.
-- `dock-pages` (the list, with badges from `dock.page.badge.<mod>`) and `dock-overview` (the first page).
+- `dock-pages`: after cockpit's app bar (quaresc/cockpit, the icon row under its quota bars): a 52 px row of icons
+  on a raised strip, Terminal first, count badges in the corners (`dock.page.badge.<mod>`, with a tone), the shown
+  one on a raised tile. `dock-overview` is the first page.
 - Tests: `tests/pages.test.mjs`.
 
 ## Part 2: the Jira page (`dock-jira`)
