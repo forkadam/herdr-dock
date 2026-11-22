@@ -33,3 +33,22 @@ test("planApply with a missing config keeps last good", () => {
   const r = planApply(null, "h", "x", null);
   assert.equal(r.write, null); assert.ok(r.error); assert.equal(r.merged, null);
 });
+
+test("planApply merges the local file's text over the config", () => {
+  const good = readFileSync("tests/fixtures/dock.json", "utf8");
+  const local = JSON.stringify({ v: 1, regions: { left: { size: 333 } } });
+  const r = planApply(good, "h", null, null, {}, local);
+  assert.equal(r.error, null); assert.equal(r.merged.regions.left.size, 333);
+  const expected = JSON.stringify(buildLayout(mergeForHost(parseConfig(good).config, "h", JSON.parse(local))), null, 2) + "\n";
+  assert.equal(r.write, expected);
+  assert.equal(planApply(good, "h", null, null, {}, null).merged.regions.left.size, parseConfig(good).config.regions.left.size);
+});
+
+test("planApply with an invalid local file reports it and keeps last good (never merges it)", () => {
+  const good = readFileSync("tests/fixtures/dock.json", "utf8");
+  const first = planApply(good, "h", null, null);
+  for (const bad of ["{", JSON.stringify({ v: 1, regions: { middle: {} } })]) {
+    const r = planApply(good, "h", first.write, first.merged, {}, bad);
+    assert.equal(r.write, null); assert.match(r.error, /herdr-dock\/local\.json/); assert.equal(r.merged, first.merged);
+  }
+});

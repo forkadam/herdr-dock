@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, renameSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir, hostname } from "node:os";
 import { spawnSync } from "node:child_process";
 import { buildAll, ROOT } from "./build.mjs";
-import { parseConfig, mergeForHost } from "../src/shared/config.js";
+import { LOCAL_REL, mergeWithLocal, migrationPlan, parseConfig, parseLocal } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
 import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
@@ -23,15 +23,29 @@ const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
 const fail = (msg) => { console.error(msg); process.exit(1); };
 say(`app home: ${appHome}`);
 
-// Validate config first so an invalid one aborts before anything is written.
-const configPath = join(ROOT, "config/dock.json");
-const parsed = parseConfig(readFileSync(configPath, "utf8"));
-if (!parsed.ok) fail(`config/dock.json invalid: ${parsed.error}`);
+// The repo whose config/dock.json is read (DOCK_REPO: tests point it at a temp repo).
+const repo = resolve(process.env.DOCK_REPO || ROOT);
+// Validate config and the local file first so an invalid one aborts before anything is written.
+const configPath = join(repo, "config/dock.json");
+const localPath = join(appHome, LOCAL_REL);
 const host = hostname().toLowerCase();
+let configText = readFileSync(configPath, "utf8");
+const localText = existsSync(localPath) ? readFileSync(localPath, "utf8") : null;
+const original = parseConfig(configText);
+if (!original.ok) fail(`config/dock.json invalid: ${original.error}`);
+// One-time move of machines.<host> into the local file (written below, after the other checks).
+// git's committed text lets a migrated config/dock.json match HEAD again; without git it is skipped.
+const head = spawnSync("git", ["show", "HEAD:config/dock.json"], { cwd: repo, encoding: "utf8" });
+const migration = migrationPlan({ configText, host, localText, headText: head.status === 0 ? head.stdout : undefined });
+if (migration) configText = migration.configText;
+const parsed = parseConfig(configText);
+if (!parsed.ok) fail(`config/dock.json invalid: ${parsed.error}`);
+const local = parseLocal(migration ? migration.localText : localText);
+if (!local.ok) fail(`invalid local file ${slashPath(localPath)}: ${local.error}`);
 // Build with this PC's right panel state (Herdr's shared.json) so a deploy keeps it.
 let sharedState = null;
 try { sharedState = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8").replace(/^\uFEFF/, "")); } catch { sharedState = null; }
-const layout = buildLayout(mergeForHost(parsed.config, host), rightStateFromShared(sharedState));
+const layout = buildLayout(mergeWithLocal(parsed.config, host, local.local), rightStateFromShared(sharedState));
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");
@@ -50,12 +64,21 @@ for (const name of names) {
   if (!name.startsWith("dock-")) fail(`refusing to write mods/${name}: not prefixed dock-`);
 }
 
+if (migration) {
+  say(`migrate machines.${host} from config/dock.json to ${slashPath(localPath)}`);
+  if (!dry) {
+    mkdirSync(dirname(localPath), { recursive: true });
+    writeFileSync(localPath, migration.localText);
+    writeFileSync(configPath, migration.configText);
+  }
+}
+
 // source.json goes into the built dock-core before it is copied, so the installed mod never
-// runs without it. It points at this repo's config (re-run deploy after moving the repo) and
+// runs without it. It points at this repo and its config (re-run deploy after moving the repo) and
 // carries the hostname dock-core falls back on when it can't run the hostname command.
 say("write mods/dock-core/source.json");
 writeFileSync(join(ROOT, "dist/mods/dock-core/source.json"),
-  JSON.stringify({ config: slashPath(configPath), hostname: host }, null, 2) + "\n");
+  JSON.stringify({ config: slashPath(configPath), hostname: host, repo: slashPath(repo) }, null, 2) + "\n");
 
 // Each mod is copied to a staging folder in the app home, then swapped in by rename, so Herdr
 // never sees a half-copied or missing mod folder.

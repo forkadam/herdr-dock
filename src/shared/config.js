@@ -185,14 +185,35 @@ export function migrationPlan({ configText, host, localText, headText }) {
   };
 }
 
-// What to do with a (possibly half-saved) config: the layout text to write, or null when
-// nothing changed or the config is bad. A bad config keeps lastGood as merged, so the
-// window keeps its last good layout. Output matches deploy: pretty JSON + newline.
-export function planApply(configText, hostname, currentLayoutText, lastGood, state = {}) {
+// migrationPlan carried out with injected file access (dock-core passes Herdr's readTextFile and
+// writeTextFile; write(path, text, expected) must refuse a stale expected). headText() resolves
+// with git's committed config/dock.json; when it fails the exact-restore step is skipped. The
+// local file is written first: if the config write then fails, the section is in both, which
+// merges the same. Resolves true when it migrated.
+export async function migrateLocal({ configPath, localPath, host, read, write, headText }) {
+  const localText = await read(localPath);
+  if (localText != null) return false;
+  const configText = await read(configPath);
+  if (migrationPlan({ configText, host, localText: null }) === null) return false;
+  let head;
+  try { head = await headText(); } catch { head = undefined; }
+  const plan = migrationPlan({ configText, host, localText: null, headText: head });
+  await write(localPath, plan.localText, null);
+  if (plan.configText !== configText) await write(configPath, plan.configText, configText);
+  return true;
+}
+
+// What to do with a (possibly half-saved) config, with the local file's text (null when there is
+// none) merged over it: the layout text to write, or null when nothing changed or either is bad. A bad
+// config or local file keeps lastGood as merged, so the window keeps its last good layout. Output matches deploy: pretty JSON + newline.
+export function planApply(configText, hostname, currentLayoutText, lastGood, state = {}, localText = null) {
   if (typeof configText !== "string") return { write: null, error: "config file not found", merged: lastGood };
   const parsed = parseConfig(configText);
   if (!parsed.ok) return { write: null, error: parsed.error, merged: lastGood };
-  const merged = mergeForHost(parsed.config, hostname);
+  // An invalid local file (perhaps half-saved) is reported like a bad config and never merged.
+  const local = parseLocal(localText);
+  if (!local.ok) return { write: null, error: local.error, merged: lastGood };
+  const merged = mergeWithLocal(parsed.config, hostname, local.local);
   const text = JSON.stringify(buildLayout(merged, state), null, 2) + "\n";
   return { write: text === currentLayoutText ? null : text, error: null, merged };
 }

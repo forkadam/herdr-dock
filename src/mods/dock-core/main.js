@@ -5,7 +5,7 @@ import {
   setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
 import { createCollector } from "../../shared/collector.js";
-import { planApply } from "../../shared/config.js";
+import { LOCAL_REL, migrateLocal, planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
   liveRight, liveSizes, modeFromConfig, nextMode, planPanel, planRight, planSync, rightConfigUpdate, rightShownOf, sizesSnapshot,
@@ -26,6 +26,8 @@ const ERROR_KEY = "dock.config.error";
 // merged regions (what a read-only dialog shows when dock.json is invalid).
 const HOST_KEY = "dock.host";
 const PATH_KEY = "dock.config.path";
+// Where this PC's local file lives (<app home>/herdr-dock/local.json), for the dialog.
+const LOCAL_PATH_KEY = "dock.config.localPath";
 const APPLIED_KEY = "dock.config.applied";
 // The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
 // while the live tree holds them). Machine-local, like the drag-resizes it keeps.
@@ -67,6 +69,7 @@ export default class DockCore extends View {
     this.host = "";
     this.hostError = null; // set when neither the hostname command nor source.json gave one
     this.configPath = null;
+    this.localPath = null;
     this.layoutPath = null;
     this.collector = null;
     this.notifySeq = 0; // with Date.now(), makes this PC's history item ids unique
@@ -108,14 +111,65 @@ export default class DockCore extends View {
     if (!this.host && typeof src.hostname === "string" && src.hostname.trim()) this.host = src.hostname.trim().toLowerCase();
     setShared(HOST_KEY, this.host || null);
     if (!this.host) this.hostError = "could not read this computer's hostname: machines sections are ignored (re-run npm run deploy)";
+    this.localPath = `${home}/${LOCAL_REL}`;
+    setShared(LOCAL_PATH_KEY, this.localPath);
+    const localDir = this.localPath.slice(0, this.localPath.lastIndexOf("/"));
+    await this.ensureFolder(localDir);
+    // The repo (source.json's repo; older deploys didn't write it: the config's parent folder).
+    const repo = typeof src.repo === "string" ? slashPath(src.repo) : this.configPath.split("/").slice(0, -2).join("/");
+    await this.migrate(repo);
     await this.reload(cx);
-    const dir = this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/";
+    cx.spawn(async (cx) => this.watch(localDir, cx));
+    await this.watch(this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/", cx);
+  }
+
+  // The one-time move of machines.<host> from config/dock.json to the local file (deploy does the
+  // same; whichever runs first wins, the other finds the local file and does nothing).
+  async migrate(repo) {
+    if (!this.host) return;
+    const rel = this.configPath.startsWith(`${repo}/`) ? this.configPath.slice(repo.length + 1) : null;
+    try {
+      const moved = await migrateLocal({
+        configPath: this.configPath, localPath: this.localPath, host: this.host,
+        read: (path) => readTextFile(path).catch(() => null),
+        write: (path, text, expected) => writeTextFile(path, text, expected),
+        headText: async () => {
+          if (!rel) return undefined;
+          const r = await exec("git", ["show", `HEAD:${rel}`], { cwd: repo });
+          return r.code === 0 ? r.stdout : undefined;
+        },
+      });
+      if (moved) console.log(`dock-core: moved machines.${this.host} to ${this.localPath}`);
+    } catch (e) {
+      console.log(`dock-core: local file migration failed: ${e?.message ?? e}`);
+    }
+  }
+
+  // Creates a folder (with a .keep file) so it can be watched before anything is saved in it.
+  async ensureFolder(dir) {
+    const keep = `${dir}/.keep`;
+    try {
+      if ((await readTextFile(keep).catch(() => null)) !== null) return;
+      try {
+        await writeTextFile(keep, "", null);
+      } catch {
+        // writeTextFile may not create missing parent folders: node (required by herdr-dock) can.
+        await exec("node", ["-e", "require('fs').mkdirSync(process.argv[1], { recursive: true })", dir]);
+        await writeTextFile(keep, "", null);
+      }
+    } catch (e) {
+      console.log(`dock-core: could not create ${dir}: ${e?.message ?? e}`);
+    }
+  }
+
+  // Reloads whenever something in dir changes (the config's folder and the local file's folder).
+  async watch(dir, cx) {
     for (;;) {
       try {
         const changed = await watchFolder(dir);
         if (!changed?.length) { await cx.sleep(EMPTY_WATCH_MS); continue; }
       } catch (e) {
-        console.log(`dock-core: watch failed, polling: ${e}`);
+        console.log(`dock-core: watch of ${dir} failed, polling: ${e}`);
         await cx.sleep(POLL_MS);
       }
       await this.reload(cx);
@@ -267,10 +321,11 @@ export default class DockCore extends View {
   async reload(cx) {
     if (!this.configPath || checking()) return;
     const configText = await readTextFile(this.configPath).catch(() => null);
+    const localText = this.localPath ? await readTextFile(this.localPath).catch(() => null) : null;
     const current = await readTextFile(this.layoutPath).catch(() => null);
     // Parse first, decide this PC's right panel state from the new config, then build the layout
     // file with it, so the file already matches what the panel should be.
-    let plan = planApply(configText, this.host, current, this.merged);
+    let plan = planApply(configText, this.host, current, this.merged, {}, localText);
     if (!plan.error && plan.merged) {
       const active = shared(ACTIVE_KEY);
       const u = rightConfigUpdate({
@@ -278,7 +333,7 @@ export default class DockCore extends View {
         saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) },
       });
       for (const [key, value] of Object.entries(u.set)) setShared(key, value);
-      plan = planApply(configText, this.host, current, this.merged, u.state);
+      plan = planApply(configText, this.host, current, this.merged, u.state, localText);
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);

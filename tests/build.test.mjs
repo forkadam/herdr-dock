@@ -1,14 +1,36 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, existsSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 
+// The committed config, so tests never depend on (or migrate) this working copy's config/dock.json.
+const HEAD_CONFIG = spawnSync("git", ["show", "HEAD:config/dock.json"], { encoding: "utf8" }).stdout;
+const git = (cwd, ...a) => {
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+  return r.stdout;
+};
+// A temp git repo with config/dock.json committed as HEAD_CONFIG; `working` replaces the working copy.
+const repos = [];
+const fixtureRepo = (working = null) => {
+  const dir = mkdtempSync(join(tmpdir(), "dock-repo-"));
+  repos.push(dir);
+  mkdirSync(join(dir, "config"));
+  writeFileSync(join(dir, "config/dock.json"), HEAD_CONFIG);
+  git(dir, "init", "-q"); git(dir, "add", "."); git(dir, "commit", "-q", "-m", "init");
+  if (working !== null) writeFileSync(join(dir, "config/dock.json"), working);
+  return dir;
+};
+const cleanRepo = fixtureRepo();
+after(() => { for (const d of repos) rmSync(d, { recursive: true, force: true }); });
+
 // Deploy also installs the status-line writer into ~/.claude: tests point it at a temp folder.
+// DOCK_REPO points deploy's config (and the migration) at a temp repo, never this one.
 const noClaude = join(tmpdir(), "dock-no-claude-" + process.pid);
 const run = (args, env = {}) =>
-  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, ...env } });
+  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, DOCK_REPO: cleanRepo, ...env } });
 const tmpHome = () => mkdtempSync(join(tmpdir(), "dock-app-"));
 
 test("deploy --dry-run into a temp app home writes nothing and lists actions", () => {
@@ -33,6 +55,8 @@ test("deploy into a temp app home installs, writes source.json, layout and keys"
     const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
     assert.ok(src.config.endsWith("/config/dock.json"), src.config);
     assert.ok(!src.config.includes("\\"));
+    assert.equal(src.repo, cleanRepo.replace(/\\/g, "/"));
+    assert.equal(src.config, `${src.repo}/config/dock.json`);
     const layout = JSON.parse(readFileSync(join(tmp, "layouts/herdr-dock.json"), "utf8"));
     assert.ok(JSON.stringify(layout).includes('"id":"dock-left"'));
     const keys = JSON.parse(readFileSync(join(tmp, "keys.json"), "utf8"));
@@ -139,4 +163,73 @@ test("deploy installs the status-line writer into an existing Claude folder, and
     rmSync(tmp, { recursive: true, force: true });
     rmSync(claude, { recursive: true, force: true });
   }
+});
+
+test("deploy moves this host's machines section into the local file, once", () => {
+  const tmp = tmpHome();
+  const host = hostname().toLowerCase();
+  const right = { hidden: false, features: [{ mod: "dock-files" }, { mod: "dock-changes" }] };
+  const working = JSON.parse(HEAD_CONFIG);
+  working.machines = { [host.toUpperCase()]: { regions: { right } }, "other-pc": { regions: { left: { size: 300 } } } };
+  const repo = fixtureRepo(JSON.stringify(working, null, 2) + "\n");
+  try {
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_REPO: repo });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /migrate/);
+    const local = JSON.parse(readFileSync(join(tmp, "herdr-dock/local.json"), "utf8"));
+    assert.deepEqual(local, { v: 1, regions: { right } });
+    const config = JSON.parse(readFileSync(join(repo, "config/dock.json"), "utf8"));
+    assert.deepEqual(Object.keys(config.machines), ["other-pc"]);
+    const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
+    assert.equal(src.repo, repo.replace(/\\/g, "/"));
+    const layoutText = readFileSync(join(tmp, "layouts/herdr-dock.json"), "utf8");
+    assert.ok(layoutText.includes("dock-files"));
+    assert.ok(!layoutText.includes("dock-pipelines"), "the local right features replace the base ones");
+    const files = [join(tmp, "herdr-dock/local.json"), join(repo, "config/dock.json"), join(tmp, "layouts/herdr-dock.json")];
+    const before = files.map((f) => readFileSync(f, "utf8"));
+    const again = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_REPO: repo });
+    assert.equal(again.status, 0, again.stderr + again.stdout);
+    assert.doesNotMatch(again.stdout, /migrate/);
+    assert.deepEqual(files.map((f) => readFileSync(f, "utf8")), before);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy migration writes git's exact text back, leaving config/dock.json clean", () => {
+  const tmp = tmpHome();
+  const working = JSON.parse(HEAD_CONFIG);
+  working.machines = { [hostname().toLowerCase()]: { regions: { right: { hidden: false } } } };
+  const repo = fixtureRepo(JSON.stringify(working, null, 2) + "\n");
+  try {
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_REPO: repo });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(readFileSync(join(repo, "config/dock.json"), "utf8"), HEAD_CONFIG);
+    assert.equal(git(repo, "status", "--porcelain"), "");
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy --dry-run reports the migration but writes nothing", () => {
+  const tmp = tmpHome();
+  const working = JSON.parse(HEAD_CONFIG);
+  working.machines = { [hostname().toLowerCase()]: { regions: { right: { hidden: false } } } };
+  const text = JSON.stringify(working, null, 2) + "\n";
+  const repo = fixtureRepo(text);
+  try {
+    const r = run(["--app-home", tmp, "--dry-run"], { DOCK_REPO: repo });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /migrate/);
+    assert.deepEqual(readdirSync(tmp), []);
+    assert.equal(readFileSync(join(repo, "config/dock.json"), "utf8"), text);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("an invalid local file aborts deploy before anything is written", () => {
+  const tmp = tmpHome();
+  try {
+    mkdirSync(join(tmp, "herdr-dock"));
+    writeFileSync(join(tmp, "herdr-dock/local.json"), "{ nope");
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1" });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /herdr-dock\/local\.json/);
+    assert.deepEqual(readdirSync(tmp), ["herdr-dock"]);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
 });

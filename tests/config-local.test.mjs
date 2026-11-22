@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseConfig, mergeForHost, mergeWithLocal, parseLocal, migrationPlan, LOCAL_REL, DEFAULT_CONFIG } from "../src/shared/config.js";
+import { parseConfig, mergeForHost, mergeWithLocal, parseLocal, migrationPlan, migrateLocal, LOCAL_REL, DEFAULT_CONFIG } from "../src/shared/config.js";
 import { HERDR_SHIPPED_MODS } from "./fixtures/herdr-shipped-mods.mjs";
 
 const TOP = { features: [{ mod: "dock-core" }] };
@@ -120,4 +120,40 @@ test("allowed mods: the shared default places only dock-* and Herdr-shipped mods
       }
     }
   }
+});
+
+// migrateLocal: the migration with injected file and git access (dock-core runs it through Herdr's API).
+const fakeFs = (files) => ({
+  files,
+  writes: [],
+  read: async (p) => (p in files ? files[p] : null),
+  write: async function (p, text, expected) {
+    if ((p in files ? files[p] : null) !== expected) throw new Error(`stale ${p}`);
+    this.writes.push(p); files[p] = text;
+  },
+});
+
+test("migrateLocal moves this host's section to the local file and restores git's text", async () => {
+  const head = pretty({ v: 1, regions: { top: TOP } });
+  const config = pretty({ v: 1, regions: { top: TOP }, machines: { PC1: { regions: { right: { hidden: false } } } } });
+  const fs = fakeFs({ "/r/config/dock.json": config });
+  const done = await migrateLocal({
+    configPath: "/r/config/dock.json", localPath: "/a/herdr-dock/local.json", host: "pc1",
+    read: fs.read, write: fs.write.bind(fs), headText: async () => head,
+  });
+  assert.equal(done, true);
+  assert.deepEqual(fs.writes, ["/a/herdr-dock/local.json", "/r/config/dock.json"]);
+  assert.deepEqual(JSON.parse(fs.files["/a/herdr-dock/local.json"]), { v: 1, regions: { right: { hidden: false } } });
+  assert.equal(fs.files["/r/config/dock.json"], head);
+});
+
+test("migrateLocal does nothing when a local file exists, and survives a failing git", async () => {
+  const config = pretty({ v: 1, regions: { top: TOP }, machines: { pc1: { regions: {} } } });
+  const fs = fakeFs({ "/r/config/dock.json": config, "/a/l.json": "{ corrupt" });
+  const args = { configPath: "/r/config/dock.json", localPath: "/a/l.json", host: "pc1", read: fs.read, write: fs.write.bind(fs) };
+  assert.equal(await migrateLocal({ ...args, headText: async () => { throw new Error("no git"); } }), false);
+  assert.deepEqual(fs.writes, []);
+  delete fs.files["/a/l.json"];
+  assert.equal(await migrateLocal({ ...args, headText: async () => { throw new Error("no git"); } }), true);
+  assert.equal(JSON.parse(fs.files["/r/config/dock.json"]).machines, undefined);
 });
