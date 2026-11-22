@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Order: `dock-where` (no size, takes the rest), `dock-warnings` 150, `dock-system` 150, `dock-attention` 190.
+- Order: `dock-where` (no size, takes the rest), `dock-warnings` 210, `dock-system` 150, `dock-attention` 190.
 - Herdr sample every **10 s**. Windows: `powershell -NoProfile -NonInteractive -Command "Get-Process -Name herdr* | …"`. macOS/Linux: `ps -A -o pid=,rss=,time=,comm=`, filtered to `comm` containing `herdr`.
 - `dock.system.herdr = { cpu, mem, at }`. `cpu` is 0–100, rounded, as a whole-machine share: delta CPU ms / (elapsed ms × cores) × 100. `mem` is in bytes. Tooltips leave it out when it's older than 30 s.
 - Tooltips: `CPU 34% · Herdr 2%`, `Memory 61% · Herdr 210 MB` (MB rounded; `GB` with one decimal at ≥ 1024 MB).

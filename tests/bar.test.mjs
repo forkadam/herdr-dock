@@ -47,3 +47,7 @@ test("systemTips shows just the system figures without a fresh Herdr sample", ()
   assert.deepEqual(systemTips(SAMPLE, null, NOW), plain);
   assert.deepEqual(systemTips(SAMPLE, undefined, NOW), plain);
 });
+
+test("systemTips shows 1023.6 MiB as 1.0 GB, not 1024 MB", () => {
+  assert.equal(systemTips(SAMPLE, { cpu: 2, mem: 1023.6 * 2 ** 20, at: NOW }, NOW).mem, "Memory 61% · Herdr 1 GB");
+});

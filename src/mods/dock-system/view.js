@@ -5,7 +5,7 @@ const GIB = 2 ** 30;
 
 // Bytes as MB under 1 GiB, else GB with one decimal (2 GB, 1.5 GB).
 function size(bytes) {
-  return bytes < GIB ? `${Math.round(bytes / MIB)} MB` : `${Math.round((bytes / GIB) * 10) / 10} GB`;
+  return Math.round(bytes / MIB) < 1024 ? `${Math.round(bytes / MIB)} MB` : `${Math.round((bytes / GIB) * 10) / 10} GB`;
 }
 
 export function systemTips(sample, herdr, now) {

@@ -73,7 +73,7 @@ test("default config shows the bar items bottom and a 44px dock-core and dock-ta
   const bottom = find(t, "dock-bottom");
   assert.equal(bottom.hidden, undefined);
   assert.deepEqual(bottom.children.map((c) => [c.content.mod, c.size]),
-    [["dock-where", { weight: 1 }], ["dock-warnings", { px: 150 }], ["dock-system", { px: 150 }], ["dock-attention", { px: 190 }]]);
+    [["dock-where", { weight: 1 }], ["dock-warnings", { px: 210 }], ["dock-system", { px: 150 }], ["dock-attention", { px: 190 }]]);
   assert.deepEqual(find(t, "dock-top").children[0].size, { px: 44 });
   assert.equal(find(t, "dock-top").children[1].content.mod, "dock-tabs");
 });
@@ -153,5 +153,5 @@ test("the code default bottom bar matches the shipped one", async () => {
   const { DEFAULT_CONFIG } = await import("../src/shared/config.js");
   const shipped = parseConfig(readFileSync("config/dock.json", "utf8")).config.regions.bottom.features;
   assert.deepEqual(DEFAULT_CONFIG.regions.bottom.features, shipped);
-  assert.deepEqual(shipped, [{ mod: "dock-where" }, { mod: "dock-warnings", size: 150 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 190 }]);
+  assert.deepEqual(shipped, [{ mod: "dock-where" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 190 }]);
 });

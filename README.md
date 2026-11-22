@@ -267,7 +267,7 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
 The bottom bar is a quiet glance. In order, left to right:
 
 - **Where** (`dock-where`): this machine and the branch of the focused space, like `□ This computer  ⑂ main`. It
-  takes the free width, so the branch is shown in full; its tooltip has the full name.
+  takes the free width, so the branch is shown in full when there's room (the tooltip always has it).
 - **Warnings** (`dock-warnings`): `⟳ 1` pipelines running now, `⚠ quota 92%` when any Claude or Codex window is at
   90% or more, `⚠ disk 7%` when this PC's system drive has under 10% free. With none applying it shows nothing.
 - **System** (`dock-system`): a chip icon and a memory icon, each with its %, in the warning colour from 90%.

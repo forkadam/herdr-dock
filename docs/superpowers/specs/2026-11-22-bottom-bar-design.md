@@ -133,7 +133,7 @@ clears it. The bar is the way into that history.
 
 - **Order:** `dock-where` (takes the free width, so the branch name always shows in full), `dock-warnings`,
   `dock-system`, `dock-attention` (at the far right). Default bottom features:
-  `[{ mod: "dock-where" }, { mod: "dock-warnings", size: 150 }, { mod: "dock-system", size: 150 },
+  `[{ mod: "dock-where" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 },
   { mod: "dock-attention", size: 190 }]`.
 - **dock-system uses icons, not words:** a CPU (chip) icon and a memory icon, each followed by its %, the same 90%
   warning colour, hidden when the sample is missing or older than 30 s.
