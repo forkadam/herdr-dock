@@ -174,3 +174,11 @@ test("each start has its own state", async () => {
     assert.ok(!here.some((c) => c.body === "only here"));
   } finally { await other.close(); }
 });
+
+test("search: escaped quotes and backslashes inside a quoted value", async () => {
+  const r = await search('text ~ "say \\"hi\\" \\\\ there"');
+  assert.equal(r.status, 200);
+  assert.equal(r.data.total, 0);
+  assert.deepEqual(keys(await search('summary ~ "\\"quota\\""')), []);
+  assert.equal((await search('text ~ "quota" AND project = API')).data.total, 1);
+});

@@ -45,6 +45,7 @@ function splitTop(text, word) {
   const re = new RegExp(`^\\s+${word}\\s+`, "i");
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
+    if (quote && c === "\\") { i++; continue; } // an escaped character inside quotes
     if (c === '"') quote = !quote;
     else if (!quote && c === "(") depth++;
     else if (!quote && c === ")") depth--;
@@ -57,7 +58,11 @@ function splitTop(text, word) {
   return parts.map((p) => p.trim()).filter(Boolean);
 }
 
-const unquote = (v) => v.trim().replace(/^"(.*)"$/, "$1");
+// A JQL string value: "quoted" (with \" and \\ escapes) or bare.
+const unquote = (v) => {
+  const m = /^"((?:[^"\\]|\\.)*)"$/.exec(v.trim());
+  return m ? m[1].replace(/\\(.)/g, "$1") : v.trim();
+};
 const list = (v) => v.split(",").map(unquote).filter(Boolean);
 const same = (a, b) => String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase();
 const CATEGORY = { "to do": "new", new: "new", "in progress": "indeterminate", indeterminate: "indeterminate", done: "done" };
@@ -85,8 +90,8 @@ function clause(text, ctx) {
     if (field === "project") checkProject(value, ctx);
     return (i) => matches(i, field, value) !== not;
   }
-  if ((m = /^(text|summary)\s*~\s*"([^"]*)"$/i.exec(text))) {
-    const field = m[1].toLowerCase(), q = m[2].toLowerCase();
+  if ((m = /^(text|summary)\s*~\s*("(?:[^"\\]|\\.)*")$/i.exec(text))) {
+    const field = m[1].toLowerCase(), q = unquote(m[2]).toLowerCase();
     return (i) => [i.fields.summary, field === "text" ? i.fields.description : ""].some((s) => (s ?? "").toLowerCase().includes(q));
   }
   if ((m = /^(updated|created)\s*(>=|<=|>|<)\s*(\S+)$/i.exec(text))) {
@@ -132,7 +137,7 @@ export function parseJql(jql, ctx) {
     const m = /^(.*?)\s*\border\s+by\s+(.+)$/is.exec(jql.trim());
     return m ? [m[1], m[2]] : [jql.trim(), "key DESC"];
   })();
-  if (/\bor\b/i.test(where.replace(/"[^"]*"/g, ""))) throw new JqlError("Error in the JQL Query: OR is not supported by the mock.");
+  if (/\bor\b/i.test(where.replace(/"(?:[^"\\]|\\.)*"/g, ""))) throw new JqlError("Error in the JQL Query: OR is not supported by the mock.");
   const tests = where ? splitTop(where, "and").map((c) => clause(c, ctx)) : [];
   const keys = order.split(",").map((s) => {
     const m = /^(\w+)(?:\s+(asc|desc))?$/i.exec(s.trim());
