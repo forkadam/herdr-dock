@@ -422,6 +422,36 @@ var CLEARED_VIEW = Object.freeze({
   transOpen: false,
   actionMsg: null
 });
+var DRAG_START_PX = 5;
+function dragStarted(from, to) {
+  if (!from || !to) return false;
+  return Math.hypot(to.x - from.x, to.y - from.y) >= DRAG_START_PX;
+}
+function dropTargets(transitions, current) {
+  if (!Array.isArray(transitions)) return /* @__PURE__ */ new Set();
+  return new Set(transitions.map((t) => t?.to?.name).filter((name) => name && name !== current));
+}
+function dropPlan(transitions, status, current) {
+  if (!Array.isArray(transitions) || status === current) return { kind: "none" };
+  const ways = transitions.filter((t) => t?.to?.name === status);
+  if (!ways.length) return { kind: "none" };
+  return ways.length === 1 ? { kind: "run", transition: ways[0] } : { kind: "choose", transitions: ways };
+}
+var RANK2 = { new: 0, indeterminate: 1, done: 2 };
+function dragColumns(cols, targets, transitions, order = []) {
+  if (!targets?.size) return cols;
+  const have = new Set(cols.map((c) => c.status));
+  const extra = [...targets].filter((name) => !have.has(name)).map((name) => {
+    const cat = (transitions ?? []).find((t) => t?.to?.name === name)?.to?.statusCategory?.key;
+    return { status: name, category: cat in RANK2 ? cat : "indeterminate", rows: [], temporary: true };
+  });
+  if (!extra.length) return cols;
+  const pos = (name) => {
+    const i = order.indexOf(name);
+    return i < 0 ? Infinity : i;
+  };
+  return [...cols, ...extra].map((c, i) => ({ c, i })).sort((a, b) => (RANK2[a.c.category] ?? 1) - (RANK2[b.c.category] ?? 1) || (pos(a.c.status) - pos(b.c.status) || 0) || a.i - b.i).map(({ c }) => c);
+}
 
 // src/shared/path.js
 function slashPath(p) {
@@ -665,6 +695,9 @@ var Jira = class extends View {
     this.transitions = null;
     this.actionBusy = null;
     this.actionMsg = null;
+    this.press = null;
+    this.drag = null;
+    this.dropChoice = null;
     this.searchInput = InputState.new({ placeholder: "Search this filter\u2026" });
     this.searchInput.on("submit", (_e, cx2) => {
       this.query = this.searchInput.value().trim();
@@ -929,14 +962,14 @@ var Jira = class extends View {
       if (r.ok) await after(cx2, key, r);
     });
   }
-  doTransition(tr, cx) {
+  doTransition(tr, cx, url = this.detail?.url) {
     this.transOpen = false;
     this.transitions = null;
     this.run(
       "transition",
       cx,
       (c, key) => c.transition(key, tr.id),
-      { to: tr.to?.name ?? tr.name, url: this.detail?.url },
+      { to: tr.to?.name ?? tr.name, url },
       async (cx2, key) => {
         await this.loadDetail(cx2, key);
         await this.refresh(cx2);
@@ -965,6 +998,48 @@ var Jira = class extends View {
       cx2.notify();
       await this.refresh(cx2);
     });
+  }
+  // ---- board drag and drop ----
+  // A press on a card becomes a drag once the pointer moves a few pixels (a click still opens the issue). The drag
+  // asks Jira which moves this issue has (its workflow, for this user, now); those columns light up, others dim, and
+  // a reachable status with no column yet gets an empty one. Releasing over a lit column runs its move (or asks
+  // which, when several lead there); anywhere else does nothing.
+  pointerMoved(e, cx) {
+    if (this.drag) {
+      this.drag.at = e.local_position;
+      cx.notify();
+      return;
+    }
+    if (!this.press || !dragStarted(this.press.from, e.position)) return;
+    const row = this.press.row;
+    this.press = null;
+    this.dropChoice = null;
+    this.drag = { row, transitions: "loading", targets: /* @__PURE__ */ new Set(), over: null, at: e.local_position };
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      const r = await this.client(cx2).transitions(row.key);
+      if (this.drag?.row.key !== row.key) return;
+      this.drag.transitions = r.ok ? r.data : { problem: r.problem };
+      this.drag.targets = r.ok ? dropTargets(r.data, row.status) : /* @__PURE__ */ new Set();
+      cx2.notify();
+    });
+  }
+  released(cx) {
+    this.press = null;
+    const drag = this.drag;
+    if (!drag) return;
+    this.drag = null;
+    cx.notify();
+    if (!drag.over) return;
+    const plan = dropPlan(drag.transitions, drag.over, drag.row.status);
+    if (plan.kind === "run") this.moveCard(drag.row, plan.transition, cx);
+    else if (plan.kind === "choose") this.dropChoice = { row: drag.row, status: drag.over, transitions: plan.transitions };
+  }
+  // The move runs like one picked in the status menu, with the issue opened beside the board to show the result.
+  moveCard(row, tr, cx) {
+    this.dropChoice = null;
+    if (this.selected !== row.key) this.select(row.key, cx);
+    this.doTransition(tr, cx, row.url);
   }
   // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
   // From a list row, a template that uses {description} first fetches the full issue (rows don't carry it).
@@ -1185,12 +1260,43 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
   }
   card(t, r) {
     const on = this.selected === r.key;
-    return v_flex().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(div().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex().gap(6).items_center().child(this.typeMark(t, r)).child(div().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN : t.dim).child(r.priority))).child(div().flex_1()).child(div().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
+    const dragged = this.drag?.row.key === r.key;
+    return v_flex().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).when(dragged, (el) => el.opacity(0.35)).on_mouse_down("left", (e) => {
+      this.press = { row: r, from: e.position };
+    }).on_click((_e, cx) => {
+      if (!this.drag) this.select(r.key, cx);
+    }).child(div().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex().gap(6).items_center().child(this.typeMark(t, r)).child(div().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN : t.dim).child(r.priority))).child(div().flex_1()).child(div().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
   }
   boardView(t) {
-    const cols = boardColumns(this.rows, this.statusOrder);
+    const d = this.drag;
+    const cols = d ? dragColumns(boardColumns(this.rows, this.statusOrder), d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : boardColumns(this.rows, this.statusOrder);
     const more = this.more(t);
-    return v_flex().flex_1().min_w(0).min_h(0).child(div().id("jira-board").flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map((c, i) => v_flex().id(`jira-col-${i}`).w(280).flex_none().min_h(0).rounded(10).bg(t.chrome).border_1().border_color(t.border).child(h_flex().h(36).px(12).gap(6).flex_none().items_center().child(div().text_size(12).font_medium().text_color(t.muted).child(c.status)).child(div().text_size(11.5).text_color(t.dim).child(String(c.rows.length)))).child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).children(c.rows.map((r) => this.card(t, r))))))).when(Boolean(more), (el) => el.child(more));
+    const column = (c, i) => {
+      const own = d && c.status === d.row.status;
+      const target = d && d.targets.has(c.status);
+      const over = target && d.over === c.status;
+      return v_flex().id(`jira-col-${i}`).w(280).flex_none().min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
+        if (this.drag && this.drag.over !== (target ? c.status : null)) {
+          this.drag.over = target ? c.status : null;
+          cx.notify();
+        }
+      }).child(h_flex().h(36).px(12).gap(6).flex_none().items_center().child(div().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).children(c.rows.map((r) => this.card(t, r))));
+    };
+    return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div().id("jira-board").flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d) || Boolean(this.dropChoice), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div().text_size(11).text_color(t.dim).child(d.row.key)).child(div().truncate().child(d.row.summary))));
+  }
+  // Above the board during a drag: what's happening; after a drop where several moves lead, the choice.
+  dragBar(t) {
+    const bar = h_flex().absolute().bottom(12).left(12).h(38).px(14).gap(8).items_center().rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5);
+    const c = this.dropChoice;
+    if (c && !this.drag) {
+      return bar.child(div().text_color(t.muted).child(`Move ${c.row.key} to ${c.status} by:`)).children(c.transitions.map((tr) => this.button(t, `jira-drop-${tr.id}`, tr.name, (cx) => this.moveCard(c.row, tr, cx)))).child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => {
+        this.dropChoice = null;
+        cx.notify();
+      }));
+    }
+    const d = this.drag;
+    const text = d.transitions === "loading" ? `Moving ${d.row.key}: asking Jira where it can go\u2026` : d.transitions.problem ? `Can't move ${d.row.key}: ${d.transitions.problem.message}` : d.targets.size ? `Drop ${d.row.key} on a highlighted column (release elsewhere to cancel)` : `${d.row.key} has no moves from ${d.row.status}.`;
+    return bar.child(div().text_color(d.transitions?.problem ? t.blocked : t.muted).child(text));
   }
   detailView(t) {
     const d = this.detail;

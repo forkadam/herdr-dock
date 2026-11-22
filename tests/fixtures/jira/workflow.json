@@ -73,6 +73,15 @@
    ]
   },
   {
+   "id": "61",
+   "name": "Close",
+   "from": [
+    "10001"
+   ],
+   "to": "10002",
+   "hasScreen": false
+  },
+  {
    "id": "41",
    "name": "Back to To Do",
    "from": [

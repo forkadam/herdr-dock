@@ -194,6 +194,11 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
   filter (Enter). The choice and the List / Board view are remembered per PC.
 - **List** groups by To do / In progress / Done; **Board** has one column per status, in Jira's own order.
+- **Drag a card** on the board to move it. When the drag starts the page asks Jira which moves that issue has (its
+  workflow, for you, right now): those columns light up, the rest dim, and a status you can reach that has no column
+  yet appears as an empty one. Drop on a lit column to move it; when several moves lead there (say Resolve and
+  Close into Done) a bar asks which. Release anywhere else to cancel. A move that needs more fields says so and
+  links to the browser, as in the status menu. This is a board of the filter's statuses, not your Jira sprint board.
 - **Detail**: description (Jira markup shown as text), last 5 comments, links, Open in browser. **Actions**: the
   status pill lists the moves the workflow allows (a step that needs more fields says so and links to the browser),
   Assign to me, and a comment box (Send, or Ctrl+Enter).

@@ -124,3 +124,48 @@ export const CLEARED_VIEW = Object.freeze({
   me: null, rows: [], total: undefined, fetchedAt: null, listProblem: null, selected: null, detail: null, detailProblem: null,
   favourites: [], statusOrder: [], transitions: null, transOpen: false, actionMsg: null,
 });
+
+// ---- Board drag and drop ----
+// What a card can be dropped on comes from Jira, not from a guess: GET /issue/{key}/transitions, asked when the drag
+// starts, lists the moves this issue's workflow allows for this user right now.
+
+// How far (px) the pointer moves after a press before it is a drag: less than that, it's a click (open the issue).
+export const DRAG_START_PX = 5;
+export function dragStarted(from, to) {
+  if (!from || !to) return false;
+  return Math.hypot(to.x - from.x, to.y - from.y) >= DRAG_START_PX;
+}
+
+// The statuses this issue can move to now, as a Set of names (never its own).
+export function dropTargets(transitions, current) {
+  if (!Array.isArray(transitions)) return new Set();
+  return new Set(transitions.map((t) => t?.to?.name).filter((name) => name && name !== current));
+}
+
+// A drop on `status`: { kind: "run", transition } when one move leads there, { kind: "choose", transitions } when
+// several do (e.g. Resolve and Close both into Done), { kind: "none" } when none does or it's the card's own column.
+export function dropPlan(transitions, status, current) {
+  if (!Array.isArray(transitions) || status === current) return { kind: "none" };
+  const ways = transitions.filter((t) => t?.to?.name === status);
+  if (!ways.length) return { kind: "none" };
+  return ways.length === 1 ? { kind: "run", transition: ways[0] } : { kind: "choose", transitions: ways };
+}
+
+const RANK = { new: 0, indeterminate: 1, done: 2 };
+
+// The board while dragging: each reachable status without a column (no issue in this filter has it) gets an empty,
+// temporary one, placed by status category, then Jira's status order (`order`), then as listed. Not dragging: as is.
+export function dragColumns(cols, targets, transitions, order = []) {
+  if (!targets?.size) return cols;
+  const have = new Set(cols.map((c) => c.status));
+  const extra = [...targets].filter((name) => !have.has(name)).map((name) => {
+    const cat = (transitions ?? []).find((t) => t?.to?.name === name)?.to?.statusCategory?.key;
+    return { status: name, category: cat in RANK ? cat : "indeterminate", rows: [], temporary: true };
+  });
+  if (!extra.length) return cols;
+  const pos = (name) => { const i = order.indexOf(name); return i < 0 ? Infinity : i; };
+  return [...cols, ...extra]
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => (RANK[a.c.category] ?? 1) - (RANK[b.c.category] ?? 1) || (pos(a.c.status) - pos(b.c.status) || 0) || a.i - b.i)
+    .map(({ c }) => c);
+}

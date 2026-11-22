@@ -151,3 +151,43 @@ test("CLEARED_VIEW: what a new Jira address (or Disconnect) forgets", () => {
   assert.deepEqual(CLEARED_VIEW.rows, []);
   assert.ok(Object.isFrozen(CLEARED_VIEW));
 });
+
+// ---- Board drag and drop ----
+import { DRAG_START_PX, dragColumns, dragStarted, dropPlan, dropTargets } from "../src/shared/jira/page.js";
+
+const tr = (id, name, to, category = "indeterminate") => ({ id, name, to: { name: to, statusCategory: { key: category } } });
+const TRANSITIONS = [tr("21", "Send to review", "In Review"), tr("41", "Back to To Do", "To Do", "new"), tr("31", "Resolve", "Done", "done"), tr("61", "Close", "Done", "done")];
+
+test("dropTargets: the statuses this issue can move to now (its own status is not one)", () => {
+  assert.deepEqual([...dropTargets(TRANSITIONS, "In Progress")].sort(), ["Done", "In Review", "To Do"]);
+  assert.deepEqual([...dropTargets([tr("9", "Loop", "In Progress")], "In Progress")], []);
+  assert.deepEqual([...dropTargets(null, "x")], []);
+});
+
+test("dropPlan: one transition runs, several ask, none (or its own column) does nothing", () => {
+  assert.deepEqual(dropPlan(TRANSITIONS, "In Review", "In Progress"), { kind: "run", transition: TRANSITIONS[0] });
+  assert.deepEqual(dropPlan(TRANSITIONS, "Done", "In Progress"), { kind: "choose", transitions: [TRANSITIONS[2], TRANSITIONS[3]] });
+  assert.deepEqual(dropPlan(TRANSITIONS, "Blocked", "In Progress"), { kind: "none" });
+  assert.deepEqual(dropPlan(TRANSITIONS, "In Progress", "In Progress"), { kind: "none" });
+  assert.deepEqual(dropPlan("loading", "Done", "In Progress"), { kind: "none" });
+});
+
+test("dragColumns: a reachable status with no column gets an empty one, placed by category then Jira's order", () => {
+  const cols = [
+    { status: "To Do", category: "new", rows: [1] },
+    { status: "In Progress", category: "indeterminate", rows: [2] },
+  ];
+  const targets = new Set(["To Do", "In Review", "Done"]);
+  const out = dragColumns(cols, targets, TRANSITIONS, ["To Do", "In Progress", "In Review", "Done"]);
+  assert.deepEqual(out.map((c) => [c.status, c.rows.length, Boolean(c.temporary)]),
+    [["To Do", 1, false], ["In Progress", 1, false], ["In Review", 0, true], ["Done", 0, true]]);
+  assert.equal(out[3].category, "done");
+  // Not dragging: the columns as they are.
+  assert.equal(dragColumns(cols, new Set(), [], []), cols);
+});
+
+test("dragStarted: a press becomes a drag only once the pointer has moved a few pixels (a click stays a click)", () => {
+  assert.equal(dragStarted({ x: 10, y: 10 }, { x: 12, y: 11 }), false);
+  assert.equal(dragStarted({ x: 10, y: 10 }, { x: 10 + DRAG_START_PX, y: 10 }), true);
+  assert.equal(dragStarted(null, { x: 0, y: 0 }), false);
+});
