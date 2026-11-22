@@ -96,3 +96,15 @@ test("withComment: the new comment shows at once, last 5 kept, total counted", (
   assert.equal(next.commentTotal, 8);
   assert.equal(d.comments.length, 5); // not changed in place
 });
+
+// ---- Task 7: Start work ----
+import { startWork } from "../src/shared/jira/page.js";
+
+test("startWork: a Claude tab named after the issue, its first message from the template", () => {
+  const d = { key: "API-2", summary: "Enforce daily search quota", url: "https://j/browse/API-2", description: "Long text" };
+  assert.deepEqual(startWork(d, "/init-ticket {key}"), { command: "tab.new", args: { name: "API-2", argv: ["claude"], task: "/init-ticket API-2" } });
+  assert.equal(startWork(d, "").args.task, "Work on Jira issue API-2: Enforce daily search quota\nhttps://j/browse/API-2");
+  // From a list row (no description fetched yet) it still works.
+  assert.equal(startWork({ key: "X-1", summary: "s", url: "u" }, "{key} {description}").args.task, "X-1 ");
+  assert.equal(startWork(null, "x"), null);
+});

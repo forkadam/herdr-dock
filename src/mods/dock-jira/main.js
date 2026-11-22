@@ -4,13 +4,13 @@
 // decides something is pure and tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, TextareaState, Textarea } from "gpui-base";
-import { appHome, checking, exec, nextCommand, props, readTextFile, setShared, shared, theme, window, writeTextFile } from "herdr";
-import { pageShown } from "../_page.js";
+import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
+import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
 import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
-  PAGE_SIZE, actionOutcome, badgeFor, canAssignToMe, commentReady, countText, filterList, pageState, pickFilter, pollDue, withComment,
+  PAGE_SIZE, actionOutcome, badgeFor, canAssignToMe, commentReady, countText, filterList, pageState, pickFilter, pollDue, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken } from "../../shared/jira/store.js";
@@ -73,6 +73,7 @@ export default class Jira extends View {
     this.commentInput.set_auto_grow(2, 6);
     this.commentInput.on("submit", (e, cx) => { if (e?.secondary) this.sendComment(cx); });
     for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx) => this.saveForm(cx));
+    this.taskInput.on("change", (_e, cx) => cx.notify()); // the preview follows the typing
     this.transportChoice = "fetch";
 
     if (checking()) return;
@@ -92,15 +93,16 @@ export default class Jira extends View {
   }
 
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, and on
-  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box).
+  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box), start (Start work).
   command(c, cx) {
     if (c === "status") { if (this.detail) this.openTransitions(!this.transOpen, cx); return; }
     if (c === "assign") { if (canAssignToMe(this.detail, this.me)) this.assignMe(cx); return; }
     if (c === "comment") { if (this.detail) this.commentInput.focus(); return; }
+    if (c === "start") { if (this.detail) this.startWork(this.detail); return; }
     if (c === "list" || c === "board") setShared(VIEW_KEY, c);
     else if (c === "refresh") cx.spawn(async (cx) => this.reload(cx));
     else if (c === "settings") this.openSettings(cx);
-    else if (c === "close") { this.selected = null; this.detail = null; }
+    else if (c === "close") { if (this.editing) { this.editing = false; this.formError = null; } else { this.selected = null; this.detail = null; } }
     else if (c === "next" || c === "prev") {
       const order = this.visibleOrder();
       if (!order.length) return;
@@ -304,6 +306,14 @@ export default class Jira extends View {
     });
   }
 
+  // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
+  startWork(issue) {
+    const c = startWork(issue, this.jira?.settings.startTask);
+    if (!c) return;
+    try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; return; }
+    showTerminal();
+  }
+
   openUrl(url) {
     const c = openUrlCommand(window()?.platform, url);
     exec(c.command, c.args).catch((e) => console.log(`dock-jira: open failed: ${e}`));
@@ -416,7 +426,8 @@ export default class Jira extends View {
             .child(choice("fetch", "Herdr (fetch)")).child(choice("curl", "curl")))
           .child(div().text_size(11).text_color(t.dim).child("Use curl if Jira's certificate isn't trusted by Herdr: curl uses this computer's certificates.")))
         .when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either.")))
-        .child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {description}. E.g. /init-ticket {key}"))
+        .child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}"))
+        .child(this.preview(t))
         .when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError)))
         .child(h_flex().gap(8).pt(4)
           .child(this.button(t, "jira-save", this.formBusy ? "Connecting…" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy }))
@@ -424,6 +435,16 @@ export default class Jira extends View {
           .child(div().flex_1())
           .when(Boolean(this.jira?.token), (el) => el.child(this.button(t, "jira-disconnect", "Disconnect", (cx) => { this.editing = false; this.disconnect(cx); }, { tip: "Forget the token on this PC" }))))
         .when(Boolean(this.jira?.problem), (el) => el.child(div().text_size(11.5).text_color(WARN).child(this.jira.problem))));
+  }
+
+  // What Start work would send for the open issue (else the first one listed), as typed.
+  preview(t) {
+    const issue = this.detail ?? this.rows[0];
+    if (!issue) return div();
+    const text = startWork(issue, this.taskInput.value())?.args.task ?? "";
+    return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
+      .child(div().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`))
+      .children(text.split("\n").map((l) => div().text_size(12).text_color(t.muted).child(l || " ")));
   }
 
   problemView(t) {
@@ -492,7 +513,12 @@ export default class Jira extends View {
       .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary))
       .child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? ""))
       .child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned"))
-      .child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now())));
+      .child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now())))
+      .child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim)
+        .hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key} (a Claude tab)`)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => { cx.stop_propagation(); this.startWork(r); })
+        .child(svg("mods/dock-jira/play.svg").size(11)));
   }
 
   more(t) {
@@ -564,6 +590,7 @@ export default class Jira extends View {
           .when(canAssignToMe(d, this.me), (el) => el.child(this.button(t, "jira-assign", this.actionBusy === "assign" ? "Assigning…" : "Assign to me",
             (cx) => this.assignMe(cx), { enabled: !this.actionBusy })))
           .child(div().flex_1())
+          .child(this.button(t, "jira-start", "Start work", () => this.startWork(d), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` }))
           .child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url))))
         .when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t)))
         .child(v_flex().gap(4).text_size(12.5)

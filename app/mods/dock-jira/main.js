@@ -1,7 +1,7 @@
 // src/mods/dock-jira/main.js
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, TextareaState, Textarea } from "gpui-base";
-import { appHome, checking, exec, nextCommand, props, readTextFile, setShared as setShared2, shared as shared2, theme, window, writeTextFile } from "herdr";
+import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared as setShared2, shared as shared2, theme, window, writeTextFile } from "herdr";
 
 // src/mods/_page.js
 import { setShared, shared } from "herdr";
@@ -10,6 +10,9 @@ import { setShared, shared } from "herdr";
 var PAGE_KEY = "dock.page.active";
 
 // src/mods/_page.js
+function showTerminal() {
+  if ((shared(PAGE_KEY) ?? null) !== null) setShared(PAGE_KEY, null);
+}
 var pageShown = (myMod) => shared(PAGE_KEY) === myMod;
 
 // src/shared/jira/jql.js
@@ -171,6 +174,19 @@ function classify({ status, data, error, curlCode } = {}) {
   const fields = Object.keys(data?.errors ?? {});
   if (fields.length) out.fields = fields;
   return out;
+}
+var DEFAULT_START_TASK = "Work on Jira issue {key}: {summary}\n{url}";
+var PLACEHOLDERS = ["key", "summary", "url", "type", "status", "priority", "assignee", "description"];
+var DESCRIPTION_MAX = 2e3;
+function startTask(template, detail) {
+  const t = (typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK).replace(/\\n/g, "\n");
+  return t.replace(/\{(\w+)\}/g, (whole, name) => {
+    if (!PLACEHOLDERS.includes(name)) return whole;
+    let v = detail?.[name];
+    v = v == null ? "" : String(v);
+    if (name === "description" && v.length > DESCRIPTION_MAX) v = `${v.slice(0, DESCRIPTION_MAX - 1)}\u2026`;
+    return v;
+  });
 }
 function latestOnly() {
   let n = 0;
@@ -356,6 +372,10 @@ var commentReady = (text) => String(text ?? "").trim().length > 0;
 function withComment(detail, comment) {
   const added = { id: comment.id, author: comment.author?.displayName ?? "you", bodyText: wikiToText(comment.body), createdMs: Date.parse(comment.created ?? "") || null };
   return { ...detail, comments: [...detail.comments, added].slice(-5), commentTotal: (detail.commentTotal ?? detail.comments.length) + 1 };
+}
+function startWork(issue, template) {
+  if (!issue?.key) return null;
+  return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
 }
 
 // src/shared/path.js
@@ -598,6 +618,7 @@ var Jira = class extends View {
       if (e?.secondary) this.sendComment(cx2);
     });
     for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx2) => this.saveForm(cx2));
+    this.taskInput.on("change", (_e, cx2) => cx2.notify());
     this.transportChoice = "fetch";
     if (checking()) return;
     cx.spawn(async (cx2) => {
@@ -619,7 +640,7 @@ var Jira = class extends View {
     });
   }
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, and on
-  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box).
+  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box), start (Start work).
   command(c, cx) {
     if (c === "status") {
       if (this.detail) this.openTransitions(!this.transOpen, cx);
@@ -633,12 +654,21 @@ var Jira = class extends View {
       if (this.detail) this.commentInput.focus();
       return;
     }
+    if (c === "start") {
+      if (this.detail) this.startWork(this.detail);
+      return;
+    }
     if (c === "list" || c === "board") setShared2(VIEW_KEY, c);
     else if (c === "refresh") cx.spawn(async (cx2) => this.reload(cx2));
     else if (c === "settings") this.openSettings(cx);
     else if (c === "close") {
-      this.selected = null;
-      this.detail = null;
+      if (this.editing) {
+        this.editing = false;
+        this.formError = null;
+      } else {
+        this.selected = null;
+        this.detail = null;
+      }
     } else if (c === "next" || c === "prev") {
       const order = this.visibleOrder();
       if (!order.length) return;
@@ -863,6 +893,18 @@ var Jira = class extends View {
       await this.refresh(cx2);
     });
   }
+  // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
+  startWork(issue) {
+    const c = startWork(issue, this.jira?.settings.startTask);
+    if (!c) return;
+    try {
+      run(c.command, c.args);
+    } catch (e) {
+      this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` };
+      return;
+    }
+    showTerminal();
+  }
   openUrl(url) {
     const c = openUrlCommand(window()?.platform, url);
     exec(c.command, c.args).catch((e) => console.log(`dock-jira: open failed: ${e}`));
@@ -970,7 +1012,7 @@ var Jira = class extends View {
       this.jira?.token ? "Personal access token (saved; paste a new one to replace it)" : "Personal access token",
       this.tokenInput,
       `Kept only on this PC, in ${this.jira ? `herdr-dock/secrets/jira-${this.site}.token` : "a private file"}, readable by you alone.`
-    )).child(v_flex().gap(5).child(div().text_size(11.5).text_color(t.dim).child("Connection")).child(h_flex().gap(4).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).w_full().max_w(260).child(choice("fetch", "Herdr (fetch)")).child(choice("curl", "curl"))).child(div().text_size(11).text_color(t.dim).child("Use curl if Jira's certificate isn't trusted by Herdr: curl uses this computer's certificates."))).when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either."))).child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {description}. E.g. /init-ticket {key}")).when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError))).child(h_flex().gap(8).pt(4).child(this.button(t, "jira-save", this.formBusy ? "Connecting\u2026" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy })).when(!first, (el) => el.child(this.button(t, "jira-cancel", "Cancel", (cx) => {
+    )).child(v_flex().gap(5).child(div().text_size(11.5).text_color(t.dim).child("Connection")).child(h_flex().gap(4).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).w_full().max_w(260).child(choice("fetch", "Herdr (fetch)")).child(choice("curl", "curl"))).child(div().text_size(11).text_color(t.dim).child("Use curl if Jira's certificate isn't trusted by Herdr: curl uses this computer's certificates."))).when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either."))).child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}")).child(this.preview(t)).when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError))).child(h_flex().gap(8).pt(4).child(this.button(t, "jira-save", this.formBusy ? "Connecting\u2026" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy })).when(!first, (el) => el.child(this.button(t, "jira-cancel", "Cancel", (cx) => {
       this.editing = false;
       this.formError = null;
       cx.notify();
@@ -978,6 +1020,13 @@ var Jira = class extends View {
       this.editing = false;
       this.disconnect(cx);
     }, { tip: "Forget the token on this PC" })))).when(Boolean(this.jira?.problem), (el) => el.child(div().text_size(11.5).text_color(WARN).child(this.jira.problem))));
+  }
+  // What Start work would send for the open issue (else the first one listed), as typed.
+  preview(t) {
+    const issue = this.detail ?? this.rows[0];
+    if (!issue) return div();
+    const text = startWork(issue, this.taskInput.value())?.args.task ?? "";
+    return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`)).children(text.split("\n").map((l) => div().text_size(12).text_color(t.muted).child(l || " ")));
   }
   problemView(t) {
     const p = this.problem;
@@ -1015,7 +1064,10 @@ var Jira = class extends View {
   row(t, r, i) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
-    return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? "")).child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now())));
+    return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? "")).child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key} (a Claude tab)`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
+      cx.stop_propagation();
+      this.startWork(r);
+    }).child(svg("mods/dock-jira/play.svg").size(11)));
   }
   more(t) {
     if (!Number.isFinite(this.total) || this.rows.length >= this.total) return null;
@@ -1064,7 +1116,8 @@ var Jira = class extends View {
       this.actionBusy === "assign" ? "Assigning\u2026" : "Assign to me",
       (cx) => this.assignMe(cx),
       { enabled: !this.actionBusy }
-    ))).child(div().flex_1()).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(v_flex().gap(4).text_size(12.8).text_color(t.foreground).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex().gap(4).text_size(12.5).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div().text_color(t.dim).child(l.label)).child(div().child(l.key)))))).child(v_flex().gap(10).child(div().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex().gap(6).child(div().font_medium().child(c.author)).child(div().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex().gap(6).child(div().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Textarea.new(this.commentInput).w_full().text_size(12.5).text_color(t.foreground))).child(h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child("Ctrl+Enter sends")).child(this.button(
+    ))).child(div().flex_1()).child(this.button(t, "jira-start", "Start work", () => this.startWork(d), { primary: true, tip: `Opens a Claude tab with:
+${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` })).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(v_flex().gap(4).text_size(12.8).text_color(t.foreground).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex().gap(4).text_size(12.5).child(div().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div().text_color(t.dim).child(l.label)).child(div().child(l.key)))))).child(v_flex().gap(10).child(div().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex().gap(6).child(div().font_medium().child(c.author)).child(div().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex().gap(6).child(div().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Textarea.new(this.commentInput).w_full().text_size(12.5).text_color(t.foreground))).child(h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child("Ctrl+Enter sends")).child(this.button(
       t,
       "jira-comment-send",
       this.actionBusy === "comment" ? "Sending\u2026" : "Send",

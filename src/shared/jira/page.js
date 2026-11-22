@@ -1,6 +1,6 @@
 // The Jira page's decisions (pure; no host imports): which filters it offers, when it polls, what it shows.
 import { BUILTIN_FILTERS } from "./jql.js";
-import { wikiToText } from "./model.js";
+import { startTask, wikiToText } from "./model.js";
 
 export const SHOWN_EVERY_MS = 2 * 60e3;
 export const HIDDEN_EVERY_MS = 10 * 60e3;
@@ -78,4 +78,13 @@ export const commentReady = (text) => String(text ?? "").trim().length > 0;
 export function withComment(detail, comment) {
   const added = { id: comment.id, author: comment.author?.displayName ?? "you", bodyText: wikiToText(comment.body), createdMs: Date.parse(comment.created ?? "") || null };
   return { ...detail, comments: [...detail.comments, added].slice(-5), commentTotal: (detail.commentTotal ?? detail.comments.length) + 1 };
+}
+
+// ---- Start work ----
+
+// The Herdr command Start work runs: a tab named after the issue, running Claude, whose first message is the user's
+// template filled in (a list row works too: fields it lacks are empty). Null without an issue.
+export function startWork(issue, template) {
+  if (!issue?.key) return null;
+  return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
 }
