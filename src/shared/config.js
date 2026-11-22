@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG = {
       features: [{ mod: "dock-header", size: 46, drag: true }, { mod: "dock-spaces" }, { mod: "dock-agents" }, { mod: "dock-git" }, { mod: "dock-quotas", size: 150 }, { mod: "dock-footer", size: 40 }],
     },
     right: { size: 360, hidden: true, features: [{ mod: "dock-pipelines" }, { mod: "dock-notifications" }, { mod: "dock-files" }, { mod: "dock-changes" }] },
-    bottom: { size: 28, features: [{ mod: "dock-where", size: 240 }, { mod: "dock-attention", size: 190 }, { mod: "dock-warnings", size: 230 }, { mod: "dock-system" }] },
+    bottom: { size: 28, features: [{ mod: "dock-where" }, { mod: "dock-warnings", size: 150 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 190 }] },
   },
 };
 

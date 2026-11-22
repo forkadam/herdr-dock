@@ -1,4 +1,5 @@
-// Where: the focused space's machine and branch, as Herdr's workspace-status shows them.
+// Where: the focused space's machine and branch, as Herdr's workspace-status shows them. It takes the bar's free
+// width (flex_1), so the branch shows in full unless the window is out of room.
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, theme } from "herdr";
@@ -18,6 +19,7 @@ export default class Where extends View {
     const tip = space?.branch ? `${space.branch} on ${machine}` : machine;
     return barRow(t)
       .id("dock-where")
+      .flex_1()
       .tooltip(tip)
       .gap(12)
       .child(label(space?.machine ? "server" : "monitor", machine, true))
