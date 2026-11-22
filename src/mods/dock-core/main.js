@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import {
-  appHome, checking, exec, layout, nextCommand, notify, openOverlay, panes, playSound, props, readTextFile, run,
+  agents, appHome, checking, exec, layout, nextCommand, notify, openOverlay, panes, playSound, props, readTextFile, run,
   setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
 import { createCollector } from "../../shared/collector.js";
@@ -12,7 +12,9 @@ import {
   sizeChanges,
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
-import { parseGitCommand, showPlan } from "../../shared/gitcmd.js";
+import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
+import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/notify.js";
+import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
 import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
 
 const MODES = ["expanded", "icons", "hidden"];
@@ -58,6 +60,7 @@ export default class DockCore extends View {
     this.configPath = null;
     this.layoutPath = null;
     this.collector = null;
+    this.notifySeq = 0; // with Date.now(), makes this PC's history item ids unique
     if (checking() || !isTop()) return;
     cx.spawn(async (cx) => this.start(cx));
     this.startCollector(cx);
@@ -114,6 +117,7 @@ export default class DockCore extends View {
     const platform = window()?.platform;
     this.platform = platform;
     // A collector that fails to start leaves Git projects empty but never takes dock-core (layout, panels) down.
+    // The tick still runs: it also resolves the notification history.
     try {
       this.collector = createCollector({
         exec, fetch: (url, init) => globalThis.fetch(url, init), panes, spaces, shared, setShared, notify, playSound,
@@ -122,11 +126,11 @@ export default class DockCore extends View {
     } catch (e) {
       this.collector = null;
       console.log(`dock-core: git collector failed to start: ${e?.message ?? e}`);
-      return;
     }
     cx.spawn(async (cx) => {
       for (;;) {
-        this.collector.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
+        this.collector?.tick().catch((e) => console.log(`dock-core: git tick failed: ${e?.message ?? e}`));
+        try { this.resolveNotify(); } catch (e) { console.log(`dock-core: notify resolve failed: ${e?.message ?? e}`); }
         await cx.sleep(TICK_MS);
       }
     });
@@ -153,13 +157,44 @@ export default class DockCore extends View {
     else if (g.cmd === "show") {
       const worktree = g.worktree ?? shared("dock.git.selected") ?? null;
       if (worktree) col.select(worktree).catch(fail("select"));
-      const plan = showPlan(this.merged);
-      if (plan.set) for (const [k, v] of Object.entries(plan.set)) setShared(k, v);
-      else {
-        try { openOverlay(plan.overlay); } catch (e) { fail("show")(e); }
-      }
+      this.reveal(showPlan(this.merged), fail("show"));
     }
     return true;
+  }
+
+  // Applies a revealPlan: the right panel's shared keys, else the dialog.
+  reveal(plan, fail) {
+    if (plan.set) for (const [k, v] of Object.entries(plan.set)) setShared(k, v);
+    else {
+      try { openOverlay(plan.overlay); } catch (e) { fail(e); }
+    }
+  }
+
+  // A notify.* command (see src/mods/_notify-command.js): dock-core is the one writer of the history.
+  // Returns false when c isn't one.
+  notifyCommand(c) {
+    const cmd = parseNotifyCommand(c);
+    if (!cmd) return false;
+    const history = historyOf(shared(HISTORY_KEY));
+    if (cmd.cmd === "show") {
+      setShared(HISTORY_KEY, markAllRead(history));
+      this.reveal(revealPlan(this.merged, "dock-notifications", NOTIFY_DIALOG),
+        (e) => console.log(`dock-core: notify.show failed: ${e?.message ?? e}`));
+      return true;
+    }
+    const id = `${Date.now().toString(36)}-${(this.notifySeq++).toString(36)}`;
+    setShared(HISTORY_KEY, applyNotifyCommand(history, cmd, Date.now(), id));
+    return true;
+  }
+
+  // Each tick: mark needs-you items whose cause is fixed, writing the history only when one changed.
+  resolveNotify() {
+    const history = historyOf(shared(HISTORY_KEY));
+    if (!history.length) return;
+    let list;
+    try { list = agents(); } catch { list = undefined; } // unknown agents leave agent items unresolved
+    const next = resolveItems(history, { agents: list, gitState: shared("dock.git.state") });
+    if (next !== history) setShared(HISTORY_KEY, next);
   }
 
   // Re-read the config; write the layout only when it changed and the config is valid.
@@ -250,6 +285,7 @@ export default class DockCore extends View {
 
   command(c, cx) {
     if (this.gitCommand(c)) return;
+    if (this.notifyCommand(c)) return;
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));
       return;

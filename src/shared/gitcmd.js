@@ -102,10 +102,13 @@ export function parseGitCommand(c) {
 
 const DIALOG = { mod: "dock-pipelines", kind: "dialog", width: 640, height: 0.7 };
 
-// How git.show reveals dock-pipelines: in the right panel when this PC's merged config places it there
-// ({ set: shared keys }), else as a dialog ({ overlay: openOverlay spec }).
-export function showPlan(merged) {
-  const placed = (merged?.regions?.right?.features ?? []).some((f) => f?.mod === "dock-pipelines");
-  if (placed) return { set: { "dock.right.active": "dock-pipelines", "dock.right.shown": true } };
-  return { overlay: { ...DIALOG } };
+// How dock-core reveals a mod: in the right panel when this PC's merged config places it there
+// ({ set: shared keys }), else as a dialog ({ overlay: a copy of the openOverlay spec }).
+export function revealPlan(merged, mod, dialog) {
+  const placed = (merged?.regions?.right?.features ?? []).some((f) => f?.mod === mod);
+  if (placed) return { set: { "dock.right.active": mod, "dock.right.shown": true } };
+  return { overlay: { ...dialog } };
 }
+
+// How git.show reveals dock-pipelines.
+export const showPlan = (merged) => revealPlan(merged, "dock-pipelines", DIALOG);

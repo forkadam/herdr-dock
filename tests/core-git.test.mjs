@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { b64urlEncode, b64urlDecode, gitCommandName, parseGitCommand, showPlan } from "../src/shared/gitcmd.js";
+import { b64urlEncode, b64urlDecode, gitCommandName, parseGitCommand, showPlan, revealPlan } from "../src/shared/gitcmd.js";
 
 test("base64url round-trips worktree ids (ASCII, |, /, :, spaces, non-ASCII)", () => {
   for (const s of ["", "a", "ab", "abc", "|d:/workspace/herdr-dock", "box|/home/u/my repo", "|c:/users/adam cheng/é漢字😀"]) {
@@ -75,4 +75,13 @@ test("git.delete carries the worktree id and parses back; it needs one", () => {
   assert.match(name, /^git\.delete\.[A-Za-z0-9_-]+$/);
   assert.deepEqual(parseGitCommand(name), { cmd: "delete", worktree: "|d:/work/api-login" });
   assert.throws(() => gitCommandName("git.delete", {}));
+});
+
+test("revealPlan: right panel when placed, else the dialog", () => {
+  const D = { mod: "dock-notifications", kind: "dialog", width: 520, height: 0.7 };
+  const merged = { regions: { right: { features: [{ mod: "dock-notifications" }] } } };
+  assert.deepEqual(revealPlan(merged, "dock-notifications", D), { set: { "dock.right.active": "dock-notifications", "dock.right.shown": true } });
+  assert.deepEqual(revealPlan({ regions: { right: { features: [] } } }, "dock-notifications", D), { overlay: D });
+  assert.deepEqual(revealPlan(null, "dock-notifications", D), { overlay: D });
+  assert.notEqual(revealPlan(null, "dock-notifications", D).overlay, D);
 });
