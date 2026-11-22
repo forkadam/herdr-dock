@@ -14,6 +14,9 @@ const LABELS = { five_hour: "5-hour", weekly: "weekly" };
 // Where a reading came from: the claude CLI (what /usage shows) overrides the provider's default source.
 const sourceOf = (usage, provider) => (usage.source === "cli" ? "Claude Code (/usage)" : provider.source);
 const labelOf = (w) => (w.kind === "model" ? `weekly · ${w.label}` : LABELS[w.kind] ?? w.kind);
+// The strip's short label: 5h, wk, or the model's name.
+const SHORT = { five_hour: "5h", weekly: "wk" };
+const shortOf = (w) => (w.kind === "model" ? w.label : SHORT[w.kind] ?? w.kind);
 
 const isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 
@@ -36,15 +39,17 @@ export function quotaRows(usage, nowMs, provider) {
   const source = sourceOf(usage, provider);
   return usage.windows.map((w) => {
     const label = labelOf(w);
+    const short = shortOf(w);
     // Past its reset time, an old reading's % no longer applies.
     if (isReset(w, nowMs)) {
       return { label, value: "reset", detail: `reset · ${age}`, stale: Boolean(usage.stale),
-        tooltip: `${provider.title} · ${label}: reset since this reading · ${age} · source: ${source}`, percent: null, pace: null, usage: "reset", reset: null };
+        tooltip: `${provider.title} · ${label}: reset since this reading · ${age} · source: ${source}`, percent: null, pace: null, usage: "reset", reset: null, short };
     }
     const pace = paceOf(w, nowMs);
     const detail = w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} · ${age}`;
     return {
       label,
+      short,
       value: formatPercent(w.usedPercent),
       detail,
       stale: Boolean(usage.stale),
@@ -99,4 +104,25 @@ export function setupNotice(state, { busy = false, error = null } = {}) {
     case "invalid": return { text: "Claude: ~/.claude/settings.json isn't valid JSON", tip: "Fix the file; Quotas checks again.", action: null };
     default: return null;
   }
+}
+
+// ---- The bottom-bar strip (dock-limits) ----
+
+// A reading as plain JSON for shared state (dock.quotas.readings): what Quotas shows, without its session map.
+export function publishable(reading) {
+  if (!reading) return null;
+  const { source = null, plan = null, fetchedMs, stale, windows } = reading;
+  return { source, plan, fetchedMs, stale: Boolean(stale), windows: (windows ?? []).map((w) => ({ ...w })) };
+}
+
+// quotaGroups -> the strip's items per provider: [{ id, title, agent, plan, items: [{ short, usage, reset, percent,
+// pace, level, stale, tooltip }] }]. The time to reset shows only from amber up (it's when it matters).
+export function stripItems(groups) {
+  return (groups ?? []).map((g) => ({
+    id: g.id, title: g.title, agent: g.agent, plan: g.plan ?? null,
+    items: g.rows.map((r) => {
+      const level = r.percent == null ? "ok" : barLevel(r.percent);
+      return { short: r.short, usage: r.usage, reset: level === "ok" ? null : r.reset ?? null, percent: r.percent, pace: r.pace, level, stale: r.stale, tooltip: r.tooltip };
+    }),
+  }));
 }

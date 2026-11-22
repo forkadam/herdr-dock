@@ -410,6 +410,12 @@ The bottom bar is a quiet glance. In order, left to right:
 
 - **Where** (`dock-where`): this machine and the branch of the focused space, like `□ This computer  ⑂ main`. It
   takes the free width, so the branch is shown in full when there's room (the tooltip always has it).
+- **Limits** (`dock-limits`): your usage limits in one strip, after
+  [nozikov/herdr-usage-limits](https://github.com/nozikov/herdr-usage-limits): per provider its icon, then each
+  window short, `5h ▬| 17%  wk ▬| 20%  Fable |─ 0%`, with the pace tick, and the time to reset from 70% up
+  (`92% · 38m`). Rest the pointer on it for the full panel: the plan and one line per window, as in Quotas. It shares
+  the free width with Where. It reads what Quotas collects (`dock.quotas.readings`), so it asks nothing itself;
+  with Quotas taken out of the left panel it says "no limits yet".
 - **Warnings** (`dock-warnings`): `⟳ 1` pipelines running now, `⚠ quota 92%` when any Claude or Codex window is at
   90% or more, `⚠ disk 7%` when this PC's system drive has under 10% free. With none applying it shows nothing.
 - **System** (`dock-system`): a chip icon and a memory icon, each with its %, in the warning colour from 90%.

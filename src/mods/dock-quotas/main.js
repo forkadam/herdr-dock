@@ -10,7 +10,8 @@ import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared
 import { scriptPaths, statuslinePlan } from "../../shared/statusline.js";
 import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { quotaGroups, iconBadge, barLevel, setupNotice } from "./view.js";
+import { quotaGroups, iconBadge, barLevel, setupNotice, publishable } from "./view.js";
+import { WARN, HIGH, groupHeaderEl, quotaRowEl } from "./draw.js";
 
 const REFRESH_MS = 30000;
 // No ~/.codex/sessions: look again after this long (a few processes per check on Windows).
@@ -18,14 +19,14 @@ const CODEX_ABSENT_MS = 300000;
 // A watch that resolves with no changed paths waits this long before re-arming (no tight loop).
 const EMPTY_WATCH_MS = 1000;
 const TOP_KEY = "dock.quotas.top";
+// Quotas' readings for the bottom-bar strip (dock-limits): { claude, codex }, each publishable() or null.
+const READINGS_KEY = "dock.quotas.readings";
 // Claude's limits from the claude CLI (get_usage, what /usage shows): asked this often. Cheap (~1 s), no model use.
 const CLI_EVERY_MS = 5 * 60e3;
 // dock.quotas.top's `at` is refreshed once it is this old (with the 30 s timer: at most ~60 s old).
 const TOP_REFRESH_MS = 55000;
 // With no Claude reading, the status-line self-check runs at most this often (and right after Set up).
 const SETUP_CHECK_MS = 60000;
-const WARN = "#d29922";
-const HIGH = "#f85149";
 
 export default class Quotas extends View {
   init(_props, cx) {
@@ -110,6 +111,16 @@ export default class Quotas extends View {
         cx.notify();
       }
     });
+  }
+
+  // The readings for the bottom-bar strip (dock-limits), in shared state, written only when they change (a write
+  // re-renders every mod). The strip asks nothing itself, so the claude CLI isn't asked twice.
+  publishReadings() {
+    const next = { claude: publishable(this.claude()), codex: publishable(this.codex) };
+    const text = JSON.stringify(next);
+    if (text === this.lastPublished) return;
+    this.lastPublished = text;
+    setShared(READINGS_KEY, next);
   }
 
   // What Quotas shows for Claude: the CLI's reading, with a fresher status line's 5-hour and weekly numbers.
@@ -203,6 +214,7 @@ export default class Quotas extends View {
   // and again once `at` is TOP_REFRESH_MS old (the 30 s timer calls this), so a reading that stops being
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
+    this.publishReadings();
     const now = Date.now();
     const b = iconBadge([this.claude(), this.codex], now);
     const prev = shared(TOP_KEY) ?? null;
@@ -246,15 +258,8 @@ export default class Quotas extends View {
     return pickNewestUsage(found);
   }
 
-  groupHeader(t, g, i) {
-    const ic = this.icons[g.agent];
-    const face = ic
-      ? (ic.tint ? svg(ic.icon).size(13).text_color(t.muted) : image(ic.icon).size(13))
-      : div().size(13).flex().items_center().justify_center().text_size(10).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
-    return h_flex().id(`quota-group-${i}`).px(16).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center()
-      .child(face).child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
-      .when(Boolean(g.plan), (el) => el.child(div().px(5).rounded(4).bg(t.border).text_size(10).text_color(t.muted).child(g.plan)));
-  }
+  groupHeader(t, g, i) { return groupHeaderEl(t, g, i, this.icons); }
+
 
   header(t, onTitle) {
     const title = div().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
@@ -264,23 +269,9 @@ export default class Quotas extends View {
         : title);
   }
 
-  // One line per window: label, bar (with the pace tick), usage, time to reset. The rest (full reset time, age,
-  // source, pace in numbers) is in the tooltip.
-  row(t, r, i) {
-    const level = barLevel(r.percent ?? 0);
-    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[level];
-    const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return h_flex().id(`quota-${i}`).px(16).h(24).gap(8).flex_none().items_center().tooltip(r.tooltip)
-      .when(r.stale, (el) => el.opacity(0.55))
-      .child(div().w(92).flex_none().truncate().text_size(12).text_color(t.foreground).child(r.label))
-      .child(div().flex_1().min_w(24).h(4).relative().rounded(2).bg(t.border)
-        .when(r.percent != null, (bar) => bar.child(div().w(`${pct}%`).h(4).rounded(2).bg(color)))
-        // The pace tick: how much of the window's time has passed. A bar past it is being used up too fast.
-        .when(r.pace != null, (bar) => bar.child(div().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7))))
-      .child(div().w(34).flex_none().flex().justify_end().text_size(12)
-        .text_color(r.percent == null ? t.dim : level === "ok" ? t.muted : color).child(r.usage ?? r.value))
-      .child(div().w(46).flex_none().flex().justify_end().text_size(11).text_color(t.dim).child(r.stale ? "stale" : r.reset ?? ""));
-  }
+  // One line per window (drawn by draw.js, shared with the bottom-bar strip's hover panel).
+  row(t, r, i) { return quotaRowEl(t, r, `quota-${i}`); }
+
 
 
   render(cx) {

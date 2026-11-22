@@ -314,7 +314,21 @@
               }
             },
             {
-              "id": "dock-bottom-1-dock-warnings",
+              "id": "dock-bottom-1-dock-limits",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "content": {
+                "mod": "dock-limits",
+                "props": {
+                  "dockFeature": "dock-bottom-1-dock-limits",
+                  "dockRegion": "bottom"
+                }
+              }
+            },
+            {
+              "id": "dock-bottom-2-dock-warnings",
               "type": "block",
               "size": {
                 "px": 210
@@ -322,13 +336,13 @@
               "content": {
                 "mod": "dock-warnings",
                 "props": {
-                  "dockFeature": "dock-bottom-1-dock-warnings",
+                  "dockFeature": "dock-bottom-2-dock-warnings",
                   "dockRegion": "bottom"
                 }
               }
             },
             {
-              "id": "dock-bottom-2-dock-system",
+              "id": "dock-bottom-3-dock-system",
               "type": "block",
               "size": {
                 "px": 150
@@ -336,13 +350,13 @@
               "content": {
                 "mod": "dock-system",
                 "props": {
-                  "dockFeature": "dock-bottom-2-dock-system",
+                  "dockFeature": "dock-bottom-3-dock-system",
                   "dockRegion": "bottom"
                 }
               }
             },
             {
-              "id": "dock-bottom-3-dock-attention",
+              "id": "dock-bottom-4-dock-attention",
               "type": "block",
               "size": {
                 "px": 36
@@ -350,7 +364,7 @@
               "content": {
                 "mod": "dock-attention",
                 "props": {
-                  "dockFeature": "dock-bottom-3-dock-attention",
+                  "dockFeature": "dock-bottom-4-dock-attention",
                   "dockRegion": "bottom"
                 }
               }

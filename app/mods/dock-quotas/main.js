@@ -1,6 +1,6 @@
 // src/mods/dock-quotas/main.js
-import { View, div as div2, svg as svg2, image } from "gpui-kit";
-import { v_flex as v_flex2, h_flex } from "gpui-base";
+import { View, div as div3, svg as svg3, image as image2 } from "gpui-kit";
+import { v_flex as v_flex2, h_flex as h_flex2 } from "gpui-base";
 import { theme, shared, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window as window2 } from "herdr";
 
 // src/mods/_feature.js
@@ -295,6 +295,8 @@ var PROVIDERS = [
 var LABELS = { five_hour: "5-hour", weekly: "weekly" };
 var sourceOf = (usage, provider) => usage.source === "cli" ? "Claude Code (/usage)" : provider.source;
 var labelOf = (w) => w.kind === "model" ? `weekly \xB7 ${w.label}` : LABELS[w.kind] ?? w.kind;
+var SHORT = { five_hour: "5h", weekly: "wk" };
+var shortOf = (w) => w.kind === "model" ? w.label : SHORT[w.kind] ?? w.kind;
 var isReset = (w, nowMs) => Number.isFinite(nowMs) && Number.isFinite(w.resetsMs) && w.resetsMs <= nowMs;
 function shortReset(resetsMs, nowMs) {
   if (!Number.isFinite(resetsMs) || resetsMs <= nowMs) return null;
@@ -310,6 +312,7 @@ function quotaRows(usage, nowMs, provider) {
   const source = sourceOf(usage, provider);
   return usage.windows.map((w) => {
     const label = labelOf(w);
+    const short = shortOf(w);
     if (isReset(w, nowMs)) {
       return {
         label,
@@ -320,13 +323,15 @@ function quotaRows(usage, nowMs, provider) {
         percent: null,
         pace: null,
         usage: "reset",
-        reset: null
+        reset: null,
+        short
       };
     }
     const pace = paceOf(w, nowMs);
     const detail = w.resetsMs == null ? age : `${formatReset(w.resetsMs, nowMs)} \xB7 ${age}`;
     return {
       label,
+      short,
       value: formatPercent(w.usedPercent),
       detail,
       stale: Boolean(usage.stale),
@@ -386,17 +391,45 @@ function setupNotice(state, { busy = false, error = null } = {}) {
       return null;
   }
 }
+function publishable(reading) {
+  if (!reading) return null;
+  const { source = null, plan = null, fetchedMs, stale, windows } = reading;
+  return { source, plan, fetchedMs, stale: Boolean(stale), windows: (windows ?? []).map((w) => ({ ...w })) };
+}
+
+// src/mods/dock-quotas/draw.js
+import { div as div2, svg as svg2, image } from "gpui-kit";
+import { h_flex } from "gpui-base";
+var WARN = "#d29922";
+var HIGH = "#f85149";
+var levelColor = (t, level) => ({ ok: t.accent, warn: WARN, high: t.blocked ?? HIGH })[level] ?? t.accent;
+function providerFace(t, g, icons, size = 13) {
+  const ic = icons?.[g.agent];
+  if (ic) return ic.tint ? svg2(ic.icon).size(size).text_color(t.muted) : image(ic.icon).size(size);
+  return div2().size(size).flex().items_center().justify_center().text_size(size - 3).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
+}
+function quotaBar(t, r, w = null) {
+  const level = barLevel(r.percent ?? 0);
+  const pct = Math.max(0, Math.min(100, r.percent ?? 0));
+  return div2().h(4).relative().rounded(2).bg(t.border).when(w == null, (el) => el.flex_1().min_w(24)).when(w != null, (el) => el.w(w).flex_none()).when(r.percent != null, (bar) => bar.child(div2().w(`${pct}%`).h(4).rounded(2).bg(levelColor(t, level)))).when(r.pace != null, (bar) => bar.child(div2().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7)));
+}
+function groupHeaderEl(t, g, i, icons, { id = `quota-group-${i}`, px = 16 } = {}) {
+  return h_flex().id(id).px(px).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center().child(providerFace(t, g, icons)).child(div2().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).when(Boolean(g.plan), (el) => el.child(div2().px(5).rounded(4).bg(t.border).text_size(10).text_color(t.muted).child(g.plan)));
+}
+function quotaRowEl(t, r, id, { px = 16 } = {}) {
+  const level = barLevel(r.percent ?? 0);
+  return h_flex().id(id).px(px).h(24).gap(8).flex_none().items_center().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(div2().w(92).flex_none().truncate().text_size(12).text_color(t.foreground).child(r.label)).child(quotaBar(t, r)).child(div2().w(34).flex_none().flex().justify_end().text_size(12).text_color(r.percent == null ? t.dim : level === "ok" ? t.muted : levelColor(t, level)).child(r.usage ?? r.value)).child(div2().w(46).flex_none().flex().justify_end().text_size(11).text_color(t.dim).child(r.stale ? "stale" : r.reset ?? ""));
+}
 
 // src/mods/dock-quotas/main.js
 var REFRESH_MS = 3e4;
 var CODEX_ABSENT_MS = 3e5;
 var EMPTY_WATCH_MS = 1e3;
 var TOP_KEY = "dock.quotas.top";
+var READINGS_KEY = "dock.quotas.readings";
 var CLI_EVERY_MS = 5 * 6e4;
 var TOP_REFRESH_MS = 55e3;
 var SETUP_CHECK_MS = 6e4;
-var WARN = "#d29922";
-var HIGH = "#f85149";
 var Quotas = class extends View {
   init(_props, cx) {
     this.statusline = null;
@@ -490,6 +523,15 @@ var Quotas = class extends View {
       }
     });
   }
+  // The readings for the bottom-bar strip (dock-limits), in shared state, written only when they change (a write
+  // re-renders every mod). The strip asks nothing itself, so the claude CLI isn't asked twice.
+  publishReadings() {
+    const next = { claude: publishable(this.claude()), codex: publishable(this.codex) };
+    const text = JSON.stringify(next);
+    if (text === this.lastPublished) return;
+    this.lastPublished = text;
+    setShared2(READINGS_KEY, next);
+  }
   // What Quotas shows for Claude: the CLI's reading, with a fresher status line's 5-hour and weekly numbers.
   claude() {
     return mergeClaude(this.cli, this.statusline, Date.now());
@@ -569,13 +611,14 @@ var Quotas = class extends View {
   setupRow(t) {
     const n = this.claude() ? null : setupNotice(this.setup.state, this.setup);
     if (!n) return null;
-    return h_flex().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div2().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
+    return h_flex2().id("quota-setup").px(16).py(4).gap(8).flex_none().items_center().tooltip(n.tip).child(div3().flex_1().min_w(0).truncate().text_size(12).text_color(this.setup.error ? t.blocked ?? HIGH : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex2().id("quota-setup-run").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSetup(cx)).child("Set up")));
   }
   // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
   // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
   // and again once `at` is TOP_REFRESH_MS old (the 30 s timer calls this), so a reading that stops being
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
+    this.publishReadings();
     const now = Date.now();
     const b = iconBadge([this.claude(), this.codex], now);
     const prev = shared(TOP_KEY) ?? null;
@@ -624,21 +667,15 @@ var Quotas = class extends View {
     return pickNewestUsage(found);
   }
   groupHeader(t, g, i) {
-    const ic = this.icons[g.agent];
-    const face = ic ? ic.tint ? svg2(ic.icon).size(13).text_color(t.muted) : image(ic.icon).size(13) : div2().size(13).flex().items_center().justify_center().text_size(10).font_semibold().text_color(t.dim).child(g.title.slice(0, 1));
-    return h_flex().id(`quota-group-${i}`).px(16).pt(i ? 8 : 2).pb(1).gap(6).flex_none().items_center().child(face).child(div2().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).when(Boolean(g.plan), (el) => el.child(div2().px(5).rounded(4).bg(t.border).text_size(10).text_color(t.muted).child(g.plan)));
+    return groupHeaderEl(t, g, i, this.icons);
   }
   header(t, onTitle) {
-    const title = div2().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
-    return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().child(onTitle ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle()) : title);
+    const title = div3().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
+    return h_flex2().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().child(onTitle ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle()) : title);
   }
-  // One line per window: label, bar (with the pace tick), usage, time to reset. The rest (full reset time, age,
-  // source, pace in numbers) is in the tooltip.
+  // One line per window (drawn by draw.js, shared with the bottom-bar strip's hover panel).
   row(t, r, i) {
-    const level = barLevel(r.percent ?? 0);
-    const color = { ok: t.accent, warn: WARN, high: t.blocked ?? HIGH }[level];
-    const pct = Math.max(0, Math.min(100, r.percent ?? 0));
-    return h_flex().id(`quota-${i}`).px(16).h(24).gap(8).flex_none().items_center().tooltip(r.tooltip).when(r.stale, (el) => el.opacity(0.55)).child(div2().w(92).flex_none().truncate().text_size(12).text_color(t.foreground).child(r.label)).child(div2().flex_1().min_w(24).h(4).relative().rounded(2).bg(t.border).when(r.percent != null, (bar) => bar.child(div2().w(`${pct}%`).h(4).rounded(2).bg(color))).when(r.pace != null, (bar) => bar.child(div2().absolute().top(-2).left(`${Math.round(r.pace * 100)}%`).w(2).h(8).rounded(1).bg(t.foreground).opacity(0.7)))).child(div2().w(34).flex_none().flex().justify_end().text_size(12).text_color(r.percent == null ? t.dim : level === "ok" ? t.muted : color).child(r.usage ?? r.value)).child(div2().w(46).flex_none().flex().justify_end().text_size(11).text_color(t.dim).child(r.stale ? "stale" : r.reset ?? ""));
+    return quotaRowEl(t, r, `quota-${i}`);
   }
   render(cx) {
     const t = theme();
@@ -650,7 +687,7 @@ var Quotas = class extends View {
       if (!b) return rail;
       const p = parseInt(b.text, 10);
       const color = barLevel(p) === "ok" ? t.muted : barLevel(p) === "warn" ? WARN : t.blocked ?? HIGH;
-      return rail.child(div2().id("quota-badge").text_size(10).text_color(color).when(b.stale, (el) => el.opacity(0.55)).tooltip(b.stale ? `${p}% used \xB7 stale` : `${p}% used`).child(b.text));
+      return rail.child(div3().id("quota-badge").text_size(10).text_color(color).when(b.stale, (el) => el.opacity(0.55)).tooltip(b.stale ? `${p}% used \xB7 stale` : `${p}% used`).child(b.text));
     }
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId)));
@@ -658,7 +695,7 @@ var Quotas = class extends View {
     const groups = quotaGroups({ claude: this.claude(), codex: this.codex }, Date.now());
     const setup = this.setupRow(t);
     let n = 0;
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div2().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(!groups.length && !setup, (el) => el.child(div3().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 };
 export {

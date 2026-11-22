@@ -110,3 +110,34 @@ test("quotaRows: the one-line usage and reset, and the full detail in the toolti
   assert.equal(reset.usage, "reset");
   assert.equal(reset.reset, null);
 });
+
+// ---- The bottom-bar strip ----
+import { publishable, stripItems } from "../src/mods/dock-quotas/view.js";
+
+test("quotaRows: a short label for the strip (5h, wk, the model's name)", () => {
+  const now = 1_000_000;
+  const r = quotaRows({ fetchedMs: now, stale: false, windows: [
+    { kind: "five_hour", usedPercent: 1, resetsMs: null }, { kind: "weekly", usedPercent: 2, resetsMs: null },
+    { kind: "model", label: "Fable", usedPercent: 3, resetsMs: null }] }, now, CLAUDE);
+  assert.deepEqual(r.map((x) => x.short), ["5h", "wk", "Fable"]);
+});
+
+test("publishable: a reading as plain JSON for shared state (no session map), null stays null", () => {
+  const reading = { ...S(), source: "cli", plan: "team" };
+  const p = publishable(reading);
+  assert.deepEqual(Object.keys(p).sort(), ["fetchedMs", "plan", "source", "stale", "windows"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(p)), p);
+  assert.equal(publishable(null), null);
+});
+
+test("stripItems: per provider, each window short; the time to reset only from amber up", () => {
+  const now = 1_000_000;
+  const claude = { source: "cli", plan: "team", fetchedMs: now, stale: false, windows: [
+    { kind: "five_hour", usedPercent: 92, resetsMs: now + 38 * 60e3, durationMs: 5 * 3600e3 },
+    { kind: "weekly", usedPercent: 20, resetsMs: now + 2 * 86400e3, durationMs: 7 * 86400e3 }] };
+  const s = stripItems(quotaGroups({ claude }, now));
+  assert.deepEqual(s.map((g) => g.id), ["claude"]);
+  assert.deepEqual(s[0].items.map((i) => [i.short, i.usage, i.reset, i.level]), [["5h", "92%", "38m", "high"], ["wk", "20%", null, "ok"]]);
+  assert.ok(s[0].items[0].pace > 0);
+  assert.deepEqual(stripItems([]), []);
+});
