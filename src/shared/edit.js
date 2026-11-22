@@ -1,5 +1,5 @@
 // Placement rules and draft edits for the config UI (pure; no Node built-ins).
-import { LEFT_ONLY, REGION_NAMES, mergeForHost, parseConfig } from "./config.js";
+import { LEFT_ONLY, REGION_NAMES, mergeForHost, parseConfig, parseLocal } from "./config.js";
 
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
@@ -14,8 +14,9 @@ export function canTurnOff(mod) {
   return mod !== "dock-core";
 }
 
-export function draftFromConfig(config, host) {
-  const merged = JSON.parse(JSON.stringify(mergeForHost(config, host)));
+// local: the parsed per-PC local file (or null), merged over base + machines.<host>.
+export function draftFromConfig(config, host, local = null) {
+  const merged = JSON.parse(JSON.stringify(mergeForHost(config, host, local)));
   const regions = {};
   for (const name of REGION_NAMES) regions[name] = merged.regions[name];
   // The mode carries "hidden" for left.
@@ -138,7 +139,8 @@ export function applyEdit(draft, op) {
   return error ? { draft, error } : { draft: d, error: null };
 }
 
-// The regions this host overrides: only what differs from the base (config without machines).
+// The regions this host overrides: only what differs from the base (config without machines;
+// planSave passes the shared config already merged with machines.<host>).
 export function machineSection(config, draft) {
   const base = mergeForHost({ ...config, machines: {} }, "");
   const section = {};
@@ -189,31 +191,25 @@ export function formatConfig(obj) {
   return pretty(obj, "") + "\n";
 }
 
-function rewrite(openedText, host, section) {
-  const parsed = parseConfig(openedText);
-  if (!parsed.ok) return { ok: false, error: parsed.error };
-  const config = parsed.config;
-  const want = String(host).toLowerCase();
-  const key = Object.keys(config.machines ?? {}).find((k) => k.toLowerCase() === want);
-  if (section) {
-    config.machines ??= {};
-    const entry = (config.machines[key ?? host] ??= {});
-    entry.regions = section;
-  } else if (key) {
-    delete config.machines[key].regions;
-    if (!Object.keys(config.machines[key]).length) delete config.machines[key];
-  }
-  const text = formatConfig(config);
-  const check = parseConfig(text);
+// The local file text that holds this draft: { v: 1, regions } with only what differs from the
+// shared config merged with machines.<host> (empty regions when nothing does). Other top-level
+// keys of the local file stay.
+export function planSave(baseText, localText, host, draft) {
+  const base = parseConfig(baseText);
+  if (!base.ok) return { ok: false, error: base.error };
+  const local = parseLocal(localText);
+  if (!local.ok) return { ok: false, error: local.error };
+  const shared = mergeForHost(base.config, host);
+  const section = machineSection({ v: 1, regions: shared.regions }, draft);
+  const { v: _v, regions: _r, ...rest } = local.local ?? {};
+  const text = formatConfig({ v: 1, regions: section ?? {}, ...rest });
+  const check = parseLocal(text);
   return check.ok ? { ok: true, text } : { ok: false, error: check.error };
 }
 
-export function planSave(openedText, host, draft) {
-  const parsed = parseConfig(openedText);
-  if (!parsed.ok) return { ok: false, error: parsed.error };
-  return rewrite(openedText, host, machineSection(parsed.config, draft));
+// Back to shared: the local file goes. Herdr has no delete API, so the session writes EMPTY_LOCAL.
+export function planReset() {
+  return { ok: true, delete: true };
 }
 
-export function planReset(openedText, host) {
-  return rewrite(openedText, host, null);
-}
+export const EMPTY_LOCAL = formatConfig({ v: 1, regions: {} });

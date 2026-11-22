@@ -1,5 +1,7 @@
 // The "Dock layout" dialog: places installed mods in the top, left, right or bottom region (or
-// switches them off) and saves the edits to this PC's machines.<host> section of config/dock.json.
+// switches them off) and saves the edits to this PC's local file (<app home>/herdr-dock/local.json,
+// only what differs from config/dock.json merged with machines.<host>); it never writes config/dock.json.
+// "Reset this PC to shared" empties the local file (Herdr has no delete API).
 // Opened by mod.open {name:"dock-config"} (dock-core.config, Ctrl+Alt+,). A view over session.js.
 // Icons: chevron-down.svg, x.svg, plus.svg and icon.svg (panel-left.svg) are copied from Herdr's
 // shipped workspace-chrome mod; chevron-up.svg (chevron-down flipped) and lock.svg are lucide's.
@@ -28,7 +30,7 @@ const makeIo = () => ({
 // What `herdr-app check` renders: the default config, read-only, with no files read.
 function checkSession() {
   const draft = draftFromConfig(DEFAULT_CONFIG, "");
-  return { path: null, host: null, opened: null, draft, baseDraft: draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
+  return { path: null, localPath: null, host: null, baseText: null, opened: null, draft, baseDraft: draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
 }
 
 export default class DockConfig extends View {

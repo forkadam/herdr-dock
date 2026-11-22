@@ -55,64 +55,72 @@ test("machineSection: left hidden in the base needs hidden:false to show", () =>
   assert.deepEqual(machineSection(c, d), { left: { mode: "expanded", hidden: false } });
 });
 
-test("planSave: writes into the existing host key, case-insensitively, keeping other keys", () => {
+// planSave writes the local file: { v: 1, regions } with the diff against base + machines.<host>.
+const local = (regions, extra = {}) => JSON.stringify({ v: 1, regions, ...extra }, null, 2);
+
+test("planSave: the local file holds only the diff against the base", () => {
   const c = fixture();
-  c.machines = { "Forkadam-PC": { regions: { left: { size: 320 } }, note: "x" } };
   const d = edit(draftFromConfig(c, HOST), { type: "size", region: "left", value: 300 });
-  const r = planSave(JSON.stringify(c), HOST, d);
+  const r = planSave(JSON.stringify(c), null, HOST, d);
   assert.equal(r.ok, true);
-  const p = JSON.parse(r.text);
-  assert.equal(p.machines["Forkadam-PC"].regions.left.size, 300);
-  assert.equal(p.machines["Forkadam-PC"].note, "x");
-  assert.equal("forkadam-pc" in p.machines, false);
+  assert.deepEqual(JSON.parse(r.text), { v: 1, regions: { left: { size: 300 } } });
+  assert.equal(r.text, formatConfig({ v: 1, regions: { left: { size: 300 } } }));
 });
 
-test("planSave: nothing else changes", () => {
+test("planSave: the diff is against base merged with machines.<host> (case-insensitive), other hosts ignored", () => {
   const c = fixture();
-  c.machines = { other: { regions: { right: { hidden: false } }, note: "y" } };
-  const d = edit(draftFromConfig(c, HOST), { type: "size", region: "top", value: 50 });
-  const p = JSON.parse(planSave(JSON.stringify(c), HOST, d).text);
-  assert.deepEqual(p.regions, c.regions);
-  assert.deepEqual(p.machines.other, c.machines.other);
-  assert.equal(p.machines[HOST].regions.top.size, 50);
+  c.machines = { "Forkadam-PC": { regions: { left: { size: 320 }, right: { hidden: false } } }, other: { regions: { top: { size: 99 } } } };
+  // Draft opened over base + machines + local, then left set back to... 300.
+  const opened = local({ bottom: { size: 40 } });
+  const d0 = draftFromConfig(c, HOST, JSON.parse(opened));
+  assert.equal(d0.regions.left.size, 320);
+  assert.equal(d0.regions.right.hidden, false);
+  assert.equal(d0.regions.bottom.size, 40);
+  assert.equal(d0.regions.top.size, c.regions.top.size);
+  const d = edit(d0, { type: "size", region: "left", value: 300 });
+  const p = JSON.parse(planSave(JSON.stringify(c), opened, HOST, d).text);
+  assert.deepEqual(p, { v: 1, regions: { left: { size: 300 }, bottom: { size: 40 } } });
 });
 
-test("planSave: creates machines when absent and a section is needed; omits it when not", () => {
-  const c = fixture();
-  delete c.machines;
-  const d = edit(draftFromConfig(c, HOST), { type: "mode", value: "icons" });
-  const p = JSON.parse(planSave(JSON.stringify(c), HOST, d).text);
-  assert.deepEqual(p.machines, { [HOST]: { regions: { left: { mode: "icons" } } } });
-  assert.equal(Object.keys(p).at(-1), "machines");
-  const q = JSON.parse(planSave(JSON.stringify(c), HOST, draftFromConfig(c, HOST)).text);
-  assert.equal("machines" in q, false);
-});
-
-test("planSave: no empty leftovers", () => {
+test("planSave: matching the machines section leaves empty regions in the local file", () => {
   const c = fixture();
   c.machines = { [HOST]: { regions: { left: { size: 320 } } } };
-  const base = fixture();
-  const p = JSON.parse(planSave(JSON.stringify(c), HOST, draftFromConfig(base, HOST)).text);
-  assert.deepEqual(p.machines, {});
-  c.machines[HOST].note = "n";
-  const q = JSON.parse(planSave(JSON.stringify(c), HOST, draftFromConfig(base, HOST)).text);
-  assert.deepEqual(q.machines, { [HOST]: { note: "n" } });
+  const r = planSave(JSON.stringify(c), local({ left: { size: 300 } }), HOST, draftFromConfig(c, HOST));
+  assert.equal(r.ok, true);
+  assert.equal(r.text, formatConfig({ v: 1, regions: {} }));
 });
 
-test("planSave: invalid text gives the parseConfig error", () => {
-  const r = planSave("{nope", HOST, draftFromConfig(fixture(), HOST));
+test("planSave: a save matching the base writes empty regions", () => {
+  const c = fixture();
+  const r = planSave(JSON.stringify(c), local({ left: { size: 300 } }), HOST, draftFromConfig(c, HOST));
+  assert.deepEqual(JSON.parse(r.text), { v: 1, regions: {} });
+});
+
+test("planSave: other top-level keys of the local file are kept", () => {
+  const c = fixture();
+  const d = edit(draftFromConfig(c, HOST), { type: "mode", value: "icons" });
+  const p = JSON.parse(planSave(JSON.stringify(c), local({}, { note: "mine" }), HOST, d).text);
+  assert.deepEqual(p, { v: 1, regions: { left: { mode: "icons" } }, note: "mine" });
+});
+
+test("planSave: left hidden in machines.<host> needs hidden:false to show", () => {
+  const c = fixture();
+  c.machines = { [HOST]: { regions: { left: { hidden: true } } } };
+  const d = edit(draftFromConfig(c, HOST), { type: "mode", value: "expanded" });
+  assert.deepEqual(JSON.parse(planSave(JSON.stringify(c), null, HOST, d).text).regions, { left: { mode: "expanded", hidden: false } });
+});
+
+test("planSave: an invalid base gives the parseConfig error, an invalid local file its parseLocal error", () => {
+  const r = planSave("{nope", null, HOST, draftFromConfig(fixture(), HOST));
   assert.equal(r.ok, false);
   assert.match(r.error, /Invalid JSON/);
+  const r2 = planSave(JSON.stringify(fixture()), "{nope", HOST, draftFromConfig(fixture(), HOST));
+  assert.equal(r2.ok, false);
+  assert.match(r2.error, /local\.json: Invalid JSON/);
 });
 
-test("planReset removes the host section, case-insensitively, and nothing else", () => {
-  const c = fixture();
-  c.machines = { "Forkadam-PC": { regions: { left: { size: 1 } } }, other: { regions: {} } };
-  const r = planReset(JSON.stringify(c), HOST);
-  assert.equal(r.ok, true);
-  const p = JSON.parse(r.text);
-  assert.deepEqual(p.machines, { other: { regions: {} } });
-  assert.deepEqual(p.regions, c.regions);
+test("planReset deletes the local file", () => {
+  assert.deepEqual(planReset(), { ok: true, delete: true });
 });
 
 test("formatConfig: round-trips, inlines features, keeps key order", () => {
