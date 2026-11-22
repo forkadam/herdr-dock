@@ -205,3 +205,42 @@ test("unionStatuses: each status once, in the order the projects list them", () 
   const api = [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }, { name: "Done", category: "done" }];
   assert.deepEqual(unionStatuses([web, api, "loading", null]).map((x) => x.name), ["To Do", "Done", "QA"]);
 });
+
+// ---- Drop feedback where the card was dropped ----
+import { refusedDropText } from "../src/shared/jira/page.js";
+
+test("refusedDropText: why a drop on a dimmed column did nothing, and where the issue can go", () => {
+  assert.equal(refusedDropText("WEB-4", "In Progress", "Done", new Set(["In Review", "To Do"])),
+    "WEB-4 can't go to Done from In Progress. Its workflow allows: In Review, To Do.");
+  assert.equal(refusedDropText("WEB-4", "In Progress", "Done", new Set()), "WEB-4 can't move from In Progress.");
+  assert.equal(refusedDropText("WEB-4", "In Progress", "Done", null), "WEB-4 can't move from In Progress.");
+});
+
+// ---- Steps that ask for fields; moved cards stay visible ----
+import { keepMoved, stepNeeds, stepFields } from "../src/shared/jira/page.js";
+
+const RES = { required: true, name: "Resolution", allowedValues: [{ id: "10000", name: "Done" }, { id: "10001", name: "Won't Do" }] };
+
+test("stepNeeds: nothing, a pick from Jira's allowed values, or the browser for anything else", () => {
+  assert.deepEqual(stepNeeds({ id: "61", name: "Close", fields: {} }), { kind: "none" });
+  assert.deepEqual(stepNeeds({ id: "61", name: "Close" }), { kind: "none" });
+  assert.deepEqual(stepNeeds({ id: "31", name: "Resolve", fields: { resolution: RES } }),
+    { kind: "pick", fields: [{ key: "resolution", name: "Resolution", options: [{ id: "10000", name: "Done" }, { id: "10001", name: "Won't Do" }] }] });
+  // Optional fields don't stop a move; a required one without choices (free text, a date) needs the browser.
+  assert.deepEqual(stepNeeds({ fields: { comment: { required: false, name: "Comment" } } }), { kind: "none" });
+  assert.deepEqual(stepNeeds({ fields: { resolution: RES, customfield_1: { required: true, name: "Root cause" } } }), { kind: "browser", names: ["Root cause"] });
+  // Two pickable fields: the page asks for one at a time is too much here; the browser does it.
+  assert.equal(stepNeeds({ fields: { resolution: RES, fixVersions: { required: true, name: "Fix versions", allowedValues: [{ id: "1", name: "1.0" }] } } }).kind, "browser");
+});
+
+test("stepFields: what the move posts for the chosen value", () => {
+  assert.deepEqual(stepFields("resolution", { id: "10001", name: "Won't Do" }), { resolution: { id: "10001" } });
+  assert.deepEqual(stepFields("resolution", { name: "Done" }), { resolution: { name: "Done" } });
+});
+
+test("keepMoved: a card just moved stays on the board in its new status until the filter changes", () => {
+  const rows = [{ key: "A-1", status: "In Review", category: "indeterminate" }, { key: "A-2", status: "To Do", category: "new" }];
+  const moved = new Map([["A-1", { key: "A-1", status: "Done", category: "done" }], ["A-9", { key: "A-9", status: "Done", category: "done" }]]);
+  assert.deepEqual(keepMoved(rows, moved).map((r) => `${r.key}:${r.status}`), ["A-1:Done", "A-2:To Do", "A-9:Done"]);
+  assert.equal(keepMoved(rows, new Map()), rows);
+});

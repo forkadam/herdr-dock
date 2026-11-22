@@ -181,3 +181,40 @@ export function unionStatuses(lists) {
   for (const list of lists ?? []) if (Array.isArray(list)) for (const st of list) if (st?.name && !seen.has(st.name)) seen.set(st.name, st);
   return [...seen.values()];
 }
+
+// Said in the column a card was dropped on when its workflow has no move there (the drop did nothing, on purpose).
+export function refusedDropText(key, from, to, targets) {
+  const allowed = targets ? [...targets] : [];
+  if (!allowed.length) return `${key} can't move from ${from}.`;
+  return `${key} can't go to ${to} from ${from}. Its workflow allows: ${allowed.join(", ")}.`;
+}
+
+// ---- Steps that ask for fields ----
+
+// What a transition asks before it can run (its `fields`, from expand=transitions.fields):
+//   { kind: "none" }                       nothing required: run it
+//   { kind: "pick", fields: [{ key, name, options }] }   one required field with Jira's allowed values (Resolution)
+//   { kind: "browser", names }             anything else required (free text, several fields): do it in Jira
+export function stepNeeds(transition) {
+  const required = Object.entries(transition?.fields ?? {}).filter(([, f]) => f?.required);
+  if (!required.length) return { kind: "none" };
+  const pickable = required.filter(([, f]) => Array.isArray(f.allowedValues) && f.allowedValues.length);
+  if (required.length === 1 && pickable.length === 1) {
+    const [key, f] = pickable[0];
+    return { kind: "pick", fields: [{ key, name: f.name ?? key, options: f.allowedValues.map((v) => ({ id: v.id, name: v.name ?? v.value ?? String(v.id) })) }] };
+  }
+  // Name what the page can't fill in (else, when several are pickable, all of them).
+  const blocking = required.filter((r) => !pickable.includes(r));
+  return { kind: "browser", names: (blocking.length ? blocking : required).map(([key, f]) => f.name ?? key) };
+}
+
+// The `fields` a move posts for the value picked (by id when Jira gave one).
+export const stepFields = (key, option) => ({ [key]: option.id != null ? { id: option.id } : { name: option.name } });
+
+// The board's rows with the cards just moved kept in their new status (a move to Done takes an issue out of an
+// "unresolved" filter, and a card that just vanishes reads as "nothing happened"). `moved`: key -> moved row.
+export function keepMoved(rows, moved) {
+  if (!moved?.size) return rows;
+  const have = new Set(rows.map((r) => r.key));
+  return [...rows.map((r) => (moved.has(r.key) ? { ...r, ...moved.get(r.key) } : r)), ...[...moved.values()].filter((m) => !have.has(m.key))];
+}

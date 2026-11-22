@@ -3,7 +3,7 @@
 // (src/shared/jira/store.js); requests go through Herdr's fetch or curl (src/shared/jira/client.js). Everything that
 // decides something is pure and tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, InputState, Input, Popover, TextareaState, Textarea } from "gpui-base";
+import { h_flex, v_flex, InputState, Input, Popover } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
@@ -11,7 +11,7 @@ import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail,
-  boardProjects, dragColumns, dragStarted, dropPlan, dropTargets, pageState, unionStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, unionStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
@@ -67,18 +67,22 @@ export default class Jira extends View {
     // Board drag and drop: a press on a card, the drag once it moved, and a choice when several moves lead there.
     this.press = null; // { row, from: Point }
     this.drag = null; // { row, transitions: "loading" | [..] | { problem }, targets: Set, over: status | null, at: Point | null }
-    this.dropChoice = null; // { row, status, transitions }
+    this.dropChoice = null; // { row, status, transitions }: shown in the column dropped on
+    this.dropNote = null; // { status, text }: why a drop on a dimmed column did nothing, in that column
+    this.pendingStep = null; // { key, tr, field, url }: a move waiting for a value (Resolution), in the detail pane
+    this.moved = new Map(); // key -> the row as moved: kept on the board in its new status until the filter changes
 
     this.searchInput = InputState.new({ placeholder: "Search this filter…" });
-    this.searchInput.on("submit", (_e, cx) => { this.query = this.searchInput.value().trim(); this.refresh(cx); });
+    this.searchInput.on("submit", (_e, cx) => { this.query = this.searchInput.value().trim(); this.moved = new Map(); this.refresh(cx); });
     this.urlInput = InputState.new({ placeholder: "https://jira.example.com" });
     this.tokenInput = InputState.new({ placeholder: "Personal access token" });
     this.tokenInput.set_masked(true);
     this.taskInput = InputState.new({ placeholder: "Work on Jira issue {key}: {summary}\\n{url}" });
     this.caInput = InputState.new({ placeholder: "Optional: path to the company CA file (curl)" });
-    this.commentInput = TextareaState.new({ placeholder: "Add a comment… (Ctrl+Enter sends)" });
-    this.commentInput.set_auto_grow(2, 6);
-    this.commentInput.on("submit", (e, cx) => { if (e?.secondary) this.sendComment(cx); });
+    // A one-line box, as Herdr's own prompt uses: TextareaState.value() came back empty in Herdr (typed text never
+    // reached Send). Enter sends.
+    this.commentInput = InputState.new({ placeholder: "Add a comment… (Enter sends)" });
+    this.commentInput.on("submit", (_e, cx) => this.sendComment(cx));
     for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx) => this.saveForm(cx));
     this.taskInput.on("change", (_e, cx) => cx.notify()); // the preview follows the typing
     this.transportChoice = "fetch";
@@ -121,7 +125,8 @@ export default class Jira extends View {
 
   // Issue keys in the order they're drawn (by group in the list, by column on the board).
   visibleOrder() {
-    const parts = shared(VIEW_KEY) === "board" ? boardColumns(this.rows, this.statusOrder, this.boardStatuses()) : groupByCategory(this.rows);
+    const rows = this.shownRows();
+    const parts = shared(VIEW_KEY) === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : groupByCategory(rows);
     return parts.flatMap((p) => p.rows.map((r) => r.key));
   }
 
@@ -267,6 +272,7 @@ export default class Jira extends View {
   select(key, cx) {
     if (key !== this.selected) {
       this.actionMsg = null;
+      this.pendingStep = null;
       this.transitions = null;
       this.transOpen = false;
       this.commentInput.set_value("");
@@ -321,12 +327,35 @@ export default class Jira extends View {
     });
   }
 
-  doTransition(tr, cx, url = this.detail?.url) {
+  // A move: run at once, or first ask for the one value its step requires (a Resolution, from Jira's allowed values),
+  // or send the user to Jira for anything more. `fields`: the value picked, when asked.
+  doTransition(tr, cx, url = this.detail?.url, fields) {
     this.transOpen = false;
     this.transitions = null;
-    this.run("transition", cx, (c, key) => c.transition(key, tr.id), { to: tr.to?.name ?? tr.name, url },
-      async (cx, key) => { await this.loadDetail(cx, key); await this.refresh(cx); });
+    this.pendingStep = null;
+    const needs = fields ? { kind: "none" } : stepNeeds(tr);
+    if (needs.kind === "pick") {
+      this.actionMsg = null;
+      this.pendingStep = { key: this.selected, tr, field: needs.fields[0], url };
+      cx.notify();
+      return;
+    }
+    if (needs.kind === "browser") {
+      this.actionMsg = { ok: false, message: `${tr.name} needs ${needs.names.join(", ")}: do this step in Jira.`, link: url };
+      cx.notify();
+      return;
+    }
+    this.run("transition", cx, (c, key) => c.transition(key, tr.id, fields), { to: tr.to?.name ?? tr.name, url },
+      async (cx, key) => {
+        // Keep the card where it went, even if the filter no longer lists it (a move to Done out of "unresolved").
+        const row = this.shownRows().find((r) => r.key === key);
+        if (row) this.moved.set(key, { ...row, status: tr.to?.name ?? row.status, category: tr.to?.statusCategory?.key ?? row.category });
+        await this.loadDetail(cx, key);
+        await this.refresh(cx);
+      });
   }
+
+  shownRows() { return keepMoved(this.rows, this.moved); }
 
   assignMe(cx) {
     if (!this.me?.name) return;
@@ -361,7 +390,8 @@ export default class Jira extends View {
     const row = this.press.row;
     this.press = null;
     this.dropChoice = null;
-    this.drag = { row, transitions: "loading", targets: new Set(), over: null, at: e.local_position };
+    this.dropNote = null;
+    this.drag = { row, transitions: "loading", targets: new Set(), over: null, hover: null, at: e.local_position };
     cx.notify();
     cx.spawn(async (cx) => {
       const r = await this.client(cx).transitions(row.key);
@@ -378,17 +408,30 @@ export default class Jira extends View {
     if (!drag) return;
     this.drag = null;
     cx.notify();
-    if (!drag.over) return;
+    if (!drag.over) {
+      // Released over a dimmed column: say why there, rather than nothing at all.
+      if (drag.hover && drag.hover !== drag.row.status && Array.isArray(drag.transitions)) {
+        this.dropNote = { status: drag.hover, text: refusedDropText(drag.row.key, drag.row.status, drag.hover, drag.targets) };
+      }
+      return;
+    }
     const plan = dropPlan(drag.transitions, drag.over, drag.row.status);
     if (plan.kind === "run") this.moveCard(drag.row, plan.transition, cx);
     else if (plan.kind === "choose") this.dropChoice = { row: drag.row, status: drag.over, transitions: plan.transitions };
   }
 
   // The move runs like one picked in the status menu, with the issue opened beside the board to show the result.
-  moveCard(row, tr, cx) {
+  // A drop's move that needs a value (Resolution) asks for it right there in the column, before opening anything.
+  moveCard(row, tr, cx, fields) {
+    const needs = fields ? { kind: "none" } : stepNeeds(tr);
+    if (needs.kind === "pick") {
+      this.dropChoice = { row, status: tr.to?.name, transitions: [tr], step: { tr, field: needs.fields[0] } };
+      cx.notify();
+      return;
+    }
     this.dropChoice = null;
     if (this.selected !== row.key) this.select(row.key, cx);
-    this.doTransition(tr, cx, row.url);
+    this.doTransition(tr, cx, row.url, fields);
   }
 
   // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
@@ -447,7 +490,7 @@ export default class Jira extends View {
           if (!t.ok) { this.formError = t.error; return; }
         }
         // Another Jira: forget the old one's issues, open issue and filters, so nothing asks the new site for them.
-        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.projectStatuses = new Map(); this.connected = false; setShared(BADGE_KEY, null); }
+        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.projectStatuses = new Map(); this.moved = new Map(); this.connected = false; setShared(BADGE_KEY, null); }
         const settings = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
           startTask: this.taskInput.value(), caFile: this.caInput.value().trim() };
         const s = await saveSettings(io, this.site, settings, this.jira.settingsText ?? undefined);
@@ -469,7 +512,7 @@ export default class Jira extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false, projectStatuses: new Map() });
+      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false, projectStatuses: new Map(), moved: new Map() });
       setShared(BADGE_KEY, null);
       cx.notify();
     });
@@ -565,7 +608,7 @@ export default class Jira extends View {
     const host = (() => { try { return new URL(this.jira.settings.baseUrl).host; } catch { return ""; } })();
     const item = (x) => h_flex().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
       .bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { this.filterOpen = false; setShared(FILTER_KEY, x.id); this.selected = null; this.detail = null; cx.spawn(async (cx) => this.refresh(cx)); })
+      .on_click((_e, cx) => { this.filterOpen = false; setShared(FILTER_KEY, x.id); this.moved = new Map(); this.selected = null; this.detail = null; cx.spawn(async (cx) => this.refresh(cx)); })
       .child(div().flex_1().min_w(0).truncate().child(x.name))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
     const picker = Popover.new("jira-filter").open(this.filterOpen)
@@ -626,7 +669,7 @@ export default class Jira extends View {
   }
 
   listView(t) {
-    const groups = groupByCategory(this.rows);
+    const groups = groupByCategory(this.shownRows());
     const more = this.more(t);
     return v_flex().id("jira-list").flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16)
       .children(groups.flatMap((g) => [
@@ -657,7 +700,7 @@ export default class Jira extends View {
 
   boardView(t) {
     const d = this.drag;
-    const base = boardColumns(this.rows, this.statusOrder, this.boardStatuses());
+    const base = boardColumns(this.shownRows(), this.statusOrder, this.boardStatuses());
     const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
     const column = (c, i) => {
@@ -668,11 +711,17 @@ export default class Jira extends View {
       return v_flex().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1()
         .bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border)
         .when(Boolean(d) && !own && !target, (el) => el.opacity(0.4))
-        .on_mouse_move((_e, cx) => { if (this.drag && this.drag.over !== (target ? c.status : null)) { this.drag.over = target ? c.status : null; cx.notify(); } })
+        .on_mouse_move((_e, cx) => {
+          if (!this.drag) return;
+          this.drag.hover = c.status;
+          if (this.drag.over !== (target ? c.status : null)) { this.drag.over = target ? c.status : null; cx.notify(); }
+        })
         .child(h_flex().h(36).px(12).gap(6).flex_none().items_center()
           .child(div().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status))
           .child(div().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length))))
         .child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6)
+          .when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t)))
+          .when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t)))
           .children(c.rows.map((r) => this.card(t, r))));
     };
     return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0)
@@ -680,23 +729,44 @@ export default class Jira extends View {
       .on_mouse_up("left", (_e, cx) => this.released(cx))
       .child(div().id("jira-board").flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column)))
       .when(Boolean(more), (el) => el.child(more))
-      .when(Boolean(d) || Boolean(this.dropChoice), (el) => el.child(this.dragBar(t)))
+      .when(Boolean(d), (el) => el.child(this.dragBar(t)))
       .when(Boolean(d?.at), (el) => el.child(div().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8)
         .bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground)
         .child(div().text_size(11).text_color(t.dim).child(d.row.key)).child(div().truncate().child(d.row.summary))));
   }
 
-  // Above the board during a drag: what's happening; after a drop where several moves lead, the choice.
+  // In the column dropped on, when several moves lead there: which one (Resolve or Close into Done, say).
+  choiceBox(t) {
+    const c = this.dropChoice;
+    if (c.step) {
+      const { tr, field } = c.step;
+      return v_flex().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent)
+        .child(div().text_size(12.5).text_color(t.foreground).child(`${tr.name} ${c.row.key}: pick a ${field.name}`))
+        .child(h_flex().gap(6).flex_wrap()
+          .children(field.options.map((o) => this.button(t, `jira-drop-opt-${o.id ?? o.name}`, o.name, (cx) => this.moveCard(c.row, tr, cx, stepFields(field.key, o)), { primary: true })))
+          .child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => { this.dropChoice = null; cx.notify(); })));
+    }
+    return v_flex().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent)
+      .child(div().text_size(12.5).text_color(t.foreground).child(`Move ${c.row.key} here by:`))
+      .child(h_flex().gap(6).flex_wrap()
+        .children(c.transitions.map((tr) => this.button(t, `jira-drop-${tr.id}`, tr.name, (cx) => this.moveCard(c.row, tr, cx), { primary: true })))
+        .child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => { this.dropChoice = null; cx.notify(); })));
+  }
+
+  // In a dimmed column a card was dropped on: why nothing happened.
+  noteBox(t) {
+    return h_flex().id("jira-drop-note").flex_none().p(10).gap(8).items_start().rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(WARN)
+      .child(div().flex_1().text_size(12).text_color(t.muted).child(this.dropNote.text))
+      .child(div().id("jira-drop-note-x").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+        .text_color(t.dim).hover((st) => st.bg(t.hover)).on_click((_e, cx) => { this.dropNote = null; cx.notify(); })
+        .child(svg("mods/workspace-chrome/x.svg").size(11)));
+  }
+
+  // At the bottom of the board while dragging: what's happening.
   dragBar(t) {
     // Floats at the bottom of the board, so the columns don't move under the pointer when a drag starts.
     const bar = h_flex().absolute().bottom(12).left(12).h(38).px(14).gap(8).items_center().rounded(8)
       .bg(t.popover).border_1().border_color(t.border).text_size(12.5);
-    const c = this.dropChoice;
-    if (c && !this.drag) {
-      return bar.child(div().text_color(t.muted).child(`Move ${c.row.key} to ${c.status} by:`))
-        .children(c.transitions.map((tr) => this.button(t, `jira-drop-${tr.id}`, tr.name, (cx) => this.moveCard(c.row, tr, cx))))
-        .child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => { this.dropChoice = null; cx.notify(); }));
-    }
     const d = this.drag;
     const text = d.transitions === "loading" ? `Moving ${d.row.key}: asking Jira where it can go…`
       : d.transitions.problem ? `Can't move ${d.row.key}: ${d.transitions.problem.message}`
@@ -729,6 +799,7 @@ export default class Jira extends View {
           .child(div().flex_1())
           .child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` }))
           .child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url))))
+        .when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t)))
         .when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t)))
         .child(v_flex().gap(4).text_size(12.5)
           .child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned"))
@@ -749,9 +820,9 @@ export default class Jira extends View {
             .children(lines(c.bodyText))))
           .child(v_flex().gap(6)
             .child(div().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8)
-              .child(Textarea.new(this.commentInput).w_full().text_size(12.5).text_color(t.foreground)))
+              .child(Input.new(this.commentInput).w_full().h(22).text_size(12.5).text_color(t.foreground)))
             .child(h_flex().gap(8).items_center()
-              .child(div().flex_1().text_size(11).text_color(t.dim).child("Ctrl+Enter sends"))
+              .child(div().flex_1().text_size(11).text_color(t.dim).child("Enter sends"))
               .child(this.button(t, "jira-comment-send", this.actionBusy === "comment" ? "Sending…" : "Send", (cx) => this.sendComment(cx),
                 { primary: true, enabled: !this.actionBusy }))))));
   }
@@ -779,6 +850,16 @@ export default class Jira extends View {
       .trigger(pill)
       .content(v_flex().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
         .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+  }
+
+  // A move from the status menu waiting for its one required value (a Resolution): Jira's choices as buttons.
+  stepBox(t) {
+    const { tr, field, url } = this.pendingStep;
+    return v_flex().id("jira-step").p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent)
+      .child(div().text_size(12.5).child(`${tr.name}: pick a ${field.name}`))
+      .child(h_flex().gap(6).flex_wrap()
+        .children(field.options.map((o) => this.button(t, `jira-step-opt-${o.id ?? o.name}`, o.name, (cx) => this.doTransition(tr, cx, url, stepFields(field.key, o)), { primary: true })))
+        .child(this.button(t, "jira-step-cancel", "Cancel", (cx) => { this.pendingStep = null; cx.notify(); })));
   }
 
   // What the last action did, in place: green when it worked, red when not (with the browser link for a step

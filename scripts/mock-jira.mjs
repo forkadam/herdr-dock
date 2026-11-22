@@ -24,6 +24,12 @@ const err = (messages, errors = {}) => ({ errorMessages: messages, errors });
 
 class JqlError extends Error {}
 
+// What a transition screen says about a field it requires (GET transitions?expand=transitions.fields).
+const RESOLUTIONS = ["Done", "Won't Do", "Duplicate"].map((name, i) => ({ self: `/rest/api/2/resolution/${10000 + i}`, id: String(10000 + i), name }));
+const FIELD_INFO = {
+  resolution: { required: true, schema: { type: "resolution", system: "resolution" }, name: "Resolution", key: "resolution", operations: ["set"], allowedValues: RESOLUTIONS },
+};
+
 // Shift every date so the newest `updated` is 20 minutes before `now`.
 function shiftDates(issues, now) {
   const newest = Math.max(...issues.map((i) => Date.parse(i.fields.updated)));
@@ -240,8 +246,11 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
       return [200, pick(issue, url.searchParams.get("fields"))];
     }
     if (req.method === "GET" && sub === "/transitions") {
+      // expand=transitions.fields: each step's screen fields, as Jira lists them (required, allowed values).
+      const withFields = (url.searchParams.get("expand") ?? "").split(",").includes("transitions.fields");
       return [200, { expand: "transitions", transitions: available(issue).map((t) => ({
         id: t.id, name: t.name, to: statusObj(statusById[t.to]), hasScreen: t.hasScreen, isGlobal: false, isInitial: false, isConditional: false,
+        ...(withFields ? { fields: Object.fromEntries((t.requires ?? []).map((f) => [f, FIELD_INFO[f]])) } : {}),
       })) }];
     }
     if (req.method === "POST" && sub === "/transitions") {

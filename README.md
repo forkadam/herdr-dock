@@ -199,11 +199,14 @@ board, an issue's detail beside them, quick actions, and **Start work**.
 - **Drag a card** on the board to move it. When the drag starts the page asks Jira which moves that issue has (its
   workflow, for you, right now): those columns light up, the rest dim, and a status you can reach that has no column
   yet appears as an empty one. Drop on a lit column to move it; when several moves lead there (say Resolve and
-  Close into Done) a bar asks which. Release anywhere else to cancel. A move that needs more fields says so and
-  links to the browser, as in the status menu. This is a board of the filter's statuses, not your Jira sprint board.
+  Close into Done) a box in that column asks which, and a move whose step needs a value (a Resolution) asks for it
+  there too, from Jira's allowed values. Dropping on a dimmed column says, in that column, where the issue can go.
+  A moved card stays in its new column until you change the filter or search (a move to Done takes it out of an
+  "unresolved" filter). A step that needs more than one picked value names what's missing and links to Jira.
+  This is a board of the filter's statuses, not your Jira sprint board.
 - **Detail**: description (Jira markup shown as text), last 5 comments, links, Open in browser. **Actions**: the
-  status pill lists the moves the workflow allows (a step that needs more fields says so and links to the browser),
-  Assign to me, and a comment box (Send, or Ctrl+Enter).
+  status pill lists the moves the workflow allows (a step that needs a Resolution asks for it; one that needs more
+  names what's missing and links to Jira), Assign to me, and a one-line comment box (Enter or Send).
 - **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
   from your template, then shows the terminal. Placeholders: `{key} {summary} {url} {type} {status} {priority}
   {assignee} {description}`; type `\n` for a line break. For example `/init-ticket {key}` hands it to your own skill.

@@ -213,3 +213,19 @@ test("project statuses: per issue type, every status of the workflow", async () 
   }
   assert.equal((await call("/rest/api/2/project/NOPE/statuses")).status, 404);
 });
+
+test("transitions with expand=transitions.fields: a screen step lists its required fields and their allowed values", async () => {
+  const own = await startMock({ port: 0 });
+  try {
+    const inReview = (await call(`/rest/api/2/search?jql=${encodeURIComponent('status = "In Review" ORDER BY key ASC')}&maxResults=1`, { base: own.url })).data.issues[0].key;
+    const r = await call(`/rest/api/2/issue/${inReview}/transitions?expand=transitions.fields`, { base: own.url });
+    const resolve = r.data.transitions.find((x) => x.name === "Resolve");
+    assert.equal(resolve.fields.resolution.required, true);
+    assert.equal(resolve.fields.resolution.name, "Resolution");
+    assert.deepEqual(resolve.fields.resolution.allowedValues.map((v) => v.name), ["Done", "Won't Do", "Duplicate"]);
+    assert.deepEqual(r.data.transitions.find((x) => x.name === "Close").fields, {});
+    // Without expand, no fields (as Jira does).
+    const plain = await call(`/rest/api/2/issue/${inReview}/transitions`, { base: own.url });
+    assert.equal("fields" in plain.data.transitions[0], false);
+  } finally { await own.close(); }
+});

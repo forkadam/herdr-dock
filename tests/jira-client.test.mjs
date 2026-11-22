@@ -71,6 +71,8 @@ for (const transport of ["fetch", "curl"]) {
     const c = client(transport, { base: own.url });
     const key = (await c.search('status = "In Review" ORDER BY key ASC', { maxResults: 1 })).data.issues[0].key;
     const resolve = (await c.transitions(key)).data.find((x) => x.name === "Resolve");
+    // The client asks for the fields, so a step's required ones (and their choices) come along.
+    assert.deepEqual(resolve.fields.resolution.allowedValues.map((v) => v.name), ["Done", "Won't Do", "Duplicate"]);
     const bare = await c.transition(key, resolve.id);
     assert.equal(bare.ok, false);
     assert.equal(bare.problem.kind, "invalid");
