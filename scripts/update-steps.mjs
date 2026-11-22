@@ -13,3 +13,12 @@ export const needsInstall = (changedFiles) => changedFiles.some((f) => f === "pa
 export function resultOf({ from, to, commits, ok, reason }, now) {
   return { ok: !!ok, from: from ?? null, to: to ?? null, commits: commits ?? 0, reason: reason ?? null, at: now };
 }
+
+// File names from `git status --porcelain` output (lines are "XY path", a rename "XY old -> new").
+export function parseDirty(porcelain) {
+  return String(porcelain).split(/\r?\n/).filter((l) => l.length > 3).map((l) => {
+    const p = l.slice(3);
+    const i = p.indexOf(" -> ");
+    return (i >= 0 ? p.slice(i + 4) : p).trim();
+  });
+}

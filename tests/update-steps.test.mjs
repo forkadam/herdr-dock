@@ -23,3 +23,9 @@ test("resultOf", () => {
   assert.deepEqual(resultOf({ from: "a1", to: "b2", commits: 3, ok: true }, 99), { ok: true, from: "a1", to: "b2", commits: 3, reason: null, at: 99 });
   assert.deepEqual(resultOf({ from: "a1", ok: false, reason: "boom" }, 5), { ok: false, from: "a1", to: null, commits: 0, reason: "boom", at: 5 });
 });
+
+import { parseDirty } from "../scripts/update-steps.mjs";
+test("parseDirty keeps whole names", () => {
+  assert.deepEqual(parseDirty(" M a\nM  b\n?? c\nR  old -> new\n"), ["a", "b", "c", "new"]);
+  assert.deepEqual(parseDirty(""), []);
+});
