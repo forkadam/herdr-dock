@@ -18,6 +18,8 @@ dialog, dock-config):
 - **dock-git**: Git projects, your repos and worktrees with git status and a CI pipeline badge (see
   [Git projects and Pipelines](#git-projects-and-pipelines)).
 - **dock-pipelines**: Pipelines, the selected worktree's pipeline: stages, failed jobs, Retry.
+- **dock-notifications**: Notifications, the history of every toast (see [Notifications](#notifications)).
+- **dock-where, dock-attention, dock-warnings, dock-system**: the bottom bar (see [Bottom bar](#bottom-bar)).
 
 Only `config/dock.json` is meant to be synced between machines.
 The generated `layouts/herdr-dock.json` is never committed.
@@ -259,6 +261,41 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
   current either way.
 - Only the latest pipeline of the branch (or of the commit, when detached) is shown. GitHub runs of several
   workflows for the same commit are combined, with the worst status.
+
+## Bottom bar
+
+The bottom bar is a quiet glance. In order, left to right:
+
+- **Where** (`dock-where`): this machine and the branch of the focused space, like `□ This computer  ⑂ main`.
+- **Attention** (`dock-attention`): `⚠ 2 need you` (red) and `3 unread` (dim). Each is hidden at zero; with both at
+  zero it shows a dim `No notifications`. Click it to open the notification history.
+- **Warnings** (`dock-warnings`): `⟳ 1` pipelines running now, `⚠ quota 92%` when any Claude or Codex window is at
+  90% or more, `⚠ disk 7%` when this PC's system drive has under 10% free. With none applying it shows nothing.
+- **System** (`dock-system`): `CPU 34%  RAM 61%` at the right edge, in the warning colour from 90%.
+
+Anything that is fine shows nothing. To reorder the items, or move one to another region, use the Dock layout
+dialog's **Move up** / **Move down**. Herdr's own `workspace-status` is no longer in the default bottom region, but
+you can place it back there in the same dialog.
+
+- CPU and RAM are for this PC only, sampled every 5 s.
+- The quota warning needs **dock-quotas** placed somewhere (it publishes `dock.quotas.top`).
+- The shared keys `dock.notify.history`, `dock.system.sample` and `dock.quotas.top` are per PC, in Herdr's own
+  state, never in `config/dock.json` or git.
+
+## Notifications
+
+**Notifications** (`dock-notifications`, a bell tab in the right panel) is the history of every toast:
+
+- Every notification is recorded, Herdr's own (agent needs you, agent finished, machine login, errors) and those
+  from `dock-*` mods (pipeline failures, Delete worktree refusals). `dock-toast` records them and shows the toast
+  as Herdr's own does; `dock-core` is the only writer of the history.
+- Newest first, each with its level, title, body and time. Items stay until you clear them: **✕** on one, or
+  **Clear all**. The history is capped at 200 (the oldest cleared go first).
+- Click an item to run its action (go to the agent, show the pipeline). Opening the history marks everything read.
+- "Needs you" items (an agent is blocked, a pipeline failed) get a **✓ resolved** mark once the cause is fixed.
+  They stay until you clear them, but the red count in the bar counts unresolved ones only.
+- If this PC's right region doesn't place it, it opens as a dialog; add it in the Dock layout dialog to keep it
+  in the panel.
 
 ## Where the quota and context numbers come from
 
