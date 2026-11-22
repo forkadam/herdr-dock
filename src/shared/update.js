@@ -2,12 +2,13 @@
 // dock.update.state for the Dock layout dialog, notifies once per new upstream commit, and reads the result
 // file the update script (scripts/update.mjs) writes.
 //
-// dock.update.state = { status, current, deployed, latest, behind, subject, checkedAt, reason, startedAt } (+ commits
+// dock.update.state = { mode: "clone" | "app", status, current, deployed, latest, behind, subject, checkedAt, reason, startedAt } (+ commits
 // after an update; + redeploy: true when HEAD isn't the commit the last deploy recorded in source.json and nothing
 // is behind, e.g. an update whose install or deploy failed after the pull: Update finishes it). status: "idle" (up to date) | "checking" | "available" | "updating" | "updated" |
 // "failed" | "blocked". reason: for "blocked", why Update can't run ("on branch X", "N local commits",
 // "local changes in the repo": the dialog shows "Can't update: <reason>"); for "failed", the sentence to show
-// after a failed check ("Can't check: <git's first line>") or what went wrong in an update.
+// after a failed check ("Can't check: <git's first line>") or what went wrong in an update. App mode (appUpdateState)
+// has no deployed, behind, subject, blocked or redeploy; it adds version (the published content version).
 
 export const UPDATE_KEY = "dock.update.state";
 export const NOTIFIED_KEY = "dock.update.notified";
@@ -56,22 +57,49 @@ export function updateState({ fetchOk, fetchError, branch, ahead, behind, latest
   return s;
 }
 
+// The state after a check of a Herdr-style (app/) install; installed and published are { version, source }.
+// state.version is the published content version (what shouldNotify keys on); current/latest are source shas.
+export function appUpdateState({ fetchOk, fetchError, installed, published }, now, prev = null) {
+  const common = { mode: "app", checkedAt: now, startedAt: null, behind: null, subject: null };
+  if (!fetchOk) {
+    return {
+      ...common, status: "failed", current: installed?.source ?? prev?.current ?? null, latest: prev?.latest ?? null,
+      version: prev?.version ?? null, reason: `Can't check: ${firstLine(fetchError) || "fetch failed"}`,
+    };
+  }
+  const s = { ...common, status: "idle", current: installed?.source ?? null, latest: published?.source ?? null, version: published?.version ?? null, reason: null };
+  if (published?.version !== installed?.version) return { ...s, status: "available" };
+  if (prev?.mode === "app" && prev.status === "updated" && prev.version === s.version) {
+    return { ...s, status: "updated", commits: prev.commits ?? null };
+  }
+  return s;
+}
+
 // Notify only for an available update whose upstream sha hasn't been notified yet (a redeploy has no toast).
+// App mode keys on the published content version (state.version) instead of a sha.
 export function shouldNotify(state, notifiedSha) {
+  if (state?.mode === "app") return state.status === "available" && !!state.version && state.version !== notifiedSha;
   return state?.status === "available" && !state.redeploy && !!state.latest && state.latest !== notifiedSha;
 }
 
 // The toast for an available update.
+// App mode names the installed and published sources (it has no commit count).
 export function availableNote(state) {
-  return { title: "herdr-dock update available", body: plural(state.behind, "new commit"), level: "info", action: OPEN_DIALOG };
+  const body = state?.mode === "app" ? `${state.current ?? "?"} → ${state.latest ?? "?"}` : plural(state.behind, "new commit");
+  return { title: "herdr-dock update available", body, level: "info", action: OPEN_DIALOG };
 }
 
-// The state after the update script's result, or null when it isn't a result object.
+// The state after the update script's result, or null when it isn't a result object. An app-mode prev keeps its
+// mode and published version (so the next check still reads "updated").
 export function resultToState(result, prev, _now) {
   if (result == null || typeof result !== "object" || Array.isArray(result)) return null;
   const p = prev && typeof prev === "object" ? prev : {};
+  // No prev state: the mode from the result (update-app's carry commits: null, the clone script's a number).
+  const fromResult = result.commits === null ? "app" : typeof result.commits === "number" ? "clone" : null;
+  const mode = prev && typeof prev === "object" ? p.mode : fromResult;
+  const app = mode === "app" ? { mode: "app", version: p.version ?? null } : mode ? { mode } : {};
   const s = {
-    status: "idle", current: p.current ?? null, deployed: p.deployed ?? null, latest: p.latest ?? null, behind: p.behind ?? null, subject: p.subject ?? null,
+    ...app, status: "idle", current: p.current ?? null, deployed: p.deployed ?? null, latest: p.latest ?? null, behind: p.behind ?? null, subject: p.subject ?? null,
     checkedAt: p.checkedAt ?? null, reason: null, startedAt: null,
   };
   if (result.ok) {
@@ -81,10 +109,12 @@ export function resultToState(result, prev, _now) {
   return { ...s, status: "failed", reason: firstLine(result.reason) || "unknown error" };
 }
 
-// The toast for the update script's result.
+// The toast for the update script's result (update-app.mjs reports commits: null: its body is from → to).
 export function resultNote(result) {
   if (result?.ok) {
-    return { title: `herdr-dock updated to ${result.to}`, body: plural(result.commits ?? 0, "commit"), level: "success", action: OPEN_DIALOG };
+    const body = typeof result.commits === "number" || result.commits === undefined
+      ? plural(result.commits ?? 0, "commit") : `${result.from ?? "?"} → ${result.to ?? "?"}`;
+    return { title: `herdr-dock updated to ${result.to}`, body, level: "success", action: OPEN_DIALOG };
   }
   return { title: "herdr-dock update failed", body: firstLine(result?.reason) || "unknown error", level: "error", action: OPEN_DIALOG };
 }

@@ -7,7 +7,7 @@ import { LOCAL_REL, mergeWithLocal, migrationPlan, parseConfig, parseLocal } fro
 import { buildLayout } from "../src/shared/layout.js";
 import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
-import { mergeKeys } from "./keys.mjs";
+import { BINDINGS, mergeKeys, SECTION } from "./keys.mjs";
 import { resolveAppHome } from "./app-home.mjs";
 
 const args = process.argv.slice(2);
@@ -17,8 +17,6 @@ if (!appHome) {
   console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run]");
   process.exit(1);
 }
-const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"], ["ctrl-alt-n", "dock-core.right"]];
-const SECTION = "layout:herdr-dock";
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
 const fail = (msg) => { console.error(msg); process.exit(1); };
 say(`app home: ${appHome}`);

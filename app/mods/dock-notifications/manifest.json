@@ -1,0 +1,1 @@
+{ "id": "dock-notifications", "name": "Notifications", "icon": "icon.svg", "regions": ["right"], "settings": {} }

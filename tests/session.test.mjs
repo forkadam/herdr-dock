@@ -323,3 +323,27 @@ test("a write error with the local file unchanged is reported as itself, not as 
   assert.equal(files.get(LOCAL), localText({}));
   assert.equal(isDirty(r), true);
 });
+
+test("app install: a missing config path falls back to the shipped mods/dock-core/config.json", async () => {
+  const shipped = `${HOME}/mods/dock-core/config.json`;
+  const { io } = fakeIo({
+    shared: { "dock.host": HOST }, local: localText({ left: { size: 333 } }),
+    extra: { [`${HOME}/mods/dock-core/source.json`]: JSON.stringify({ mode: "app" }), [shipped]: text },
+  });
+  const s = await loadSession(io);
+  assert.equal(s.path, shipped);
+  assert.equal(s.readOnly, false);
+  assert.equal(s.draft.regions.left.size, 333);
+});
+
+test("no host in app mode doesn't say npm run deploy", async () => {
+  const app = `${HOME}/mods/dock-core/config.json`;
+  const { io } = fakeIo({
+    shared: { "dock.config.path": app, "dock.config.localPath": LOCAL },
+    extra: { [app]: text, [`${HOME}/mods/dock-core/source.json`]: JSON.stringify({ mode: "app" }) },
+  });
+  const s = await loadSession(io);
+  assert.equal(s.readOnly, true);
+  assert.match(s.error, /hostname/);
+  assert.doesNotMatch(s.error, /npm run deploy/);
+});

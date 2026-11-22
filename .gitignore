@@ -1,2 +1,5 @@
 node_modules/
 dist/
+# herdr-app check writes these editor files into each mod folder it checks
+app/mods/*/gpui-kit.d.ts
+app/mods/*/jsconfig.json

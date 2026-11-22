@@ -56,6 +56,27 @@ npm run deploy
   `config/dock.json` (and records this computer's hostname as a fallback, and the commit it deployed). If you move or
   re-clone the repo, re-run `npm run deploy`.
 
+### Install the Herdr way
+
+Instead of cloning, Herdr's own sharing convention installs the built `app/` folder: the layout, the `dock-*`
+mods and the keys, with no repo, `npm` or deploy step. Tell your agent:
+
+```
+Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/forkadam/herdr-dock/tree/main/app
+```
+
+- **Needs `gh` logged in and set up for git** while the repo is private (`gh auth status`, then `gh auth setup-git`).
+- **One install per machine.** If a `dock-*` mod or `layouts/herdr-dock.json` already exists, the agent stops and
+  asks; a clone install updates with `npm run update`.
+- **Status line.** Add one line to your Claude status-line script, before it prints (here the mods live in the app
+  home, not in `~/.claude`):
+  - Windows (`statusline.ps1`): `try { $raw | & node "$env:USERPROFILE\.config\herdr-app\mods\dock-quotas\herdr-statusline-cache.mjs" 2>$null | Out-Null } catch {}`
+  - macOS / Linux: `printf '%s' "$input" | node ~/.config/herdr-app/mods/dock-quotas/herdr-statusline-cache.mjs >/dev/null 2>&1`
+- **Updates.** The Updates strip in the Dock layout dialog compares the installed `VERSION.json` with the published
+  one. **Update** opens a tab running `mods/dock-core/update-app.mjs`: it clones the repo into a temp folder,
+  checks every mod, swaps the mods in, rolls back if anything fails, and reports. Your layout, your `keys.json`
+  bindings and `local.json` are untouched; missing keys are added.
+
 ## Updating
 
 The top of the Dock layout dialog has an **Updates strip**:

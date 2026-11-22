@@ -181,3 +181,77 @@ test("resultToState: a successful update records the deployed commit; a failed o
   assert.equal(resultToState({ ok: true, from: "a1", to: "b2", commits: 0 }, prev, NOW).deployed, "b2");
   assert.equal(resultToState({ ok: false, reason: "deploy failed" }, prev, NOW).deployed, "a1");
 });
+
+import { appUpdateState } from "../src/shared/update.js";
+
+const appBase = {
+  fetchOk: true, fetchError: null,
+  installed: { version: "aaaaaaaaaaaa", source: "abc1234" }, published: { version: "aaaaaaaaaaaa", source: "abc1234" },
+};
+
+test("appUpdateState: available when the versions differ", () => {
+  const s = appUpdateState({ ...appBase, published: { version: "bbbbbbbbbbbb", source: "def5678" } }, NOW);
+  assert.equal(s.mode, "app");
+  assert.equal(s.status, "available");
+  assert.equal(s.current, "abc1234");
+  assert.equal(s.latest, "def5678");
+  assert.equal(s.version, "bbbbbbbbbbbb");
+  assert.equal(s.checkedAt, NOW);
+});
+
+test("appUpdateState: idle when equal", () => {
+  const s = appUpdateState(appBase, NOW);
+  assert.equal(s.mode, "app");
+  assert.equal(s.status, "idle");
+  assert.equal(s.reason, null);
+});
+
+test("appUpdateState: fetch failure", () => {
+  const s = appUpdateState({ ...appBase, fetchOk: false, fetchError: "\nnetwork down\nmore" }, NOW);
+  assert.equal(s.status, "failed");
+  assert.equal(s.mode, "app");
+  assert.equal(s.reason, "Can't check: network down");
+});
+
+test("appUpdateState: keeps updated while nothing is newer", () => {
+  const prev = { mode: "app", status: "updated", version: "aaaaaaaaaaaa", current: "abc1234" };
+  assert.equal(appUpdateState(appBase, NOW, prev).status, "updated");
+  const newer = { ...appBase, published: { version: "bbbbbbbbbbbb", source: "def5678" } };
+  assert.equal(appUpdateState(newer, NOW, prev).status, "available");
+});
+
+test("shouldNotify: app mode keys on the published version", () => {
+  const s = appUpdateState({ ...appBase, published: { version: "bbbbbbbbbbbb", source: "def5678" } }, NOW);
+  assert.equal(shouldNotify(s, "bbbbbbbbbbbb"), false);
+  assert.equal(shouldNotify(s, "def5678"), true);
+  assert.equal(shouldNotify(s, null), true);
+  assert.equal(shouldNotify(appUpdateState(appBase, NOW), null), false);
+});
+
+test("app mode: resultToState keeps mode and version; the toasts name sources, not commit counts", () => {
+  const prev = { mode: "app", status: "updating", current: "abc1234", latest: "def5678", version: "bbbbbbbbbbbb", startedAt: NOW };
+  const ok = resultToState({ ok: true, from: "abc1234", to: "def5678", commits: null, reason: null, at: NOW }, prev, NOW);
+  assert.equal(ok.mode, "app");
+  assert.equal(ok.version, "bbbbbbbbbbbb");
+  assert.equal(ok.status, "updated");
+  assert.equal(ok.current, "def5678");
+  // The next check keeps "updated" while the published version is the same.
+  const next = appUpdateState({ ...appBase, installed: { version: "bbbbbbbbbbbb", source: "def5678" }, published: { version: "bbbbbbbbbbbb", source: "def5678" } }, NOW, ok);
+  assert.equal(next.status, "updated");
+  const bad = resultToState({ ok: false, reason: "herdr-app check failed" }, prev, NOW);
+  assert.equal(bad.mode, "app");
+  assert.equal(bad.status, "failed");
+  // A clone-mode prev without mode gets no mode key (shapes above stay exact).
+  assert.equal("mode" in resultToState({ ok: true, to: "x", commits: 1 }, { status: "updating" }, NOW), false);
+  const avail = appUpdateState({ ...appBase, published: { version: "bbbbbbbbbbbb", source: "def5678" } }, NOW);
+  assert.equal(availableNote(avail).body, "abc1234 → def5678");
+  assert.equal(resultNote({ ok: true, from: "abc1234", to: "def5678", commits: null }).body, "abc1234 → def5678");
+});
+
+test("resultToState: no prev state takes the mode from the result (app results have commits: null)", () => {
+  assert.equal(resultToState({ ok: true, from: "a", to: "b", commits: null }, null, NOW).mode, "app");
+  assert.equal(resultToState({ ok: false, reason: "x", commits: null }, null, NOW).mode, "app");
+  assert.equal(resultToState({ ok: true, from: "a", to: "b", commits: 2 }, null, NOW).mode, "clone");
+  assert.equal("mode" in resultToState({ ok: false }, null, NOW), false, "no context: no mode");
+  assert.equal(resultToState({ ok: true, commits: null }, { mode: "clone" }, NOW).mode, "clone", "prev's mode wins");
+});

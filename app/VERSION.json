@@ -1,0 +1,28 @@
+{
+  "repo": "forkadam/herdr-dock",
+  "branch": "main",
+  "version": "7fd70ee7e16c",
+  "source": "169bf8c",
+  "mods": [
+    "dock-agents",
+    "dock-attention",
+    "dock-changes",
+    "dock-config",
+    "dock-core",
+    "dock-files",
+    "dock-footer",
+    "dock-git",
+    "dock-git-delete",
+    "dock-header",
+    "dock-notifications",
+    "dock-pipelines",
+    "dock-quotas",
+    "dock-rail",
+    "dock-spaces",
+    "dock-system",
+    "dock-tabs",
+    "dock-toast",
+    "dock-warnings",
+    "dock-where"
+  ]
+}

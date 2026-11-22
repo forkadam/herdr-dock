@@ -4,6 +4,7 @@
 // text, `opened` the local file's (null when there is none); a save diffs the draft against the base.
 import { DEFAULT_CONFIG, LOCAL_REL, parseConfig, parseLocal } from "../../shared/config.js";
 import { EMPTY_LOCAL, draftFromConfig, planReset, planSave, rebaseDraft, sameDraft } from "../../shared/edit.js";
+import { fixHint, installOf, modeOf } from "../../shared/install.js";
 import { buildInventory, installedFallbackIds } from "../../shared/inventory.js";
 import { listDirCommand, parseDirListing } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
@@ -17,13 +18,18 @@ async function resolvePaths(io) {
   let path = io.shared("dock.config.path");
   let host = io.shared("dock.host");
   let localPath = io.shared("dock.config.localPath");
+  let mode = null;
   if (typeof path !== "string" || !path || typeof host !== "string" || !host) {
     const src = parseJson(await io.readTextFile(`${io.appHome}/mods/dock-core/source.json`).catch(() => null));
-    if (typeof path !== "string" || !path) path = typeof src?.config === "string" ? slashPath(src.config) : null;
+    // A clone install's config/dock.json, or an app install's shipped mods/dock-core/config.json.
+    mode = modeOf(src);
+    if (typeof path !== "string" || !path) path = installOf(src, io.appHome)?.configPath ?? null;
     if (typeof host !== "string" || !host) host = typeof src?.hostname === "string" ? src.hostname.trim().toLowerCase() : "";
   }
   if (typeof localPath !== "string" || !localPath) localPath = `${io.appHome}/${LOCAL_REL}`;
-  return { path, localPath: slashPath(localPath), host: host || null };
+  // Known whenever the host had to come from source.json (the only case the mode words a message).
+  if (!mode && path === installOf({ mode: "app" }, io.appHome).configPath) mode = "app";
+  return { path, localPath: slashPath(localPath), host: host || null, mode };
 }
 
 // Installed mods: the folder listing, each mod's mod.json; the installed.json ids when the listing fails.
@@ -61,7 +67,7 @@ function parseFiles(baseText, localText, host, localPath) {
 }
 
 export async function loadSession(io) {
-  const { path, localPath, host } = await resolvePaths(io);
+  const { path, localPath, host, mode } = await resolvePaths(io);
   const baseText = path ? await io.readTextFile(path).catch(() => null) : null;
   const opened = await io.readTextFile(localPath).catch(() => null);
   const { entries, notice } = await loadEntries(io);
@@ -77,7 +83,7 @@ export async function loadSession(io) {
   }
   if (!host) {
     readOnly = true;
-    error = "this computer's hostname is unknown: run npm run deploy";
+    error = mode === "app" ? "could not read this computer's hostname" : `this computer's hostname is unknown: ${fixHint(mode)}`;
   }
   // baseDraft: the draft as the files had it; a conflict re-applies only what differs from it.
   return { path, localPath, host, baseText, opened, draft, baseDraft: draft, inventory: buildInventory(entries, draft), entries, readOnly, notice, error };

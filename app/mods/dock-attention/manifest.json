@@ -1,0 +1,1 @@
+{ "id": "dock-attention", "name": "Attention", "icon": "icon.svg", "regions": ["bottom"], "settings": {} }

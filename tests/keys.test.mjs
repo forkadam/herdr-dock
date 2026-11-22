@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeKeys } from "../scripts/keys.mjs";
+import { mergeKeys } from "../src/shared/keys.js";
 
 const SECTION = "layout:herdr-dock";
 const B = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"]];

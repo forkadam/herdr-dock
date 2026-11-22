@@ -1,19 +1,6 @@
-// Merge key bindings into one section of keys.json (pure; returns a new object).
-const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+export { mergeKeys } from "../src/shared/keys.js";
 
-export function mergeKeys(keys, section, bindings) {
-  const current = isObj(keys[section]) ? keys[section] : {};
-  const next = { ...current };
-  const added = [];
-  const skipped = [];
-  for (const [key, action] of bindings) {
-    if (current[key] === action) continue;
-    if (current[key] !== undefined) {
-      skipped.push({ key, reason: `already bound to "${current[key]}"` });
-      continue;
-    }
-    next[key] = action;
-    added.push(key);
-  }
-  return { keys: { ...keys, [section]: next }, added, skipped };
-}
+// The dock's keys.json section and bindings: deploy merges them into the app home's keys.json, build:app writes
+// them as app/keys.json (and update-app adds the missing ones from that file).
+export const SECTION = "layout:herdr-dock";
+export const BINDINGS = [["ctrl-alt-b", "dock-core.cycle"], ["ctrl-alt-,", "dock-core.config"], ["ctrl-alt-n", "dock-core.right"]];

@@ -1,0 +1,1 @@
+{ "id": "dock-tabs", "name": "Tabs", "icon": "icon.svg", "regions": ["top"], "settings": {} }

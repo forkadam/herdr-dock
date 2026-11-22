@@ -3,6 +3,10 @@
 You are setting up herdr-dock on this machine for the user. Follow the steps in order. Ask before the steps marked
 **Ask first**. Keep your messages short.
 
+Alternative: for Herdr's own sharing convention (no clone), the user can tell their agent `Read
+~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/forkadam/herdr-dock/tree/main/app`
+(README, "Install the Herdr way"). Use one install per machine.
+
 ## 1. Check the prerequisites
 
 - **Node 22 or newer:** `node --version`.

@@ -1,0 +1,363 @@
+{
+  "id": "root",
+  "toast": "dock-toast",
+  "type": "row",
+  "titlebar": "none",
+  "background": "canvas",
+  "terminal_padding": [
+    14,
+    12
+  ],
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "children": [
+    {
+      "id": "dock-left",
+      "type": "column",
+      "size": {
+        "px": 268
+      },
+      "min": 44,
+      "max": 480,
+      "background": "chrome",
+      "children": [
+        {
+          "id": "dock-left-0-dock-header",
+          "type": "block",
+          "size": {
+            "px": 46
+          },
+          "min": 32,
+          "window_drag": true,
+          "content": {
+            "mod": "dock-header",
+            "props": {
+              "dockFeature": "dock-left-0-dock-header",
+              "dockRegion": "left"
+            }
+          }
+        },
+        {
+          "id": "dock-left-1-dock-spaces",
+          "type": "block",
+          "size": {
+            "weight": 1
+          },
+          "min": 32,
+          "content": {
+            "mod": "dock-spaces",
+            "props": {
+              "dockFeature": "dock-left-1-dock-spaces",
+              "dockRegion": "left"
+            }
+          }
+        },
+        {
+          "id": "dock-left-2-dock-agents",
+          "type": "block",
+          "size": {
+            "weight": 1
+          },
+          "min": 32,
+          "content": {
+            "mod": "dock-agents",
+            "props": {
+              "dockFeature": "dock-left-2-dock-agents",
+              "dockRegion": "left"
+            }
+          }
+        },
+        {
+          "id": "dock-left-3-dock-git",
+          "type": "block",
+          "size": {
+            "weight": 1
+          },
+          "min": 32,
+          "content": {
+            "mod": "dock-git",
+            "props": {
+              "dockFeature": "dock-left-3-dock-git",
+              "dockRegion": "left"
+            }
+          }
+        },
+        {
+          "id": "dock-left-4-dock-quotas",
+          "type": "block",
+          "size": {
+            "px": 150
+          },
+          "min": 32,
+          "content": {
+            "mod": "dock-quotas",
+            "props": {
+              "dockFeature": "dock-left-4-dock-quotas",
+              "dockRegion": "left"
+            }
+          }
+        },
+        {
+          "id": "dock-left-5-dock-footer",
+          "type": "block",
+          "size": {
+            "px": 40
+          },
+          "min": 32,
+          "content": {
+            "mod": "dock-footer",
+            "props": {
+              "dockFeature": "dock-left-5-dock-footer",
+              "dockRegion": "left"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dock-work",
+      "type": "column",
+      "resizable": false,
+      "children": [
+        {
+          "id": "dock-top",
+          "type": "row",
+          "size": {
+            "px": 42
+          },
+          "window_drag": true,
+          "children": [
+            {
+              "id": "dock-top-0-dock-core",
+              "type": "block",
+              "size": {
+                "px": 44
+              },
+              "content": {
+                "mod": "dock-core",
+                "props": {
+                  "dockFeature": "dock-top-0-dock-core",
+                  "dockRegion": "top"
+                }
+              }
+            },
+            {
+              "id": "dock-top-1-dock-tabs",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "content": {
+                "mod": "dock-tabs",
+                "props": {
+                  "dockFeature": "dock-top-1-dock-tabs",
+                  "dockRegion": "top"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "dock-mid",
+          "type": "row",
+          "resizable": false,
+          "children": [
+            {
+              "id": "dock-body",
+              "type": "row",
+              "padding": 8,
+              "gap": 8,
+              "children": [
+                {
+                  "id": "dock-main",
+                  "type": "block",
+                  "content": {
+                    "tab": "active",
+                    "pane": {
+                      "gap": 8,
+                      "radius": 10,
+                      "background": "background",
+                      "lone": true,
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "focus": {
+                        "width": 1,
+                        "color": "accent"
+                      },
+                      "header": {
+                        "content": {
+                          "mod": "pane"
+                        },
+                        "height": 30,
+                        "position": "top",
+                        "reveal": "always"
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "dock-right",
+                  "type": "column",
+                  "size": {
+                    "px": 360
+                  },
+                  "min": 280,
+                  "max": 900,
+                  "hidden": true,
+                  "children": [
+                    {
+                      "id": "dock-right-stack",
+                      "type": "stack",
+                      "active": "dock-right-0-dock-pipelines",
+                      "children": [
+                        {
+                          "id": "dock-right-0-dock-pipelines",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "dock-pipelines",
+                            "props": {
+                              "dockFeature": "dock-right-0-dock-pipelines",
+                              "dockRegion": "right"
+                            }
+                          }
+                        },
+                        {
+                          "id": "dock-right-1-dock-notifications",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "dock-notifications",
+                            "props": {
+                              "dockFeature": "dock-right-1-dock-notifications",
+                              "dockRegion": "right"
+                            }
+                          }
+                        },
+                        {
+                          "id": "dock-right-2-dock-files",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "dock-files",
+                            "props": {
+                              "dockFeature": "dock-right-2-dock-files",
+                              "dockRegion": "right"
+                            }
+                          }
+                        },
+                        {
+                          "id": "dock-right-3-dock-changes",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "dock-changes",
+                            "props": {
+                              "dockFeature": "dock-right-3-dock-changes",
+                              "dockRegion": "right"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "dock-rail",
+              "type": "block",
+              "size": {
+                "px": 40
+              },
+              "background": "chrome",
+              "content": {
+                "mod": "dock-rail",
+                "props": {
+                  "dockRegion": "rail"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "dock-bottom",
+          "type": "row",
+          "size": {
+            "px": 28
+          },
+          "children": [
+            {
+              "id": "dock-bottom-0-dock-where",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "content": {
+                "mod": "dock-where",
+                "props": {
+                  "dockFeature": "dock-bottom-0-dock-where",
+                  "dockRegion": "bottom"
+                }
+              }
+            },
+            {
+              "id": "dock-bottom-1-dock-warnings",
+              "type": "block",
+              "size": {
+                "px": 210
+              },
+              "content": {
+                "mod": "dock-warnings",
+                "props": {
+                  "dockFeature": "dock-bottom-1-dock-warnings",
+                  "dockRegion": "bottom"
+                }
+              }
+            },
+            {
+              "id": "dock-bottom-2-dock-system",
+              "type": "block",
+              "size": {
+                "px": 150
+              },
+              "content": {
+                "mod": "dock-system",
+                "props": {
+                  "dockFeature": "dock-bottom-2-dock-system",
+                  "dockRegion": "bottom"
+                }
+              }
+            },
+            {
+              "id": "dock-bottom-3-dock-attention",
+              "type": "block",
+              "size": {
+                "px": 36
+              },
+              "content": {
+                "mod": "dock-attention",
+                "props": {
+                  "dockFeature": "dock-bottom-3-dock-attention",
+                  "dockRegion": "bottom"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

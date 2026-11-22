@@ -19,7 +19,7 @@ import { isDirty, loadSession, resetSession, saveSession } from "./session.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
-import { updateStrip } from "./update-view.js";
+import { updateRuns, updateStrip } from "./update-view.js";
 
 const REGIONS = ["top", "left", "right", "bottom"];
 const VIEW_KEY = "dock.config.view";
@@ -164,27 +164,31 @@ export default class DockConfig extends View {
 
   // The Updates strip: dock-core's update state, with Check now or Update.
   updates(t) {
-    const strip = updateStrip(checking() ? null : shared(UPDATE_KEY), Date.now());
+    const state = checking() ? null : shared(UPDATE_KEY);
+    const strip = updateStrip(state, Date.now());
     const color = { accent: t.accent, ok: t.done ?? t.accent, bad: t.blocked, dim: t.dim }[strip.tone] ?? t.dim;
-    const repo = shared(REPO_KEY);
+    // Clone mode runs scripts/update.mjs in the repo; app mode runs the shipped update-app.mjs (no repo).
+    const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(repo);
+    const canUpdate = action?.kind !== "update" || Boolean(runs);
     return h_flex().id("dc-updates").gap(8).items_center().min_h(28)
       .child(div().flex_none().text_size(12.5).text_color(t.muted).child("Updates"))
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(color).truncate()
         .child(strip.tone === "accent" ? `● ${strip.text}` : strip.text))
       .when(Boolean(action), (el) => el.child(button(t, `dc-update-${action.kind}`, action.label,
-        { primary: action.kind === "update", enabled: canUpdate && !checking() }, () => this.updateAction(action.kind, repo))));
+        { primary: action.kind === "update", enabled: canUpdate && !checking() }, () => this.updateAction(action.kind, runs))));
   }
 
-  updateAction(kind, repo) {
+  updateAction(kind, runs) {
     if (kind === "check") {
       run("dock-core.update.check");
       return;
     }
-    if (!repo) return;
-    run("dock-core.update.start");
-    run("tab.new", { name: "Update herdr-dock", folder: repo, argv: ["node", "scripts/update.mjs"] });
+    if (!runs) return;
+    for (const r of runs) {
+      if (r.args) run(r.command, r.args);
+      else run(r.command);
+    }
   }
 
   banner(t) {

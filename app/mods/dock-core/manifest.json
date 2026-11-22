@@ -1,0 +1,1 @@
+{ "id": "dock-core", "name": "Dock", "icon": "icon.svg", "regions": ["top"], "settings": {} }

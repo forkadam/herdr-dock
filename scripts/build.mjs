@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export async function buildAll() {
+// Builds every src/mods/dock-* into <distDir>/mods (dist/ by default; build:app passes a temp folder).
+export async function buildAll(distDir = join(ROOT, "dist")) {
   const modsSrc = join(ROOT, "src/mods");
-  const out = join(ROOT, "dist/mods");
-  rmSync(join(ROOT, "dist"), { recursive: true, force: true });
+  const out = join(distDir, "mods");
+  rmSync(distDir, { recursive: true, force: true });
   const names = readdirSync(modsSrc, { withFileTypes: true })
     .filter((d) => d.isDirectory() && d.name.startsWith("dock-")).map((d) => d.name);
   for (const name of names) {
@@ -23,6 +24,7 @@ export async function buildAll() {
     await build({
       entryPoints: [join(src, "main.js")], outfile: join(dest, "main.js"),
       bundle: true, format: "esm", external: ["gpui-kit", "gpui-base", "herdr"], logLevel: "warning",
+      absWorkingDir: ROOT, // the bundle's path comments are relative to the repo, whatever the cwd
     });
     for (const f of readdirSync(src)) {
       if (f === "mod.json" || f === "manifest.json" || f.endsWith(".svg")) copyFileSync(join(src, f), join(dest, f));

@@ -15,11 +15,12 @@ import { slashPath } from "../../shared/path.js";
 import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
 import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/notify.js";
 import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
+import { fixHint, ghVersionArgs, installOf, modeOf, parseVersionJson, publishedUrl } from "../../shared/install.js";
 import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
 import { HERDR_KEY, SAMPLE_KEY, herdrSampleCommand, herdrUsage, parseHerdrProcs, parseSample, sampleCommand } from "../../shared/system.js";
 import {
-  CHECK_EVERY_MS, FETCH_TIMEOUT_MS, NOTIFIED_KEY, OPEN_DIALOG, RESULT_REL, UPDATE_KEY, availableNote, parseUpdateCommand,
-  resultNote, resultToState, shouldNotify, startState, timedOut, updateState,
+  CHECK_EVERY_MS, FETCH_TIMEOUT_MS, NOTIFIED_KEY, OPEN_DIALOG, RESULT_REL, UPDATE_KEY, appUpdateState, availableNote,
+  parseUpdateCommand, resultNote, resultToState, shouldNotify, startState, timedOut, updateState,
 } from "../../shared/update.js";
 
 const MODES = ["expanded", "icons", "hidden"];
@@ -32,7 +33,7 @@ const HOST_KEY = "dock.host";
 const PATH_KEY = "dock.config.path";
 // Where this PC's local file lives (<app home>/herdr-dock/local.json), for the dialog.
 const LOCAL_PATH_KEY = "dock.config.localPath";
-// The herdr-dock repo, for the dialog's Update button (the update tab's folder).
+// The herdr-dock repo, for the dialog's Update button (the update tab's folder). Unset in app mode (no repo).
 const REPO_KEY = "dock.config.repo";
 const APPLIED_KEY = "dock.config.applied";
 // The person's left-panel sizes, saved while the panel is at the icon rail or focused (null
@@ -79,7 +80,9 @@ export default class DockCore extends View {
     this.configPath = null;
     this.localPath = null;
     this.layoutPath = null;
-    this.repo = null; // the herdr-dock repo, for the update check
+    this.installMode = null; // "clone" | "app" (installOf), once source.json is read
+    this.repo = null; // the herdr-dock repo, for the clone update check
+    this.versionPath = null; // app mode: <app home>/mods/dock-core/VERSION.json (the installed version)
     this.resultPath = null; // <app home>/herdr-dock/update-result.json
     this.updateBusy = false; // an update check is running
     this.consuming = false; // the result file is being read
@@ -108,12 +111,16 @@ export default class DockCore extends View {
     this.layoutPath = `${home}/layouts/herdr-dock.json`;
     let src = null;
     try { src = JSON.parse((await readTextFile(`${home}/mods/dock-core/source.json`)) ?? "null"); } catch { src = null; }
-    if (typeof src?.config !== "string") {
-      setShared(ERROR_KEY, "mods/dock-core/source.json is missing: run npm run deploy");
+    // A clone install (deploy's source.json) or an app install (app/'s { "mode": "app" }, with the shared config
+    // shipped as mods/dock-core/config.json, read only).
+    const install = installOf(src, home);
+    if (!install) {
+      setShared(ERROR_KEY, `mods/dock-core/source.json is missing or unreadable: ${fixHint(modeOf(src))}`);
       cx.notify();
       return;
     }
-    this.configPath = slashPath(src.config);
+    this.installMode = install.mode;
+    this.configPath = install.configPath;
     setShared(PATH_KEY, this.configPath);
     // The hostname picks the machines.<host> section: ask the OS, else use the one deploy saved.
     try {
@@ -122,19 +129,26 @@ export default class DockCore extends View {
     } catch (e) {
       console.log(`dock-core: hostname failed, using source.json: ${e}`);
     }
-    if (!this.host && typeof src.hostname === "string" && src.hostname.trim()) this.host = src.hostname.trim().toLowerCase();
+    if (!this.host && typeof src?.hostname === "string" && src.hostname.trim()) this.host = src.hostname.trim().toLowerCase();
     setShared(HOST_KEY, this.host || null);
-    if (!this.host) this.hostError = "could not read this computer's hostname: machines sections are ignored (re-run npm run deploy)";
+    if (!this.host) {
+      this.hostError = "could not read this computer's hostname: machines sections are ignored"
+        + (install.mode === "clone" ? " (re-run npm run deploy)" : "");
+    }
     this.localPath = `${home}/${LOCAL_REL}`;
     setShared(LOCAL_PATH_KEY, this.localPath);
     const localDir = this.localPath.slice(0, this.localPath.lastIndexOf("/"));
     await this.ensureFolder(localDir);
-    // The repo (source.json's repo; older deploys didn't write it: the config's parent folder).
-    const repo = typeof src.repo === "string" ? slashPath(src.repo) : this.configPath.split("/").slice(0, -2).join("/");
-    await this.migrate(repo);
+    // Clone mode: the repo (for migration, git and the dialog's Update). App mode has no repo: nothing to migrate.
+    if (install.mode === "clone") await this.migrate(install.repo);
     await this.reload(cx);
-    this.repo = repo;
-    setShared(REPO_KEY, repo);
+    if (install.mode === "clone") {
+      this.repo = install.repo;
+      setShared(REPO_KEY, install.repo);
+    } else {
+      this.versionPath = install.versionPath;
+      if ((shared(REPO_KEY) ?? null) !== null) setShared(REPO_KEY, null);
+    }
     this.resultPath = `${home}/${RESULT_REL}`;
     this.sourcePath = `${home}/mods/dock-core/source.json`;
     // A result left from an update (deploy restarted dock-core before it was seen), then the 6 h check.
@@ -146,7 +160,9 @@ export default class DockCore extends View {
       }
     });
     cx.spawn(async (cx) => this.watch(localDir, cx, () => this.consumeResult(cx)));
-    await this.watch(this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/", cx);
+    // App mode's config.json changes only through update-app, which reloads dock-core anyway: not watching
+    // mods/dock-core keeps Herdr's watch off the folder the update swaps.
+    if (install.mode === "clone") await this.watch(this.configPath.slice(0, this.configPath.lastIndexOf("/")) || "/", cx);
   }
 
   // The one-time move of machines.<host> from config/dock.json to the local file (deploy does the
@@ -204,20 +220,25 @@ export default class DockCore extends View {
     }
   }
 
-  // One update check: fetch main (30 s), then compare. Publishes UPDATE_KEY and notifies once per new
-  // upstream sha. Never leaves the state on "checking"; never overwrites an update in progress.
+  // One update check: clone mode fetches main (30 s) and compares; app mode compares the installed VERSION.json
+  // with the published one. Publishes UPDATE_KEY (with mode) and notifies once per new upstream sha (app mode: per
+  // new published version). Never leaves the state on "checking"; never overwrites an update in progress.
   async checkUpdate(cx) {
-    if (!this.repo || this.updateBusy) return;
+    if (!(this.installMode === "app" ? this.versionPath : this.repo) || this.updateBusy) return;
     const prev = shared(UPDATE_KEY) ?? null;
     if (prev?.status === "updating") return;
     this.updateBusy = true;
-    setShared(UPDATE_KEY, { ...(prev ?? {}), status: "checking" });
+    setShared(UPDATE_KEY, { ...(prev ?? {}), mode: this.installMode, status: "checking" });
     cx.notify();
     let next;
     try {
-      next = updateState({ ...(await this.gitUpdateInfo()), deployed: await this.deployedCommit() }, Date.now(), prev);
+      next = this.installMode === "app"
+        ? appUpdateState(await this.appUpdateInfo(cx), Date.now(), prev)
+        : { mode: "clone", ...updateState({ ...(await this.gitUpdateInfo()), deployed: await this.deployedCommit() }, Date.now(), prev) };
     } catch (e) {
-      next = updateState({ fetchOk: false, fetchError: e?.message ?? String(e) }, Date.now(), prev);
+      next = this.installMode === "app"
+        ? appUpdateState({ fetchOk: false, fetchError: e?.message ?? String(e) }, Date.now(), prev)
+        : { mode: "clone", ...updateState({ fetchOk: false, fetchError: e?.message ?? String(e) }, Date.now(), prev) };
     } finally {
       this.updateBusy = false;
     }
@@ -226,9 +247,44 @@ export default class DockCore extends View {
     setShared(UPDATE_KEY, next);
     if (shouldNotify(next, shared(NOTIFIED_KEY) ?? null)) {
       try { notify(availableNote(next)); } catch (e) { console.log(`dock-core: update notify failed: ${e?.message ?? e}`); }
-      setShared(NOTIFIED_KEY, next.latest);
+      setShared(NOTIFIED_KEY, next.mode === "app" ? next.version : next.latest);
     }
     cx.notify();
+  }
+
+  // What appUpdateState needs: the installed mods/dock-core/VERSION.json and the published app/VERSION.json, a plain
+  // download first, then gh api (the repo may be private), each bounded by FETCH_TIMEOUT_MS.
+  async appUpdateInfo(cx) {
+    const installed = parseVersionJson(await readTextFile(this.versionPath).catch(() => null));
+    if (!installed) return { fetchOk: false, fetchError: "mods/dock-core/VERSION.json is missing or unreadable" };
+    // The losing timer's rejection is swallowed (the race already settled).
+    const bounded = (p) => {
+      const timer = cx.sleep(FETCH_TIMEOUT_MS).then(() => { throw new Error(`timed out after ${FETCH_TIMEOUT_MS / 1000} s`); });
+      timer.catch(() => {});
+      return Promise.race([p, timer]);
+    };
+    let published = null;
+    let why = null;
+    try {
+      const r = await bounded(globalThis.fetch(publishedUrl(installed), { headers: { "User-Agent": "herdr-dock" } }));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      published = parseVersionJson(await bounded(r.text()));
+      if (!published) throw new Error("not a VERSION.json");
+    } catch (e) {
+      why = `download: ${e?.message ?? e}`;
+    }
+    if (!published) {
+      try {
+        const r = await bounded(exec("gh", ghVersionArgs(installed), { timeout: FETCH_TIMEOUT_MS }));
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout || `exit ${r.code}`).trim());
+        published = parseVersionJson(r.stdout);
+        if (!published) throw new Error("not a VERSION.json");
+      } catch (e) {
+        const first = String(e?.message ?? e).split(/\r?\n/)[0];
+        return { fetchOk: false, fetchError: `${first} (${why})`, installed };
+      }
+    }
+    return { fetchOk: true, installed, published };
   }
 
   // The commit the last deploy recorded in source.json (re-read each check), or null.

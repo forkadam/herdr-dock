@@ -7,9 +7,18 @@ const UPDATE = { label: "Update", kind: "update" };
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // updateStrip(state, now) -> { text, tone: "dim"|"accent"|"ok"|"bad", action: null | { label, kind } }.
+// App mode (state.mode "app", a Herdr-style install) has no blocked or redeploy (they need a clone): available
+// names the installed and published sources, and a stray blocked reads as a failed check.
 export function updateStrip(state, now) {
   if (!state || typeof state !== "object") return { text: "herdr-dock · not checked yet", tone: "dim", action: CHECK };
   const reason = String(state.reason ?? "").trim() || "unknown error";
+  const app = state.mode === "app";
+  if (app && state.status === "available") {
+    return { text: `Update available · ${state.current ?? "?"} → ${state.latest ?? "?"}`, tone: "accent", action: UPDATE };
+  }
+  if (app && state.status === "blocked") {
+    return { text: reason.startsWith("Can't check:") ? reason : `Can't check: ${reason}`, tone: "bad", action: CHECK };
+  }
   switch (state.status) {
     case "checking":
       return { text: "Checking…", tone: "dim", action: null };
@@ -38,4 +47,16 @@ export function updateStrip(state, now) {
       return { text: `herdr-dock${sha} · up to date${age}`, tone: "dim", action: CHECK };
     }
   }
+}
+
+// What the dialog's Update runs, by state.mode: [{ command, args? }], or null when it can't run. Clone mode opens
+// scripts/update.mjs in the repo; app mode (no repo) opens the shipped update-app.mjs from the app home.
+export function updateRuns(state, { repo, home }) {
+  const tab = (folder, argv) => ({ command: "tab.new", args: { name: "Update herdr-dock", folder, argv } });
+  if (state?.mode === "app") {
+    if (!home) return null;
+    return [{ command: "dock-core.update.start" }, tab(home, ["node", `${home}/mods/dock-core/update-app.mjs`])];
+  }
+  if (!repo) return null;
+  return [{ command: "dock-core.update.start" }, tab(repo, ["node", "scripts/update.mjs"])];
 }

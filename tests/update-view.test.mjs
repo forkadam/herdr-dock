@@ -65,3 +65,52 @@ test("redeploy: not deployed yet, deployed → current, Update", () => {
   assert.deepEqual(updateStrip(st({ status: "available", behind: 0, redeploy: true, deployed: "1a2b3c4" }), NOW),
     { text: "Not deployed yet · 1a2b3c4 → e0aa740", tone: "accent", action: UPDATE });
 });
+
+const app = (o) => ({ mode: "app", current: "0c27c79", latest: "0c27c79", version: "d4abcbaa43d1", behind: null, subject: null, checkedAt: NOW - 2 * H, reason: null, startedAt: null, ...o });
+
+test("app mode up to date: installed source, checked age, Check now", () => {
+  assert.deepEqual(updateStrip(app({ status: "idle" }), NOW),
+    { text: "herdr-dock 0c27c79 · up to date · checked 2h ago", tone: "dim", action: CHECK });
+});
+
+test("app mode available: installed → published source, Update", () => {
+  assert.deepEqual(updateStrip(app({ status: "available", latest: "7f3c2a1", version: "bbbbbbbbbbbb" }), NOW),
+    { text: "Update available · 0c27c79 → 7f3c2a1", tone: "accent", action: UPDATE });
+  assert.equal(updateStrip(app({ status: "available", current: null, latest: null }), NOW).text, "Update available · ? → ?");
+});
+
+test("app mode never shows blocked or redeploy", () => {
+  const redeploy = updateStrip(app({ status: "available", latest: "7f3c2a1", redeploy: true, deployed: "1a2b3c4" }), NOW);
+  assert.equal(redeploy.text, "Update available · 0c27c79 → 7f3c2a1");
+  const blocked = updateStrip(app({ status: "blocked", reason: "on branch feat/x" }), NOW);
+  assert.ok(!blocked.text.startsWith("Can't update"), blocked.text);
+  assert.equal(blocked.action.kind, "check");
+});
+
+test("app mode: checking, updating, updated and failed read as in clone mode", () => {
+  assert.equal(updateStrip(app({ status: "checking" }), NOW).text, "Checking…");
+  assert.equal(updateStrip(app({ status: "updating", startedAt: NOW }), NOW).text, 'Updating… see the "Update herdr-dock" tab');
+  assert.equal(updateStrip(app({ status: "updated", current: "7f3c2a1", commits: null }), NOW).text, "✓ Updated to 7f3c2a1");
+  assert.equal(updateStrip(app({ status: "failed", reason: "Can't check: gh not logged in" }), NOW).text, "Can't check: gh not logged in");
+});
+
+import { updateRuns } from "../src/mods/dock-config/update-view.js";
+
+test("updateRuns: clone mode runs scripts/update.mjs in the repo (unchanged); no repo, nothing", () => {
+  const start = { command: "dock-core.update.start" };
+  assert.deepEqual(updateRuns({ mode: "clone", status: "available" }, { repo: "D:/w/herdr-dock", home: "C:/h" }), [
+    start, { command: "tab.new", args: { name: "Update herdr-dock", folder: "D:/w/herdr-dock", argv: ["node", "scripts/update.mjs"] } },
+  ]);
+  // States from before this change have no mode: clone.
+  assert.equal(updateRuns({ status: "available" }, { repo: "D:/w/herdr-dock", home: "C:/h" })[1].args.argv[1], "scripts/update.mjs");
+  assert.equal(updateRuns({ mode: "clone", status: "available" }, { repo: null, home: "C:/h" }), null);
+});
+
+test("updateRuns: app mode runs update-app.mjs from the app home, no repo needed", () => {
+  const home = "C:/Users/me/.config/herdr-app";
+  assert.deepEqual(updateRuns({ mode: "app", status: "available" }, { repo: null, home }), [
+    { command: "dock-core.update.start" },
+    { command: "tab.new", args: { name: "Update herdr-dock", folder: home, argv: ["node", `${home}/mods/dock-core/update-app.mjs`] } },
+  ]);
+  assert.equal(updateRuns({ mode: "app", status: "available" }, { repo: null, home: "" }), null);
+});
