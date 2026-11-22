@@ -16,7 +16,7 @@ import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
 import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/notify.js";
 import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
 import { hostnameCommand, openUrlCommand } from "../../shared/platform.js";
-import { SAMPLE_KEY, parseSample, sampleCommand } from "../../shared/system.js";
+import { HERDR_KEY, SAMPLE_KEY, herdrSampleCommand, herdrUsage, parseHerdrProcs, parseSample, sampleCommand } from "../../shared/system.js";
 
 const MODES = ["expanded", "icons", "hidden"];
 const MODE_KEY = "dock.left.mode";
@@ -53,6 +53,9 @@ const AGENT_GRACE_MS = 30000;
 // The CPU/memory/disk sample: its node child takes ~250 ms, and 4 s is the most it may take.
 const SAMPLE_MS = 5000;
 const SAMPLE_TIMEOUT_MS = 4000;
+// Herdr's own processes (CPU % and memory, for the bar tooltips): a ps / Get-Process call every 10 s.
+const HERDR_MS = 10000;
+const HERDR_TIMEOUT_MS = 5000;
 
 const isTop = () => props()?.dockRegion === "top";
 
@@ -72,6 +75,7 @@ export default class DockCore extends View {
     cx.spawn(async (cx) => this.start(cx));
     this.startCollector(cx);
     this.startSampler(cx);
+    this.startHerdrSampler(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -162,6 +166,34 @@ export default class DockCore extends View {
           failed = true;
         }
         await cx.sleep(SAMPLE_MS);
+      }
+    });
+  }
+
+  // Herdr's own CPU % (of the whole machine, over the time between samples) and memory, published as
+  // dock.system.herdr every HERDR_MS. The first sample has no cpu. Failures are logged once, like the system sampler.
+  startHerdrSampler(cx) {
+    let failed = false;
+    let prev = null; // { cpuMs, mem, t }
+    cx.spawn(async (cx) => {
+      for (;;) {
+        try {
+          const platform = window()?.platform;
+          const { command, args } = herdrSampleCommand(platform);
+          const { stdout } = await exec(command, args, { timeout: HERDR_TIMEOUT_MS });
+          const t = Date.now();
+          const cur = parseHerdrProcs(platform, stdout);
+          if (!cur) throw new Error("no herdr process in the output");
+          const cores = shared(SAMPLE_KEY)?.cores;
+          setShared(HERDR_KEY, herdrUsage(prev, cur, prev ? t - prev.t : 0, cores, t));
+          prev = { ...cur, t };
+          failed = false;
+        } catch (e) {
+          prev = null;
+          if (!failed) console.log(`dock-core: herdr sample failed: ${e?.message ?? e}`);
+          failed = true;
+        }
+        await cx.sleep(HERDR_MS);
       }
     });
   }
