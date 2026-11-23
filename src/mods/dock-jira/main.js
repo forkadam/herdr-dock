@@ -726,14 +726,20 @@ export default class Jira extends View {
   }
 
   // The sprint menu opened or closed. Opened, its older sprints are read when closedNeeded says so: now, or, while
-  // Today refreshes, by that refresh once it's done with the board (refreshToday), so requests go one at a time.
+  // Today refreshes, by that refresh once it's done with the board (refreshToday), so requests go one at a time. The
+  // read starts later, in a task of its own: asked again there, so that a refresh queued in the same turn, or the menu
+  // closed and opened again, never starts a second read beside the one running.
   openSprintMenu(open, cx) {
     this.sprintOpen = open;
     cx.notify();
-    const sp = this.sprint;
-    if (!open || !sp.cachedAt || sp.closedLoading || this.state("today").loading) return;
-    if (!closedNeeded({ active: sp.active, menuOpen: open, closedAt: sp.closedAt })) return;
-    cx.spawn(async (cx) => this.readClosed(this.client(cx), cx));
+    if (!open) return;
+    const due = () => {
+      const sp = this.sprint;
+      return Boolean(sp.cachedAt) && !sp.closedLoading && !this.state("today").loading
+        && closedNeeded({ active: sp.active, menuOpen: this.sprintOpen, closedAt: sp.closedAt });
+    };
+    if (!due()) return;
+    cx.spawn(async (cx) => { if (due()) await this.readClosed(this.client(cx), cx); });
   }
 
   // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
