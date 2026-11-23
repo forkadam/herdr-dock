@@ -7,6 +7,7 @@
 const MINUTE_MS = 60e3;
 const DEFAULT_SINCE_MINUTES = 14 * 24 * 60;
 const PARENTS_PER_SEARCH = 50;
+const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 const list = (v) => (Array.isArray(v) ? v : []);
 const isField = (item, name) => String(item?.field ?? "").toLowerCase() === name;
 const timeOf = (v) => Date.parse(v);
@@ -20,10 +21,11 @@ export function sinceMinutes(sprint, now) {
   return minutes > 0 ? minutes : DEFAULT_SINCE_MINUTES;
 }
 
-// Your unresolved issues updated in the window, then the parents of your sub-tasks (50 keys a search).
+// Your unresolved issues updated in the window, then the parents of your sub-tasks (50 keys a search). Only keys shaped
+// like an issue key go into the list, so a malformed one can neither change the search nor fail the 49 others with it.
 export function changedSearches({ since, parentKeys }) {
   const recent = `updated >= -${since}m`;
-  const keys = [...new Set(list(parentKeys).filter((k) => typeof k === "string" && k))];
+  const keys = [...new Set(list(parentKeys).filter((k) => typeof k === "string" && ISSUE_KEY.test(k)))];
   const searches = [`assignee = currentUser() AND resolution = Unresolved AND ${recent}`];
   for (let i = 0; i < keys.length; i += PARENTS_PER_SEARCH) {
     searches.push(`key in (${keys.slice(i, i + PARENTS_PER_SEARCH).join(",")}) AND ${recent}`);

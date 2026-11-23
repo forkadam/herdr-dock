@@ -47,6 +47,13 @@ test("changedSearches: no parents is one search; 50 parents fit one", () => {
   assert.equal(changedSearches({ since: 60, parentKeys: ["WEB-1", "WEB-2"] })[1], "key in (WEB-1,WEB-2) AND updated >= -60m");
 });
 
+test("changedSearches: only well-formed issue keys go into key in (...)", () => {
+  const q = changedSearches({ since: 5, parentKeys: ["WEB-1) OR (project = X", "WEB-2", "web-3", "WEB_X9-10", "WEB-2", "", " WEB-4", "WEB-5\n", "WEB", "WEB-", "1WEB-6", null, 7, { key: "WEB-8" }] });
+  assert.deepEqual(q, ["assignee = currentUser() AND resolution = Unresolved AND updated >= -5m", "key in (WEB-2,web-3,WEB_X9-10) AND updated >= -5m"]);
+  // nothing well-formed left: no parents search at all
+  assert.equal(changedSearches({ since: 5, parentKeys: ["WEB-1) OR (project = X", "x y-1"] }).length, 1);
+});
+
 test("bugsSearch keeps ORDER BY last", () => {
   assert.equal(bugsSearch({ briefBugs: "issuetype = Bug ORDER BY updated DESC", highPriorities: ["P0", "P1"] }),
     'issuetype = Bug AND priority in ("P0", "P1") ORDER BY updated DESC');
