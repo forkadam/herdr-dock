@@ -201,3 +201,19 @@ export function jiraOptions(settings) {
     warnings,
   };
 }
+
+// ---- The settings form's Scrum board and High priorities ----
+
+// The file's highPriorities as the form's comma-separated text (only its names; anything else is no list).
+export function prioritiesText(settings) {
+  const hp = isObj(settings) ? settings.highPriorities : null;
+  return Array.isArray(hp) ? hp.filter(nonEmpty).map((p) => p.trim()).join(", ") : "";
+}
+
+// The settings with the form's choices: `board` (a picked board's id, or null for none) and `priorities` (the typed
+// text, comma-separated). None or nothing typed removes the key, so the default applies and is never written.
+export function withFormOptions(settings, { board, priorities }) {
+  const { board: _b, highPriorities: _h, ...rest } = isObj(settings) ? settings : {};
+  const names = String(priorities ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  return { ...rest, ...(board != null ? { board } : {}), ...(names.length ? { highPriorities: names } : {}) };
+}

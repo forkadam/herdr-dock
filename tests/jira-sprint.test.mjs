@@ -203,3 +203,67 @@ test("sprintLabel: a closed sprint reads ended whatever its end date; the count 
   assert.equal(sprintLabel({ ...early, state: "active" }, at(2026, 11, 22, 12)), "Sprint 41 · Nov 2 – Nov 27 · 5 days left");
   assert.equal(sprintLabel(S(40, "Sprint 40", "closed", null, null), at(2026, 11, 22)), "Sprint 40", "no dates: still just the name");
 });
+
+// ---- What Today's board asks Jira, and how it draws (Task 8) ----
+import { SPRINT_CACHE_MS, laneCells, litColumns, menuSprint, sprintCacheDue, sprintJql, sprintMineJql } from "../src/shared/jira/sprint.js";
+
+test("sprintJql / sprintMineJql: your issues in a sprint, in the board's order; and their count", () => {
+  assert.equal(sprintJql(42), "sprint = 42 AND assignee = currentUser() ORDER BY Rank");
+  assert.equal(sprintMineJql(7), "sprint = 7 AND assignee = currentUser()");
+});
+
+test("sprintCacheDue: the board's columns, statuses and sprints are read again after an hour, at once the first time", () => {
+  assert.equal(SPRINT_CACHE_MS, 3600e3);
+  assert.equal(sprintCacheDue(null, 5000), true);
+  assert.equal(sprintCacheDue(undefined, 5000), true);
+  assert.equal(sprintCacheDue(5000, 5000 + SPRINT_CACHE_MS - 1), false);
+  assert.equal(sprintCacheDue(5000, 5000 + SPRINT_CACHE_MS), true);
+});
+
+const COLS = [
+  { name: "To Do", statuses: ["To Do"] },
+  { name: "Doing", statuses: ["In Progress", "Handling"] },
+  { name: "Done", statuses: ["Done", "Closed"] },
+  { name: "Parked", statuses: [] },
+];
+
+test("litColumns: a column lights while dragging when it holds a status the card can reach", () => {
+  assert.deepEqual([...litColumns(COLS, new Set(["In Progress", "Closed"]), "To Do")], ["Doing", "Done"]);
+  assert.deepEqual([...litColumns(COLS, new Set(), "To Do")], []);
+  assert.deepEqual([...litColumns(COLS, null, "To Do")], []);
+  assert.deepEqual([...litColumns(null, new Set(["Done"]), "To Do")], []);
+});
+
+test("litColumns: never the card's own column, even when its workflow reaches a sibling status there (a drop there does nothing)", () => {
+  assert.deepEqual([...litColumns(COLS, new Set(["Handling", "Done"]), "In Progress")], ["Done"]);
+  // columnDrop agrees: the own column is a no-op, the lit one runs.
+  const tr = (id, to) => ({ id, name: `to ${to}`, to: { name: to } });
+  assert.equal(columnDrop([tr("1", "Handling"), tr("2", "Done")], COLS[1], "In Progress").kind, "none");
+  assert.equal(columnDrop([tr("1", "Handling"), tr("2", "Done")], COLS[2], "In Progress").kind, "run");
+});
+
+test("laneCells: a lane's cards by the board's columns, in the lane's order; a status no column holds is left out, as on Jira's board", () => {
+  const r = (key, status) => ({ key, status });
+  const lane = { parent: null, rows: [r("A-1", "Handling"), r("A-2", "To Do"), r("A-3", "In Progress"), r("A-4", "Blocked"), r("A-5", "Closed")] };
+  assert.deepEqual(laneCells(lane, COLS).map((c) => c.map((x) => x.key)), [["A-2"], ["A-1", "A-3"], ["A-5"], []]);
+  assert.deepEqual(laneCells({ parent: null, rows: [] }, COLS), [[], [], [], []]);
+  assert.deepEqual(laneCells(lane, []), []);
+  assert.deepEqual(laneCells(null, COLS.slice(0, 1)), [[]]);
+});
+
+test("menuSprint: the sprint menu's anchor is the current sprint; without one, the sprint that ended last, else the next to start", () => {
+  const s39 = S(39, "Sprint 39", "closed", 0, 2), s40 = S(40, "Sprint 40", "closed", 1, 5), s44 = S(44, "Sprint 44", "future", 20, 30);
+  assert.equal(menuSprint(s42, [s41, s42, s43]).id, 42);
+  assert.equal(menuSprint(null, [s39, s40, s43, s44]).id, 40);
+  assert.equal(menuSprint(null, [S(38, "Sprint 38", "closed", 0, 5), S(37, "Sprint 37", "closed", 0, 5)]).id, 38, "a tie: the higher id");
+  assert.equal(menuSprint(null, [s43, s44]).id, 44, "no closed one: the earliest start among the future ones");
+  assert.equal(menuSprint(null, [s43]).id, 43, "a future sprint without dates still anchors");
+  assert.equal(menuSprint(null, []), null);
+  assert.equal(menuSprint(null, null), null);
+});
+
+test("menuSprint with sprintSeries: a board with no active sprint still offers its series (Review Focus 5)", () => {
+  const s39 = S(39, "Sprint 39", "closed", 0, 2), s40 = S(40, "Sprint 40", "closed", 1, 5);
+  const all = [s39, s40, s43, otter];
+  assert.deepEqual(ids(sprintSeries(menuSprint(null, all.filter((s) => s.state !== "active")), all, new Map())), [43, 40, 39]);
+});

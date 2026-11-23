@@ -173,7 +173,7 @@ time, for the whole window (not per space or tab), so a page is never open twice
 ## Jira page
 
 `dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues in tabs, each a list or a
-board, an issue's detail beside them, quick actions, and **Start work**.
+board, your team's sprint board on **Today**, an issue's detail beside them, quick actions, and **Start work**.
 
 - **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
 - **Connect**: the page asks for Jira's address and a **personal access token** (Jira → Profile → Personal Access
@@ -181,7 +181,7 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
 - **Where things live** (per PC, never in git or the shared config):
   - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
-    own tabs (`views`).
+    own tabs (`views`), the Scrum board (`board`, its id).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -191,12 +191,30 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
   **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
   reaches curl only through the private `-K` file, never on its command line.
-- **Tabs** under the header, each with its count: your own tabs (`views` in the settings file, in their order), then
-  **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
+- **Tabs** under the header, each with its count: **Today** (when a Scrum board is set, below), your own tabs
+  (`views` in the settings file, in their order), then **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
   old ticket). Each tab keeps its own search text, rows and open issue while Herdr runs, so switching back finds it
   as you left it; the shown tab, and each tab's List / Board choice, are remembered per PC. The shown tab refreshes as
   below; the others' counts every 10 minutes (one count-only search each). A tab whose search Jira rejects shows `!`
   and says why, while the other tabs carry on.
+- **Today** is your Scrum board's current sprint, laid out like the board in Jira Software: the board's own columns
+  (each holding the statuses the board maps to it) sharing the width, and one lane per parent story (its key, status
+  and summary; click it to fold the lane), then **Other issues**. It lists the sprint's issues assigned to you, done
+  ones too, as Jira's board does (an issue in a status the board has no column for isn't shown, as there either). The
+  current sprint is the board's active sprint holding most of your issues (a tie: the one that started first); its
+  name, dates and days left head the board. Today has no search box and no List / Board switch.
+  - **Scrum board** (Settings): type part of the board's name and pick it from Jira's scrum boards; the page keeps its
+    id as `board` in `jira-work.json` (you can also write `"board": <id>` there). **No board** removes it, and the
+    Today tab with it.
+  - **The sprint menu** (the sprint's name): its series, the sprints whose name differs only by its number
+    (`Sprint 41`, `Sprint 42`, …), newest first: the next one, the active one and the last 5 closed. A sprint named
+    without a number lists the sprints holding your issues instead. Picking one shows it until Herdr restarts. With no
+    active sprint Today says so, and the menu offers the series of the sprint that ended last.
+  - **Drag a card** to another column: a column lights up when the issue's workflow reaches any status it holds. A
+    drop there runs that move, asks which when several lead there (and for a Resolution when the step needs one), and
+    on a dimmed column says, in that column, where the issue can go. A drop on the card's own column does nothing.
+  - **Requests**: each refresh asks for the shown sprint's issues; the board's columns, statuses and sprints (and how
+    many of yours each active sprint holds) once an hour, or when you press refresh. Today's tab has no count.
 - **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"? }`. The id is lower-case
   letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type first,
   then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
@@ -226,7 +244,7 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   there too, from Jira's allowed values. Dropping on a dimmed column says, in that column, where the issue can go.
   A moved card stays in its new column until you change the filter or search (a move to Done takes it out of an
   "unresolved" filter). A step that needs more than one picked value names what's missing and links to Jira.
-  This is a board of the filter's statuses, not your Jira sprint board.
+  This is a board of the filter's statuses; your Jira sprint board is on Today.
 - **Detail**: description (Jira markup shown as text), last 5 comments, links, Open in browser. **Actions**: the
   status pill lists the moves the workflow allows (a step that needs a Resolution asks for it; one that needs more
   names what's missing and links to Jira), Assign to me, and a one-line comment box (Enter or Send).
@@ -242,8 +260,8 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   badge) until you press **Connect again** or **Try again**. The refresh button reconnects at once. A new address
   forgets the old site's issues.
 - **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
-  `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-mine`,
-  `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
+  `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
+  `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
   `mock-token`) with 33 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.

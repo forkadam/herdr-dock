@@ -1,7 +1,8 @@
 // The Jira page: the company's self-hosted Jira (Server / Data Center) as a dock page. Your issues and filters as a
-// list or a board, an issue's detail beside them. Connects with a personal access token kept in a private file
-// (src/shared/jira/store.js); requests go through Herdr's fetch or curl (src/shared/jira/client.js). Everything that
-// decides something is pure and tested under src/shared/jira/; this file draws and keeps state.
+// list or a board, the team's sprint board on Today (sprint-view.js), an issue's detail beside them. Connects with a
+// personal access token kept in a private file (src/shared/jira/store.js); requests go through Herdr's fetch or curl
+// (src/shared/jira/client.js). Everything that decides something is pure and tested under src/shared/jira/; this file
+// draws and keeps state.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
@@ -13,11 +14,13 @@ import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countFailure, countText, filterList, needsDetail,
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
-import { jiraOptions, normalizeBaseUrl, settingsReload, siteName } from "../../shared/jira/settings.js";
+import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
+import { columnDrop, laneCells, pickSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
+import { sprintBoard } from "./sprint-view.js";
 import { tabBar } from "./tabs.js";
 
 const MOD = "dock-jira";
@@ -35,6 +38,14 @@ const WARN = "#d29922";
 // Problems that mean "can't talk to Jira at all" (the whole page says so), versus ones about one request.
 const PAGE_PROBLEMS = ["auth", "forbidden", "offline", "tls", "timeout", "server", "nocurl", "unknown"];
 const TYPE_COLOR = (t, type) => ({ Bug: t.blocked, Story: t.done, Epic: "#8b5cf6" })[type] ?? t.accent;
+// Today's sprint board with nothing read yet, for `board` (the settings' board id; null: none). `board` becomes
+// { id, name } with the name once its configuration is read; `mine`: active sprint id -> how many of yours it holds;
+// `picked`: the sprint picked in the menu (null: the current one); `cachedAt`: when the board's columns, statuses and
+// sprints were read (refreshToday); `at`: when the shown sprint's issues were.
+const blankSprint = (board) => ({
+  board: board == null ? null : { id: board, name: null }, columns: [], active: [], all: [], mine: new Map(), current: null,
+  shown: null, picked: null, rows: [], total: undefined, problem: null, at: null, cachedAt: null,
+});
 
 export default class Jira extends View {
   init(_props, cx) {
@@ -56,6 +67,13 @@ export default class Jira extends View {
     this.tabId = null;
     this.states = new Map();
     this.counts = new Map(); // tab id -> { total?, problem?, loading? }
+    // Today's sprint board (refreshToday; the tab's selection, loading and fetchedAt are in state("today")), its
+    // sprint menu, the lanes folded by hand (parent key; "" is Other issues; while Herdr runs), and the column a card
+    // was last dropped on there (its choice box or note shows in that column, in the card's lane).
+    this.sprint = blankSprint(null);
+    this.sprintOpen = false;
+    this.collapsed = new Set();
+    this.dropColumn = null;
     this.countsAt = undefined; // when the hidden tabs were last counted
     this.lastPollAt = undefined;
     this.pollFailed = false;
@@ -89,11 +107,20 @@ export default class Jira extends View {
     this.tokenInput.set_masked(true);
     this.taskInput = InputState.new({ placeholder: "Work on Jira issue {key}: {summary}\\n{url}" });
     this.caInput = InputState.new({ placeholder: "Optional: path to the company CA file (curl)" });
+    // Settings' Scrum board: the board picked ({ id, name }, null: none) and the scrum boards whose name holds what's
+    // typed (null, "loading", [{ id, name }] or { problem }); the newest search wins. Enter picks the first.
+    this.boardChoice = null;
+    this.boardHits = null;
+    this.boardSeq = latestOnly();
+    this.boardInput = InputState.new({ placeholder: "Type part of the board's name" });
+    this.boardInput.on("change", (_e, cx) => this.searchBoards(cx));
+    this.boardInput.on("submit", (_e, cx) => { if (Array.isArray(this.boardHits) && this.boardHits.length) this.pickBoard(this.boardHits[0], cx); });
+    this.prioInput = InputState.new({ placeholder: DEFAULT_HIGH_PRIORITIES.join(", ") });
     // A one-line box, as Herdr's own prompt uses: TextareaState.value() came back empty in Herdr (typed text never
     // reached Send). Enter sends.
     this.commentInput = InputState.new({ placeholder: "Add a comment… (Enter sends)" });
     this.commentInput.on("submit", (_e, cx) => this.sendComment(cx));
-    for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput]) input.on("submit", (_e, cx) => this.saveForm(cx));
+    for (const input of [this.urlInput, this.tokenInput, this.taskInput, this.caInput, this.prioInput]) input.on("submit", (_e, cx) => this.saveForm(cx));
     this.taskInput.on("change", (_e, cx) => cx.notify()); // the preview follows the typing
     this.transportChoice = "fetch";
 
@@ -136,8 +163,13 @@ export default class Jira extends View {
     }
   }
 
-  // Issue keys in the order they're drawn (by section and group in the list, by column on the board).
+  // Issue keys in the order they're drawn (by section and group in the list, by column on the board; on Today by
+  // lane, then column, leaving out folded lanes).
   visibleOrder() {
+    if (this.tab().kind === "today") {
+      const cols = this.sprint.columns;
+      return sprintRows(this.sprint.rows).filter((l) => !this.collapsed.has(l.parent?.key ?? "")).flatMap((l) => laneCells(l, cols).flat()).map((r) => r.key);
+    }
     const rows = this.shownRows();
     const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : sectionsFor(rows, this.tab().group).flatMap((s) => s.parts);
     return parts.flatMap((p) => p.rows.map((r) => r.key));
@@ -145,8 +177,8 @@ export default class Jira extends View {
 
   // ---- tabs ----
 
-  // The tabs, left to right: the user's views (settings), Mine, All. Today joins them later.
-  tabs() { return tabList(this.options.views, { today: false }); }
+  // The tabs, left to right: Today (when the settings name a board), the user's views (settings), Mine, All.
+  tabs() { return tabList(this.options.views, { today: this.options.board != null }); }
   // The shown tab: the one picked, else the remembered one, else the first (a view may have left the settings).
   tab() { return pickTab(this.tabs(), this.tabId ?? shared(TAB_KEY)); }
 
@@ -188,6 +220,7 @@ export default class Jira extends View {
     this.tabId = tab.id;
     setShared(TAB_KEY, tab.id);
     this.filterOpen = false;
+    this.sprintOpen = false;
     this.press = null;
     this.drag = null;
     this.dropChoice = null;
@@ -222,6 +255,12 @@ export default class Jira extends View {
   async load() {
     this.jira = await loadJira(this.io(), this.site);
     this.options = jiraOptions(this.jira.settings);
+    // Another board in the settings (or none): Today's board, selection and scroll start over.
+    if ((this.sprint.board?.id ?? null) !== this.options.board) {
+      this.sprint = blankSprint(this.options.board);
+      this.states.delete("today");
+      this.scrollTop("today");
+    }
     const s = this.jira.settings;
     this.urlInput.set_value(s.baseUrl);
     this.taskInput.set_value(s.startTask);
@@ -275,19 +314,22 @@ export default class Jira extends View {
     await this.refreshCounts(cx);
   }
 
-  // Refresh by hand: connect again when not connected (or after a problem), else the list and the open issue.
+  // Refresh by hand: connect again when not connected (or after a problem), else the list (on Today, the board's
+  // columns and sprints too) and the open issue.
   async reload(cx) {
     if (!this.jira?.settings.baseUrl || !this.jira.token) return;
     if (!this.connected || this.problem) { await this.connect(cx); return; }
-    await this.refresh(cx);
+    await this.refresh(cx, { fresh: true });
     if (this.selected) await this.loadDetail(cx, this.selected);
   }
 
   // The shown tab's list (its search, and its search text) and its count, and the badge. The tab's newest search
-  // wins; the answer goes to the tab it was asked for, even if another is shown by then.
-  async refresh(cx, { more = false } = {}) {
+  // wins; the answer goes to the tab it was asked for, even if another is shown by then. Today is its sprint board
+  // (refreshToday; `fresh`: its board's columns and sprints read again too).
+  async refresh(cx, { more = false, fresh = false } = {}) {
     if (!this.connected || !this.jira) return;
     const tab = this.tab();
+    if (tab.kind === "today") { await this.refreshToday(cx, { fresh }); return; }
     const s = this.state(tab.id);
     const seq = s.seq.next();
     const f = this.source(tab);
@@ -330,6 +372,107 @@ export default class Jira extends View {
     this.paused = effect.pause;
     if (effect.clearBadge) setShared(BADGE_KEY, null);
     return true;
+  }
+
+  // ---- Today: the sprint board ----
+
+  // Today's board: its columns, statuses and sprints, and how many of yours each active sprint holds (which picks
+  // the current sprint), read when due (hourly) or `fresh`; then, every time, the shown sprint's issues assigned to
+  // you, in the board's order. Only for the shown tab (refresh() sends it here). Its newest call wins; an answer for
+  // a board or a site the page has left since is dropped. Problems: as refresh's (pageProblem, else Today's own).
+  async refreshToday(cx, { fresh = false } = {}) {
+    const board = this.options.board;
+    if (!this.connected || !this.jira || board == null) return;
+    const s = this.state("today");
+    const seq = s.seq.next();
+    const live = () => s.seq.accept(seq) && this.states.get("today") === s && this.options.board === board;
+    s.loading = true;
+    cx.notify();
+    const c = this.client(cx);
+    if (fresh || sprintCacheDue(this.sprint.cachedAt, Date.now())) {
+      const got = await this.readSprints(c, board);
+      if (!live()) return;
+      if (!got.ok) { this.todayFailed(s, got.problem, cx); return; }
+      this.sprint = { ...this.sprint, ...got.data };
+    }
+    const sp = this.sprint;
+    // The sprint picked in the menu while it's still on the board, else the current one (none: no active sprint).
+    const shown = (sp.picked != null && sp.all.find((x) => x.id === sp.picked)) || sp.current;
+    let found = { ok: true, data: { issues: [], total: 0 } };
+    if (shown) {
+      found = await c.search(sprintJql(shown.id), { maxResults: refreshSize(sp.shown?.id === shown.id ? sp.total : 0) });
+      if (!live()) return;
+      if (!found.ok) { this.todayFailed(s, found.problem, cx); return; }
+    }
+    const base = this.jira.settings.baseUrl;
+    this.sprint = {
+      ...this.sprint, shown: shown ?? null, picked: shown && shown.id !== sp.current?.id ? shown.id : null,
+      rows: (found.data?.issues ?? []).map((i) => issueRow(i, base)), total: found.data?.total, problem: null, at: Date.now(),
+    };
+    s.loading = false;
+    s.fetchedAt = this.sprint.at;
+    this.lastPollAt = Date.now();
+    this.pollFailed = false;
+    this.problem = null;
+    cx.notify();
+    await this.updateBadge(cx, { id: "today" }, s);
+  }
+
+  // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
+  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint.
+  async readSprints(c, board) {
+    const conf = await c.boardConfiguration(board);
+    if (!conf.ok) return conf;
+    const statuses = await c.statuses();
+    if (!statuses.ok) return statuses;
+    const sprints = await c.sprints(board, ["active", "future", "closed"]);
+    if (!sprints.ok) return sprints;
+    const active = sprints.data.filter((x) => x.state === "active");
+    const mine = new Map();
+    for (const a of active) {
+      const n = await c.search(sprintMineJql(a.id), { maxResults: 0 });
+      if (!n.ok) return n;
+      mine.set(a.id, Number.isFinite(n.data?.total) ? n.data.total : 0);
+    }
+    return { ok: true, data: {
+      board: { id: board, name: conf.data.name ?? null }, columns: sprintColumns(conf.data.columns, statuses.data),
+      active, all: sprints.data, mine, current: pickSprint(active, mine), cachedAt: Date.now(),
+    } };
+  }
+
+  // A Today request that failed: the whole page when Jira can't be reached (pageProblem), else said on Today (over
+  // the board it last had, if any). Retried on the poll, as the lists are.
+  todayFailed(s, problem, cx) {
+    s.loading = false;
+    this.lastPollAt = Date.now();
+    this.pollFailed = true;
+    if (!this.pageProblem(problem)) this.sprint = { ...this.sprint, problem };
+    cx.notify();
+  }
+
+  // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
+  // on the current sprint when Herdr starts).
+  showSprint(id, cx) {
+    this.sprintOpen = false;
+    const sp = this.sprint;
+    const pick = sp.all.find((x) => x.id === id);
+    if (!pick || pick.id === sp.shown?.id) { cx.notify(); return; }
+    this.sprint = { ...sp, shown: pick, picked: pick.id === sp.current?.id ? null : pick.id, rows: [], total: undefined, problem: null, at: null };
+    this.state("today").fetchedAt = null;
+    this.selected = null;
+    this.detail = null;
+    this.dropChoice = null;
+    this.dropNote = null;
+    this.scroll("today/board")?.scroll_to_item(0);
+    cx.notify();
+    cx.spawn(async (cx) => this.refresh(cx));
+  }
+
+  // A lane's header folds it, or unfolds it.
+  toggleLane(key, cx) {
+    if (this.collapsed.has(key)) this.collapsed.delete(key);
+    else this.collapsed.add(key);
+    cx.notify();
   }
 
   // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time.
@@ -575,6 +718,7 @@ export default class Jira extends View {
     if (!drag) return;
     this.drag = null;
     cx.notify();
+    if (this.tab().kind === "today") { this.droppedOnColumn(drag, cx); return; }
     if (!drag.over) {
       // Released over a dimmed column: say why there, rather than nothing at all.
       if (drag.hover && drag.hover !== drag.row.status && Array.isArray(drag.transitions)) {
@@ -585,6 +729,20 @@ export default class Jira extends View {
     const plan = dropPlan(drag.transitions, drag.over, drag.row.status);
     if (plan.kind === "run") this.moveCard(drag.row, plan.transition, cx);
     else if (plan.kind === "choose") this.dropChoice = { row: drag.row, status: drag.over, transitions: plan.transitions };
+  }
+
+  // Today: a drop on one of the board's columns (several statuses; `hover` is its name) runs the move into it, asks
+  // which when several lead there, or says why not (columnDrop). A drop on the card's own column does nothing.
+  droppedOnColumn(drag, cx) {
+    const col = this.sprint.columns.find((c) => c.name === drag.hover);
+    if (!col || !Array.isArray(drag.transitions)) return;
+    this.dropColumn = col.name;
+    const plan = columnDrop(drag.transitions, col, drag.row.status);
+    if (plan.kind === "run") this.moveCard(drag.row, plan.transition, cx);
+    else if (plan.kind === "choose") this.dropChoice = { row: drag.row, status: col.name, transitions: plan.transitions };
+    else if (!col.statuses.includes(drag.row.status)) {
+      this.dropNote = { status: col.name, key: drag.row.key, text: refusedDropText(drag.row.key, drag.row.status, col.name, drag.targets) };
+    }
   }
 
   // The move runs like one picked in the status menu, with the issue opened beside the board to show the result.
@@ -636,7 +794,38 @@ export default class Jira extends View {
       this.taskInput.set_value(this.jira.settings.startTask);
       this.caInput.set_value(this.jira.settings.caFile);
       this.transportChoice = this.jira.settings.transport;
+      // The board's name is known once Today has read its configuration.
+      this.boardChoice = this.options.board != null ? { id: this.options.board, name: this.sprint.board?.name ?? null } : null;
+      this.boardHits = null;
+      this.boardSeq.next();
+      this.boardInput.set_value("");
+      this.prioInput.set_value(prioritiesText(this.jira.settings));
     }
+    cx.notify();
+  }
+
+  // The Scrum board field: Jira's scrum boards whose name holds what's typed, asked once typing pauses.
+  searchBoards(cx) {
+    const text = this.boardInput.value().trim();
+    const seq = this.boardSeq.next();
+    if (!text || !this.jira?.settings.baseUrl || !this.jira.token) { this.boardHits = null; cx.notify(); return; }
+    this.boardHits = "loading";
+    cx.notify();
+    cx.spawn(async (cx) => {
+      await cx.sleep(250);
+      if (!this.boardSeq.accept(seq)) return;
+      const r = await this.client(cx).boards(text);
+      if (!this.boardSeq.accept(seq)) return;
+      this.boardHits = r.ok ? r.data : { problem: r.problem };
+      cx.notify();
+    });
+  }
+
+  pickBoard(b, cx) {
+    this.boardChoice = { id: b.id, name: b.name ?? null };
+    this.boardHits = null;
+    this.boardSeq.next();
+    this.boardInput.set_value("");
     cx.notify();
   }
 
@@ -658,8 +847,10 @@ export default class Jira extends View {
         }
         // Another Jira: forget the old one's issues, open issue and filters, so nothing asks the new site for them.
         if (url.url !== this.jira.settings.baseUrl) { this.clearView(); this.connected = false; setShared(BADGE_KEY, null); }
-        const settings = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
+        const fields = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
           startTask: this.taskInput.value(), caFile: this.caInput.value().trim() };
+        // The Scrum board and High priorities are on the form opened by hand only (not on the first Connect).
+        const settings = this.editing ? withFormOptions(fields, { board: this.boardChoice?.id ?? null, priorities: this.prioInput.value() }) : fields;
         const s = await saveSettings(io, this.site, settings, this.jira.settingsText ?? undefined);
         if (!s.ok) { this.formError = s.error; return; }
         await this.load();
@@ -686,11 +877,11 @@ export default class Jira extends View {
     });
   }
 
-  // A new Jira address, or Disconnect: the old site's issues (every tab's list and count), open issue and filters are
-  // forgotten. CLEARED_VIEW's list fields live in the tabs' states now, so they go with those.
+  // A new Jira address, or Disconnect: the old site's issues (every tab's list and count, Today's board), open issue
+  // and filters are forgotten. CLEARED_VIEW's list fields live in the tabs' states now, so they go with those.
   clearView() {
     const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
-    Object.assign(this, view, { states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map() });
+    Object.assign(this, view, { states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map(), sprint: blankSprint(this.options.board) });
     for (const h of this.scrolls.values()) h?.scroll_to_item(0);
     this.searchInput.set_value("");
   }
@@ -746,6 +937,8 @@ export default class Jira extends View {
         .when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either.")))
         .child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}"))
         .child(this.preview(t))
+        .when(!first, (el) => el.child(this.boardField(t))
+          .child(this.field(t, "High priorities", this.prioInput, `Your Jira's names for urgent priorities, comma-separated (e.g. P0, P1). Empty: ${DEFAULT_HIGH_PRIORITIES.join(", ")}.`)))
         .child(this.fileNote(t))
         .when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError)))
         .child(h_flex().gap(8).pt(4)
@@ -754,6 +947,27 @@ export default class Jira extends View {
           .child(div().flex_1())
           .when(Boolean(this.jira?.token), (el) => el.child(this.button(t, "jira-disconnect", "Disconnect", (cx) => { this.editing = false; this.disconnect(cx); }, { tip: "Forget the token on this PC" }))))
         .when(Boolean(this.jira?.problem) && !this.options.warnings.includes(this.jira.problem), (el) => el.child(div().text_size(11.5).text_color(WARN).child(this.jira.problem))));
+  }
+
+  // The Scrum board: the one picked (its name), a search box over Jira's scrum boards and the ones found, to pick.
+  boardField(t) {
+    const c = this.boardChoice;
+    const hits = this.boardHits;
+    const note = (text, color = t.dim) => div().px(8).py(6).text_size(11.5).text_color(color).child(text);
+    const hit = (b) => h_flex().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+      .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx))
+      .child(div().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
+    const found = hits === "loading" ? [note("Searching…")]
+      : hits?.problem ? [note(`${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), t.blocked)]
+        : Array.isArray(hits) ? (hits.length ? hits.map(hit) : [note("No scrum board has that in its name.")]) : [];
+    return v_flex().gap(5)
+      .child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null))
+      .when(found.length > 0, (el) => el.child(v_flex().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8)
+        .border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found)))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns. Type part of its name, then pick it."))
+        .when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => { this.boardChoice = null; cx.notify(); }))));
   }
 
   // Where the tabs (views) and the other options are edited by hand, and each entry of that file the page skipped.
@@ -790,7 +1004,10 @@ export default class Jira extends View {
 
   header(t) {
     const tab = this.tab();
+    // Today is its sprint board only: no search box, no List / Board.
+    const today = tab.kind === "today";
     const list = this.state(tab.id);
+    const [shownCount, total] = today ? [this.sprint.rows.length, this.sprint.total] : [list.rows.length, list.total];
     const f = this.filter();
     const filters = this.filters();
     const view = this.layout();
@@ -820,11 +1037,11 @@ export default class Jira extends View {
       .child(div().text_size(16).font_semibold().child("Jira"))
       .child(div().text_size(12).text_color(t.dim).max_w(180).truncate().child(host))
       .when(Boolean(picker), (el) => el.child(picker))
-      .child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
-        .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
+      .when(!today, (el) => el.child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
+        .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground))))
       .child(div().flex_1())
-      .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? `${countText(list.rows.length, list.total)} · updated ${ago(list.fetchedAt, Date.now())}` : ""))
-      .child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))
+      .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? `${countText(shownCount, total)} · updated ${ago(list.fetchedAt, Date.now())}` : ""))
+      .when(!today, (el) => el.child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board"))))
       .child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx) => this.reload(cx))))
       .child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
   }
@@ -1094,12 +1311,13 @@ export default class Jira extends View {
     }
     const s = this.shown();
     const message = (text) => v_flex().flex_1().items_center().justify_center().text_color(t.dim).child(text);
-    const body = s.listProblem
-      ? v_flex().flex_1().p(24).gap(6).child(div().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div().text_size(12).text_color(t.dim).child(s.listProblem.hint))
-      : !s.fetchedAt ? message("Loading…") // a tab shown for the first time
-        : !s.rows.length && !s.loading
-          ? message(s.query ? `Nothing matches "${s.query}".` : "No issues in this filter.")
-          : this.layout() === "board" ? this.boardView(t) : this.listView(t);
+    const body = this.tab().kind === "today" ? sprintBoard(this, t)
+      : s.listProblem
+        ? v_flex().flex_1().p(24).gap(6).child(div().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div().text_size(12).text_color(t.dim).child(s.listProblem.hint))
+        : !s.fetchedAt ? message("Loading…") // a tab shown for the first time
+          : !s.rows.length && !s.loading
+            ? message(s.query ? `Nothing matches "${s.query}".` : "No issues in this filter.")
+            : this.layout() === "board" ? this.boardView(t) : this.listView(t);
     return root.child(this.header(t))
       .child(tabBar(this, t))
       // A plain flex row (h_flex centers vertically): the list, board and detail fill the height.

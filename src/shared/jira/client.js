@@ -109,9 +109,13 @@ export function createClient({ base, transport = "fetch", token, curlConfigPath,
     // The scrum boards (whose name has `name` in it, when given): [{ id, name, type }].
     boards: never((name) => request("GET", agile(`/board?${new URLSearchParams({ type: "scrum", ...(name ? { name } : {}) })}`))
       .then((r) => map(r, (d) => objects(d?.values).filter(hasId).map((b) => ({ id: b.id, name: b.name, type: b.type }))))),
-    // A board's columns, each with the ids (strings) of the statuses it holds: { columns: [{ name, statusIds }] }.
+    // A board's columns, each with the ids (strings) of the statuses it holds, and the board's name when Jira sends
+    // one: { name?, columns: [{ name, statusIds }] }.
     boardConfiguration: never((id) => request("GET", agile(`/board/${encodeURIComponent(id)}/configuration`))
-      .then((r) => map(r, (d) => ({ columns: objects(d?.columnConfig?.columns).filter((c) => typeof c.name === "string").map((c) => ({ name: c.name, statusIds: objects(c.statuses).filter(hasId).map((st) => String(st.id)) })) })))),
+      .then((r) => map(r, (d) => ({
+        ...(typeof d?.name === "string" && d.name.trim() ? { name: d.name } : {}),
+        columns: objects(d?.columnConfig?.columns).filter((c) => typeof c.name === "string").map((c) => ({ name: c.name, statusIds: objects(c.statuses).filter(hasId).map((st) => String(st.id)) })),
+      })))),
     // A board's sprints in the given states ("active", "future", "closed"; anything but a list means all), in Jira's
     // order, following its pages of 50 (isLast; at most 20 pages): [{ id, name, state, startMs, endMs }]. A page that
     // fails fails the call.

@@ -86,6 +86,7 @@ for (const transport of ["fetch", "curl"]) {
     const c = client(transport);
     assert.deepEqual((await c.boards("WEB")).data.map((b) => b.id), [1]);
     assert.deepEqual((await c.boardConfiguration(1)).data.columns[1], { name: "In Progress", statusIds: ["3", "10001"] });
+    assert.equal((await c.boardConfiguration(1)).data.name, "WEB board");
     const s = (await c.sprints(1, ["active"])).data;
     assert.deepEqual(s.map((x) => x.name), ["Sprint 42", "Otter Sprint 7"]);
     assert.ok(Number.isFinite(s[0].startMs) && typeof s[0].id === "number");
@@ -188,6 +189,15 @@ test("boardConfiguration: columns that aren't objects with a name, and statuses 
   assert.deepEqual(r.data.columns.map((c) => [c.name, c.statusIds]), [["To Do", ["1", "10000"]], ["Done", []], ["Odd", []]]);
   for (const odd of [null, {}, { columnConfig: null }, { columnConfig: { columns: "x" } }, "text"]) {
     assert.deepEqual((await stubClient(() => ({ body: odd })).c.boardConfiguration(1)).data, { columns: [] }, JSON.stringify(odd));
+  }
+});
+
+test("boardConfiguration: the board's name when Jira sends one (Today says which board has no active sprint)", async () => {
+  const r = await stubClient(() => ({ body: { id: 1, name: "WEB board", columnConfig: { columns: [{ name: "To Do", statuses: [{ id: "1" }] }] } } })).c.boardConfiguration(1);
+  assert.deepEqual(r.data, { name: "WEB board", columns: [{ name: "To Do", statusIds: ["1"] }] });
+  for (const name of [null, 5, "", "  ", {}]) {
+    const odd = await stubClient(() => ({ body: { name, columnConfig: { columns: [] } } })).c.boardConfiguration(1);
+    assert.deepEqual(odd.data, { columns: [] }, JSON.stringify(name));
   }
 });
 

@@ -1,5 +1,6 @@
 // The sprint board's pure model (no host imports): the board's columns by status name, the sprint to open on, the
-// sprint menu, lanes by parent story, what a drop on a column can do and a sprint's one-line label.
+// sprint menu, lanes by parent story, what a drop on a column can do and a sprint's one-line label; and for Today's
+// board, what it asks Jira and how often, which columns light during a drag and a lane's cards by column.
 // Sprint = { id, name, state: "active" | "future" | "closed", startMs, endMs } (client.js sprints()).
 
 const DAY_MS = 86400000;
@@ -120,4 +121,44 @@ export function sprintLabel(sprint, now) {
   const days = Math.round((dayOf(end) - dayOf(now)) / DAY_MS);
   if (days <= 0) return `${head} · ends today`;
   return `${head} · ${days} ${days === 1 ? "day" : "days"} left`;
+}
+
+// ---- Today's board: what it asks Jira and how it draws ----
+
+// Your issues in a sprint, in the board's order (done ones too, as on Jira's board); and only their count.
+export const sprintJql = (id) => `sprint = ${id} AND assignee = currentUser() ORDER BY Rank`;
+export const sprintMineJql = (id) => `sprint = ${id} AND assignee = currentUser()`;
+
+// The board's columns, statuses and sprints (and your count per active sprint) change rarely: read again after an
+// hour (or on a refresh by hand), and at once the first time.
+export const SPRINT_CACHE_MS = 60 * 60e3;
+export const sprintCacheDue = (at, now) => !Number.isFinite(at) || now - at >= SPRINT_CACHE_MS;
+
+// The columns that light up while a card is dragged: each holding a status its workflow reaches now (`targets`,
+// dropTargets'), except the card's own column (a drop there never changes its status: columnDrop).
+export function litColumns(columns, targets, current) {
+  const out = new Set();
+  for (const c of list(columns)) {
+    const statuses = list(c?.statuses);
+    if (!statuses.includes(current) && statuses.some((s) => targets?.has?.(s))) out.add(c.name);
+  }
+  return out;
+}
+
+// A lane's cards, one list per column in the columns' order, each in the lane's order. A card whose status no column
+// holds is in none, as on Jira's board.
+export function laneCells(lane, columns) {
+  const rows = list(lane?.rows);
+  return list(columns).map((c) => { const into = new Set(list(c?.statuses)); return rows.filter((r) => into.has(r?.status)); });
+}
+
+// The sprint the menu's series is taken from: the current sprint; on a board with no active sprint, the one that
+// ended last (by end, else start; a tie: the higher id), else the next to start (earliest). Null without sprints.
+export function menuSprint(current, sprints) {
+  if (current) return current;
+  const all = list(sprints);
+  const rank = (s) => num(s.endMs) ?? num(s.startMs) ?? -Infinity;
+  const closed = all.filter((s) => s?.state === "closed").sort((a, b) => rank(b) - rank(a) || b.id - a.id);
+  if (closed.length) return closed[0];
+  return all.filter((s) => s?.state === "future").sort(earliest)[0] ?? null;
 }

@@ -415,3 +415,34 @@ test("settingsReload: good text loads; another address is a new site", () => {
   assert.deepEqual(settingsReload(current, null, "jira-work.json"), { kind: "load", newSite: true });
   assert.deepEqual(settingsReload({ ...DEFAULT_SETTINGS }, null, "jira-work.json"), { kind: "load", newSite: false });
 });
+
+// ---- The settings form's Scrum board and High priorities ----
+import { prioritiesText, withFormOptions } from "../src/shared/jira/settings.js";
+
+test("withFormOptions: the picked board and the typed priorities set their keys; the rest of the file is kept", () => {
+  const s = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com", views: [{ id: "sec", name: "Security", jql: "project = SEC" }], extra: 1 };
+  const out = withFormOptions(s, { board: 12, priorities: " P0, P1 ,, " });
+  assert.deepEqual(out, { ...s, board: 12, highPriorities: ["P0", "P1"] });
+  assert.equal(jiraOptions(out).board, 12);
+  assert.deepEqual(jiraOptions(out).highPriorities, ["P0", "P1"]);
+  assert.equal("board" in s, false, "the settings handed in are not changed");
+});
+
+test("withFormOptions: no board and empty priorities remove the keys, so the defaults apply and are never written", () => {
+  const s = { ...DEFAULT_SETTINGS, board: 7, highPriorities: ["P0"], views: [] };
+  const out = withFormOptions(s, { board: null, priorities: " , " });
+  assert.equal("board" in out, false);
+  assert.equal("highPriorities" in out, false);
+  assert.deepEqual(out.views, []);
+  assert.equal(jiraOptions(out).board, null);
+  assert.deepEqual(jiraOptions(out).highPriorities, [...DEFAULT_HIGH_PRIORITIES]);
+  assert.doesNotMatch(formatSettings(out), /board|highPriorities/);
+});
+
+test("prioritiesText: the file's list as the form shows it; nothing for a missing or odd value", () => {
+  assert.equal(prioritiesText({ highPriorities: ["P0", "P1"] }), "P0, P1");
+  assert.equal(prioritiesText({ highPriorities: [" P0 ", 3, "", "P1"] }), "P0, P1");
+  assert.equal(prioritiesText({}), "");
+  assert.equal(prioritiesText({ highPriorities: "P0" }), "");
+  assert.equal(prioritiesText(null), "");
+});
