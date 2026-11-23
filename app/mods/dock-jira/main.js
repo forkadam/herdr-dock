@@ -492,6 +492,7 @@ function diffMiddle(a, b) {
 var MINUTE_MS = 6e4;
 var DEFAULT_SINCE_MINUTES = 14 * 24 * 60;
 var PARENTS_PER_SEARCH = 50;
+var KEYS_PER_SEARCH = 50;
 var ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 var list = (v) => Array.isArray(v) ? v : [];
 var isField = (item, name) => String(item?.field ?? "").toLowerCase() === name;
@@ -518,6 +519,23 @@ function changedSearches({ since, parentKeys }) {
   for (let i = 0; i < keys.length; i += PARENTS_PER_SEARCH) {
     searches.push(`key in (${keys.slice(i, i + PARENTS_PER_SEARCH).join(",")}) AND ${recent}`);
   }
+  return searches;
+}
+function historyPlan(found, cache) {
+  const stale = [], keep = [], seen = /* @__PURE__ */ new Set();
+  for (const f of list(found)) {
+    const key = f?.key;
+    if (typeof key !== "string" || !key || seen.has(key)) continue;
+    seen.add(key);
+    const cached = cache?.get?.(key);
+    (cached && cached.updated === f.updated ? keep : stale).push(key);
+  }
+  return { stale, keep };
+}
+function keySearches(keys) {
+  const wanted = [...new Set(list(keys).filter((k) => typeof k === "string" && ISSUE_KEY.test(k)))];
+  const searches = [];
+  for (let i = 0; i < wanted.length; i += KEYS_PER_SEARCH) searches.push(`key in (${wanted.slice(i, i + KEYS_PER_SEARCH).join(",")})`);
   return searches;
 }
 var JQL_TOKENS = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\border\s+by\b|\bor\b/gi;
@@ -1576,6 +1594,7 @@ var Jira = class extends View {
     this.brief = blankBrief();
     this.briefTried = void 0;
     this.subtasks = blankSubtasks();
+    this.histories = /* @__PURE__ */ new Map();
     this.change = null;
     this.recent = null;
     this.countsAt = void 0;
@@ -1799,6 +1818,7 @@ var Jira = class extends View {
       this.scrollTop("today");
       this.brief = { ...this.brief, sprint: [] };
       this.briefTried = void 0;
+      this.histories = /* @__PURE__ */ new Map();
     }
     const s = this.jira.settings;
     this.urlInput.set_value(s.baseUrl);
@@ -2031,10 +2051,11 @@ var Jira = class extends View {
   }
   // The brief's searches (refreshToday's): your sub-tasks' parents when due (with the board's cache: hourly, or
   // `fresh`); your unresolved issues and those parents updated since the current sprint started (14 days without
-  // one), with their history (Changed); the high-priority bugs. Then the lists (New in sprint from `current`, the
-  // current sprint's issues, when they were read), the marks without the bugs that left the list, and the badge. The
-  // first failure ends the searches and is the brief's `problem`; what was read before it is used, and a list not read
-  // keeps what it had. "gone": the answer is for a Today the page has left; "page": a failure took the page.
+  // one), with their history (Changed; read again only for those that changed: this.histories); the high-priority
+  // bugs. Then the lists (New in sprint from `current`, the current sprint's issues, when they were read), the marks
+  // without the bugs that left the list, and the badge. The first failure ends the searches and is the brief's
+  // `problem`; what was read before it is used, and a list not read keeps what it had. "gone": the answer is for a
+  // Today the page has left; "page": a failure took the page.
   async readBrief(c, { fresh, live, fail, current }) {
     const me = this.me;
     const now = Date.now();
@@ -2052,18 +2073,31 @@ var Jira = class extends View {
     }
     let changed = null;
     if (!problem) {
-      const issues = /* @__PURE__ */ new Map();
+      const found = [];
       for (const jql of changedSearches({ since, parentKeys: [...this.subtasks.byParent.keys()] })) {
-        const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ROW_FIELDS, expand: "changelog" });
+        const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ["updated"] });
         if (!live()) return "gone";
         if (!r.ok) {
           if (fail(r.problem, said("changed"))) return "page";
           break;
         }
-        for (const issue of r.data?.issues ?? []) if (issue?.key && !issues.has(issue.key)) issues.set(issue.key, issue);
+        for (const issue of r.data?.issues ?? []) if (issue?.key) found.push({ key: issue.key, updated: issue.fields?.updated });
       }
-      const marks = this.marks();
-      if (!problem) changed = [...issues.values()].map((i) => changedItem(i, { me, sinceMs, marks })).filter(Boolean);
+      if (!problem) {
+        for (const jql of keySearches(historyPlan(found, this.histories).stale)) {
+          const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ROW_FIELDS, expand: "changelog" });
+          if (!live()) return "gone";
+          if (!r.ok) {
+            if (fail(r.problem, said("changed"))) return "page";
+            break;
+          }
+          for (const issue of r.data?.issues ?? []) if (issue?.key) this.histories.set(issue.key, { updated: issue.fields?.updated, issue });
+        }
+        const keys = new Set(found.map((f) => f.key));
+        for (const key of [...this.histories.keys()]) if (!keys.has(key)) this.histories.delete(key);
+        const marks = this.marks();
+        changed = [...keys].map((key) => this.histories.get(key)?.issue).filter(Boolean).map((i) => changedItem(i, { me, sinceMs, marks })).filter(Boolean);
+      }
     }
     let bugs = null;
     if (!problem) {
@@ -2741,6 +2775,7 @@ var Jira = class extends View {
       brief: blankBrief(),
       briefTried: void 0,
       subtasks: blankSubtasks(),
+      histories: /* @__PURE__ */ new Map(),
       change: null,
       recent: null
     });

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_CHECK_TASK } from "../src/shared/jira/settings.js";
 import {
   briefBadge, briefLists, bugsSearch, changeDiff, changedItem, changedSearches, checkMessage, checkWork, descriptionEdits, editsText,
-  isUnread, newInSprintItem, pruneBugs, readAll, readOnOpen, recentEdits, sinceMinutes, subtasksByParent, withRead,
+  historyPlan, isUnread, keySearches, newInSprintItem, pruneBugs, readAll, readOnOpen, recentEdits, sinceMinutes, subtasksByParent, withRead,
 } from "../src/shared/jira/brief.js";
 
 const me = "me";
@@ -52,6 +52,22 @@ test("changedSearches: only well-formed issue keys go into key in (...)", () => 
   assert.deepEqual(q, ["assignee = currentUser() AND resolution = Unresolved AND updated >= -5m", "key in (WEB-2,web-3,WEB_X9-10) AND updated >= -5m"]);
   // nothing well-formed left: no parents search at all
   assert.equal(changedSearches({ since: 5, parentKeys: ["WEB-1) OR (project = X", "x y-1"] }).length, 1);
+});
+
+test("historyPlan: fetch only new or changed issues", () => {
+  const cache = new Map([["WEB-1", { updated: "t1", issue: {} }], ["WEB-2", { updated: "t2", issue: {} }], ["WEB-9", { updated: "t9", issue: {} }]]);
+  const p = historyPlan([{ key: "WEB-1", updated: "t1" }, { key: "WEB-2", updated: "t2b" }, { key: "WEB-3", updated: "t3" }], cache);
+  assert.deepEqual(p, { stale: ["WEB-2", "WEB-3"], keep: ["WEB-1"] }); // WEB-9 left the window
+  assert.deepEqual(historyPlan([], cache), { stale: [], keep: [] });
+});
+
+test("keySearches: chunks of 50 well-formed keys", () => {
+  const keys = Array.from({ length: 120 }, (_, i) => `WEB-${i}`);
+  const q = keySearches([...keys, "WEB-1", "bad key)"]);
+  assert.equal(q.length, 3);
+  assert.ok(q[0].startsWith("key in (WEB-0,WEB-1,"));
+  assert.ok(q[2].startsWith("key in (WEB-100,"));
+  assert.deepEqual(keySearches([]), []);
 });
 
 test("bugsSearch keeps ORDER BY last", () => {

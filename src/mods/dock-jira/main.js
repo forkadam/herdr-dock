@@ -9,8 +9,8 @@ import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShar
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
 import {
-  briefBadge, bugsSearch, changeDiff, changedItem, changedSearches, checkWork, isUnread, newInSprintItem, pruneBugs, readAll, readOnOpen,
-  recentEdits, sinceMinutes, subtasksByParent, withRead,
+  briefBadge, bugsSearch, changeDiff, changedItem, changedSearches, checkWork, historyPlan, isUnread, keySearches, newInSprintItem, pruneBugs,
+  readAll, readOnOpen, recentEdits, sinceMinutes, subtasksByParent, withRead,
 } from "../../shared/jira/brief.js";
 import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
@@ -103,6 +103,9 @@ export default class Jira extends View {
     this.brief = blankBrief();
     this.briefTried = undefined;
     this.subtasks = blankSubtasks();
+    // The brief's Changed issues with their history, by key: { updated (Jira's, as the history was read), issue }. A
+    // refresh reads again only the history of those new to its window or updated since (readBrief); ⟳ keeps it.
+    this.histories = new Map();
     // The open issue's What changed (openChange: its unread Changed item and diff, kept while it stays open, so a poll
     // never changes what's being read; `full`: no folding) and Recent changes (toggleRecent: asked each time it opens).
     this.change = null; // { key, item, ops, full }
@@ -297,9 +300,11 @@ export default class Jira extends View {
       this.sprint = blankSprint(this.options.board);
       this.states.delete("today");
       this.scrollTop("today");
-      // The brief's New in sprint was the old board's sprint; the brief is due again (its window moved with it).
+      // The brief's New in sprint was the old board's sprint; the brief is due again (its window moved with it), its
+      // Changed issues' history read anew.
       this.brief = { ...this.brief, sprint: [] };
       this.briefTried = undefined;
+      this.histories = new Map();
     }
     const s = this.jira.settings;
     this.urlInput.set_value(s.baseUrl);
@@ -517,10 +522,11 @@ export default class Jira extends View {
 
   // The brief's searches (refreshToday's): your sub-tasks' parents when due (with the board's cache: hourly, or
   // `fresh`); your unresolved issues and those parents updated since the current sprint started (14 days without
-  // one), with their history (Changed); the high-priority bugs. Then the lists (New in sprint from `current`, the
-  // current sprint's issues, when they were read), the marks without the bugs that left the list, and the badge. The
-  // first failure ends the searches and is the brief's `problem`; what was read before it is used, and a list not read
-  // keeps what it had. "gone": the answer is for a Today the page has left; "page": a failure took the page.
+  // one), with their history (Changed; read again only for those that changed: this.histories); the high-priority
+  // bugs. Then the lists (New in sprint from `current`, the current sprint's issues, when they were read), the marks
+  // without the bugs that left the list, and the badge. The first failure ends the searches and is the brief's
+  // `problem`; what was read before it is used, and a list not read keeps what it had. "gone": the answer is for a
+  // Today the page has left; "page": a failure took the page.
   async readBrief(c, { fresh, live, fail, current }) {
     const me = this.me; // { key, name, … } (/myself): Jira Server's history names you by key
     const now = Date.now();
@@ -536,15 +542,31 @@ export default class Jira extends View {
     }
     let changed = null;
     if (!problem) {
-      const issues = new Map(); // one item per issue: a parent of yours can also be yours
+      // Which issues are in the window, and Jira's `updated` of each (a fraction of what their history weighs).
+      const found = [];
       for (const jql of changedSearches({ since, parentKeys: [...this.subtasks.byParent.keys()] })) {
-        const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ROW_FIELDS, expand: "changelog" });
+        const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ["updated"] });
         if (!live()) return "gone";
         if (!r.ok) { if (fail(r.problem, said("changed"))) return "page"; break; }
-        for (const issue of r.data?.issues ?? []) if (issue?.key && !issues.has(issue.key)) issues.set(issue.key, issue);
+        for (const issue of r.data?.issues ?? []) if (issue?.key) found.push({ key: issue.key, updated: issue.fields?.updated });
       }
-      const marks = this.marks();
-      if (!problem) changed = [...issues.values()].map((i) => changedItem(i, { me, sinceMs, marks })).filter(Boolean);
+      // Every one of them found (a failed search leaves the histories, and Changed, as they were): the history of only
+      // those new to the window or updated since theirs was read (historyPlan), kept with the `updated` it came with.
+      // A failed history search leaves its issues' old history (or none: not shown), read again next time. Those that
+      // left the window are forgotten, and Changed is built from the histories of the issues found, each once (a
+      // parent of yours can also be yours).
+      if (!problem) {
+        for (const jql of keySearches(historyPlan(found, this.histories).stale)) {
+          const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ROW_FIELDS, expand: "changelog" });
+          if (!live()) return "gone";
+          if (!r.ok) { if (fail(r.problem, said("changed"))) return "page"; break; }
+          for (const issue of r.data?.issues ?? []) if (issue?.key) this.histories.set(issue.key, { updated: issue.fields?.updated, issue });
+        }
+        const keys = new Set(found.map((f) => f.key));
+        for (const key of [...this.histories.keys()]) if (!keys.has(key)) this.histories.delete(key);
+        const marks = this.marks();
+        changed = [...keys].map((key) => this.histories.get(key)?.issue).filter(Boolean).map((i) => changedItem(i, { me, sinceMs, marks })).filter(Boolean);
+      }
     }
     let bugs = null;
     if (!problem) {
@@ -1166,7 +1188,7 @@ export default class Jira extends View {
     const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
     Object.assign(this, view, {
       states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map(), sprint: blankSprint(this.options.board),
-      brief: blankBrief(), briefTried: undefined, subtasks: blankSubtasks(), change: null, recent: null,
+      brief: blankBrief(), briefTried: undefined, subtasks: blankSubtasks(), histories: new Map(), change: null, recent: null,
     });
     for (const h of this.scrolls.values()) h?.scroll_to_item(0);
     this.searchInput.set_value("");
