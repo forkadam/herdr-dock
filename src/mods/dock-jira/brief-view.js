@@ -7,6 +7,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { briefLists, checkWork, editsText, isUnread } from "../../shared/jira/brief.js";
 import { diffStats, foldDiff } from "../../shared/jira/diff.js";
 import { ago } from "../../shared/jira/model.js";
+import { keyColumnWidth } from "../../shared/jira/page.js";
 
 const WARN = "#d29922";
 const BRIEF_MAX_H = 280; // the brief's height above the board at most (it scrolls past that); the board keeps the rest
@@ -56,10 +57,11 @@ export function briefView(page, t) {
   const lists = briefLists(b, page.marks());
   const newBugs = lists.bugs.filter((x) => x.unread).length;
   const unread = lists.changed.length + lists.sprint.length + newBugs;
+  const keyW = keyColumnWidth([...lists.changed, ...lists.sprint, ...lists.bugs].map((x) => x.key));
   const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center()
     .cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover))
     .on_click((_e, cx) => page.select(item.key, cx))
-    .child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(item.key))
+    .child(div().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(item.key))
     .child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key))
     .when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new")))
     .child(div().flex_none().max_w(220).truncate().text_size(11.5).text_color(t.muted).child(why))

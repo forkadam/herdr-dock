@@ -740,6 +740,10 @@ function countText(shown, total) {
   if (shown >= total) return `${total} issue${total === 1 ? "" : "s"}`;
   return `${shown} of ${total}`;
 }
+function keyColumnWidth(keys) {
+  const longest = (keys ?? []).reduce((n, k) => k == null ? n : Math.max(n, String(k).length), 0);
+  return Math.min(132, Math.max(56, Math.ceil(longest * 7.5) + 6));
+}
 function canAssignToMe(detail, me) {
   if (!detail || !me?.name) return false;
   return String(detail.assigneeName ?? "").toLowerCase() !== String(me.name).toLowerCase();
@@ -1372,7 +1376,8 @@ function briefView(page, t) {
   const lists = briefLists(b, page.marks());
   const newBugs = lists.bugs.filter((x) => x.unread).length;
   const unread = lists.changed.length + lists.sprint.length + newBugs;
-  const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.select(item.key, cx)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(item.key)).child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key)).when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new"))).child(div().flex_none().max_w(220).truncate().text_size(11.5).text_color(t.muted).child(why)).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(item.at, now)));
+  const keyW = keyColumnWidth([...lists.changed, ...lists.sprint, ...lists.bugs].map((x) => x.key));
+  const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.select(item.key, cx)).child(div().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(item.key)).child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key)).when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new"))).child(div().flex_none().max_w(220).truncate().text_size(11.5).text_color(t.muted).child(why)).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(item.at, now)));
   const section = (title, count, rows, none) => [
     h_flex().h(28).px(16).pt(6).gap(6).flex_none().items_center().child(div().text_size(11.5).font_medium().text_color(t.muted).child(title)).child(div().text_size(11.5).text_color(t.dim).child(count)),
     ...rows.length ? rows : [div().px(16).pb(4).text_size(12).text_color(t.dim).child(none)]
@@ -2777,10 +2782,11 @@ var Jira = class extends View {
   typeMark(t, r) {
     return div4().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
   }
-  row(t, r, i) {
+  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows).
+  row(t, r, i, keyW) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
-    return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div4().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
+    return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div4().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
 ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.startTask))}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
       cx.stop_propagation();
       this.startWork(r, cx);
@@ -2800,11 +2806,13 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
   // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type.
   listView(t) {
     const tab = this.tab();
-    const sections = sectionsFor(this.shownRows(), tab.group);
+    const rows = this.shownRows();
+    const sections = sectionsFor(rows, tab.group);
+    const keyW = keyColumnWidth(rows.map((r) => r.key));
     const more = this.more(t);
     const group = (g) => [
       h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
-      ...g.rows.map((r, i) => this.row(t, r, i))
+      ...g.rows.map((r, i) => this.row(t, r, i, keyW))
     ];
     const section = (sec) => [
       ...sec.title ? [h_flex4().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HIDDEN_EVERY_MS, RETRY_AFTER_MS, SHOWN_EVERY_MS, badgeFor, countText, filterList, pageState, pickFilter, pollDue } from "../src/shared/jira/page.js";
+import { HIDDEN_EVERY_MS, RETRY_AFTER_MS, SHOWN_EVERY_MS, badgeFor, countText, filterList, keyColumnWidth, pageState, pickFilter, pollDue } from "../src/shared/jira/page.js";
 
 test("filterList: built-ins, favourites, own; stable ids; junk skipped", () => {
   const list = filterList(
@@ -60,6 +60,15 @@ test("badgeFor and countText", () => {
   assert.equal(countText(1, 1), "1 issue");
   assert.equal(countText(50, 120), "50 of 120");
   assert.equal(countText(0, undefined), "");
+});
+
+test("keyColumnWidth: fits the longest key, within 56–132 px", () => {
+  assert.equal(keyColumnWidth([]), 56);
+  assert.equal(keyColumnWidth(["WEB-1"]), 56);
+  assert.equal(keyColumnWidth(["WEB-1", "ABCDEFGH-861"]), 96);   // 12 chars
+  assert.equal(keyColumnWidth(["ABCDEFGH-19211"]), 111);         // 14 chars
+  assert.equal(keyColumnWidth(["A".repeat(30)]), 132);
+  assert.equal(keyColumnWidth([null, undefined, "WEB-12"]), 56);
 });
 
 // ---- Task 6: actions ----

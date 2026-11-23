@@ -15,7 +15,7 @@ import {
 import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
-  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, finishWork, needsDetail,
+  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, finishWork, keyColumnWidth, needsDetail,
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, todayFailure, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
@@ -1274,14 +1274,15 @@ export default class Jira extends View {
     return div().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
   }
 
-  row(t, r, i) {
+  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows).
+  row(t, r, i, keyW) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
     return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer()
       .bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.select(r.key, cx))
       .child(this.typeMark(t, r))
-      .child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key))
+      .child(div().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key))
       .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary))
       .child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? ""))
       .child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned"))
@@ -1303,13 +1304,15 @@ export default class Jira extends View {
   // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type.
   listView(t) {
     const tab = this.tab();
-    const sections = sectionsFor(this.shownRows(), tab.group);
+    const rows = this.shownRows();
+    const sections = sectionsFor(rows, tab.group);
+    const keyW = keyColumnWidth(rows.map((r) => r.key));
     const more = this.more(t);
     const group = (g) => [
       h_flex().h(30).px(16).pt(8).gap(6).flex_none().items_center()
         .child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
         .child(div().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
-      ...g.rows.map((r, i) => this.row(t, r, i)),
+      ...g.rows.map((r, i) => this.row(t, r, i, keyW)),
     ];
     const section = (sec) => [
       ...(sec.title ? [h_flex().h(38).px(16).pt(14).gap(6).flex_none().items_center()
