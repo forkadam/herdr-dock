@@ -21,8 +21,9 @@ export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|
 // Also circle / cross heads (--o, --x, o--o, ==o, -.-o) and invisible links (~~~).
 export const ARROW_WIDE = "var ARROW_REGEX = /^([<ox])?(-{2,}>|-\\.+->|={2,}>|-{2,}[ox]|-\\.+-[ox]|={2,}[ox]|-{3,}|-\\.+-|={3,}|~{3,})(?:\\|([^|]*)\\|)?/;";
 export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-->|---|\\.\\->|-\\.\\-|==>|===)/;";
-// A dotted text link also closes with -.-> (tried before -.-) or .- (no head).
-export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+->|-\\.+-|\\.+-|={2,}>|={3,})/;";
+// A dotted text link (opened by -.) also closes with -.-> (tried before -.-) or .- (no head); the lookbehind keeps
+// those two for dotted links, so a label holding " .-" in a -- or == link stays whole, as in Mermaid.
+export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|(?<=^<?-\\.\\s.*)-\\.+->|-\\.+-|(?<=^<?-\\.\\s.*)\\.+-|={2,}>|={3,})/;";
 export const ARROW_STYLE_HEAD = "function arrowStyleFromOp(op) {";
 export const ARROW_STYLE_NORMALISE = '\n  if (/^~{3,}$/.test(op)) return "invisible";\n  op = op.replace(/[ox]$/, ">");\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
 // A text arrow's closing operator (`-- text ..->`) is looked up the same way: normalised to its short form first.

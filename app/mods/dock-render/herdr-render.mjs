@@ -93074,7 +93074,7 @@ function parseStyleProps(propsStr) {
   return props;
 }
 var ARROW_REGEX = /^([<ox])?(-{2,}>|-\.+->|={2,}>|-{2,}[ox]|-\.+-[ox]|={2,}[ox]|-{3,}|-\.+-|={3,}|~{3,})(?:\|([^|]*)\|)?/;
-var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|-\.+->|-\.+-|\.+-|={2,}>|={3,})/;
+var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|(?<=^<?-\.\s.*)-\.+->|-\.+-|(?<=^<?-\.\s.*)\.+-|={2,}>|={3,})/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
   { regex: /^((?:\w|-(?![-.>]))+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
@@ -97414,8 +97414,8 @@ function idBefore(text) {
       }
     }
   }
-  const token = /([\w.-]+)\s*$/.exec(text.slice(0, end))?.[1];
-  return token?.split(/-(?=[-.>])[-.]*/).pop() || null;
+  const token = /([\w.=-]+)\s*$/.exec(text.slice(0, end))?.[1];
+  return token?.split(/(?:-(?=[-.>])[-.]*|={2,})[ox]?/).pop() || null;
 }
 function styledIds(source) {
   const lines = String(source ?? "").split("\n");

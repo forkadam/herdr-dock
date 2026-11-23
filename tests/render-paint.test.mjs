@@ -159,3 +159,12 @@ test("paintDiagram: bars tied for the largest magnitude are all highlighted; a v
   assert.deepEqual(marks("xychart-beta\n  x-axis [a, b, c]\n  bar [5, 5, 2]"), [true, true, false]);
   assert.deepEqual(marks("xychart-beta\n  x-axis [a, b, c]\n  bar [x, 1, 2]"), [false, false, true]);
 });
+
+test("styledIds: a classed node after an unspaced circle / cross link is the node the parser draws", () => {
+  const ids = (line) => [...styledIds("flowchart LR\n  " + line).ids];
+  assert.deepEqual(ids("A--oB:::cold"), ["B"]);
+  assert.deepEqual(ids("A---oB:::cold"), ["B"]);
+  assert.deepEqual(ids("A==xB:::cold"), ["B"]);
+  assert.deepEqual(ids("A---other:::cold"), ["ther"]);
+  assert.deepEqual(ids("A --> x-ray:::cold"), ["x-ray"]);
+});

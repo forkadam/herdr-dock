@@ -234,3 +234,13 @@ test("the built Render helper lays out an invisible link (~~~) but draws neither
   }
   assert.ok(!/class="edge-label"/.test(labelled), "no label");
 });
+
+test("the built Render helper: .- and -.-> close only a dotted text link, so a label holding .- stays whole", () => {
+  const [solid, spaced] = drawAll(["flowchart LR\n  A -- a .-b --> B", "flowchart LR\n  A -- x .- y --> B"]);
+  for (const [svg, label] of [[solid, "a .-b"], [spaced, "x .- y"]]) {
+    assert.deepEqual([...svg.matchAll(/<g class="node" data-id="([^"]*)"/g)].map((m) => m[1]).sort(), ["A", "B"], label);
+    const e = edgeTags(svg);
+    assert.equal(e.length, 1, label);
+    assert.match(e[0], new RegExp(`data-label="${label}"`));
+  }
+});
