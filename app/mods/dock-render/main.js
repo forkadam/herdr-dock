@@ -93,6 +93,16 @@ function transcriptPath(home2, info, recordText, nowMs) {
   return `${String(home2).replace(/[\\/]+$/, "")}/.claude/projects/${claudeSlug(cwd)}/${sessionId}.jsonl`;
 }
 
+// src/shared/render/size.js
+var MIN_SCALE = 0.7;
+var MIN_WIDTH = 40;
+function shownSize(size, room) {
+  const n = Number(size?.w), nh = Number(size?.h);
+  if (!(n > 0 && nh > 0)) return { w: room, h: Math.round(room * 0.6), scroll: false };
+  const w = Math.max(MIN_WIDTH, Math.round(n <= room ? n : Math.max(room, MIN_SCALE * n)));
+  return { w, h: Math.round(w * nh / n), scroll: w > room };
+}
+
 // src/shared/jira/model.js
 var CATEGORIES = [
   { category: "new", title: "To do" },
@@ -194,7 +204,22 @@ var Render = class extends View {
     return JSON.stringify({
       cacheDir: `${base}/herdr-dock/render`,
       relBase: "herdr-dock/render",
-      theme: { background: t.background, foreground: t.foreground, muted: t.muted, border: t.border, accent: t.accent, dark: isDark(t.background) },
+      // The terminal's colours too: nodes take ansi4/6/2/5/3, figures' warn / ok / note take ansi1/2/3.
+      theme: {
+        background: t.background,
+        foreground: t.foreground,
+        muted: t.muted,
+        border: t.border,
+        accent: t.accent,
+        dim: t.dim,
+        ansi1: t.ansi1,
+        ansi2: t.ansi2,
+        ansi3: t.ansi3,
+        ansi4: t.ansi4,
+        ansi5: t.ansi5,
+        ansi6: t.ansi6,
+        dark: isDark(t.background)
+      },
       ...extra
     });
   }
@@ -338,12 +363,15 @@ var Render = class extends View {
   }
   // ---- drawing ----
   diagram(t, s, id, maxW) {
+    if (s.kind === "figure" && (s.error || !s.svg)) {
+      return v_flex().id(id).gap(6).child(div().text_size(11.5).text_color(t.dim).child(s.error ?? "figure didn't draw")).child(TextView.markdown(`${id}-src`, "```figure\n" + (s.source ?? "") + "\n```").selectable(true));
+    }
     if (s.error || !s.svg) {
       return v_flex().id(id).gap(6).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div().text_size(11.5).text_color(t.blocked).child(`Diagram didn't render: ${s.error ?? "unknown error"}`)).child(TextView.markdown(`${id}-src`, "```mermaid\n" + (s.source ?? "") + "\n```").selectable(true));
     }
-    const w = Math.max(40, Math.min(maxW, s.w ?? maxW));
-    const h = s.w && s.h ? Math.round(w * s.h / s.w) : Math.round(w * 0.6);
-    return div().id(id).rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer().hover((st) => st.border_color(t.accent)).tooltip("Open large").on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } })).child(image(s.svg).w(w).h(h));
+    const { w, h, scroll } = shownSize(s, maxW);
+    const card = div().id(id).flex_none().rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer().hover((st) => st.border_color(t.accent)).tooltip("Open large").on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } })).child(image(s.svg).w(w).h(h));
+    return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
   }
   segments(t, list, prefix) {
     const maxW = Math.max(120, this.width - PAD * 2);

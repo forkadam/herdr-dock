@@ -147,7 +147,7 @@ function roleStyle(role, theme) {
 }
 
 // Checked lines -> { svg, w, h }. A run of non-space characters is one <text> with an x per character; spaces draw
-// nothing; █ is a rect of its whole cell.
+// nothing; █ fills its whole cell, and a row's adjacent █ of one colour are one rect.
 export function figureSvg(lines, theme) {
   const parts = [];
   let columns = 0;
@@ -155,6 +155,12 @@ export function figureSvg(lines, theme) {
     const top = FIGURE_PAD + row * FIGURE_LINE;
     const baseline = px(top + FIGURE_FONT);
     let col = 0;
+    // A row's adjacent blocks of one colour, drawn as one rect: separate cells at fractional x leave hairline seams.
+    let block = null;
+    const endBlock = () => {
+      if (block) parts.push(`<rect x="${px(FIGURE_PAD + block.start * FIGURE_CELL)}" y="${px(top)}" width="${px((block.end - block.start) * FIGURE_CELL)}" height="${FIGURE_LINE}" fill="${block.fill}"/>`);
+      block = null;
+    };
     for (const run of figureRuns(line)) {
       const style = roleStyle(run.role, theme);
       const attrs = `font-family="monospace" font-size="${FIGURE_FONT}" fill="${style.fill}"${style.bold ? ' font-weight="bold"' : ""}`;
@@ -167,11 +173,16 @@ export function figureSvg(lines, theme) {
       };
       for (const g of graphemes(run.text)) {
         const x = px(FIGURE_PAD + col * FIGURE_CELL);
-        if (g === " ") flush();
-        else if (g === "█") {
+        if (g === "█") {
           flush();
-          parts.push(`<rect x="${x}" y="${px(top)}" width="${FIGURE_CELL}" height="${FIGURE_LINE}" fill="${style.fill}"/>`);
-        } else if (g.length > 1) {
+          if (block && block.fill === style.fill && block.end === col) block.end = col + 1;
+          else { endBlock(); block = { start: col, end: col + 1, fill: style.fill }; }
+          col += 1;
+          continue;
+        }
+        endBlock();
+        if (g === " ") flush();
+        else if (g.length > 1) {
           // A cluster (a letter and its marks) is placed as one: an x list counts characters, not clusters.
           flush();
           parts.push(`<text x="${x}" y="${baseline}" ${attrs}>${esc(g)}</text>`);
@@ -183,6 +194,7 @@ export function figureSvg(lines, theme) {
       }
       flush();
     }
+    endBlock();
     columns = Math.max(columns, col);
   });
   const w = px(FIGURE_PAD * 2 + columns * FIGURE_CELL);

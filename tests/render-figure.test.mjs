@@ -43,9 +43,10 @@ test("figureSvg: each character at its own column, █ a rect filling its cell, 
   assert.equal(h, FIGURE_PAD * 2 + 2 * FIGURE_LINE);
   assert.match(svg, new RegExp(`^<svg[^>]*viewBox="0 0 ${w} ${h}"`));
   assert.match(svg, new RegExp(`<rect x="0" y="0" width="${w}" height="${h}" fill="${THEME.background}"/>`));
+  // Adjacent blocks of one colour are one rect: separate cells at fractional x leave hairline seams between them.
   const blocks = [...svg.matchAll(/<rect\b([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((r) => r.fill === THEME.accent);
   assert.deepEqual(blocks.map((r) => [Number(r.x), Number(r.y), Number(r.width), Number(r.height)]),
-    [[X(0), FIGURE_PAD, FIGURE_CELL, FIGURE_LINE], [X(1), FIGURE_PAD, FIGURE_CELL, FIGURE_LINE]]);
+    [[X(0), FIGURE_PAD, 2 * FIGURE_CELL, FIGURE_LINE]]);
   const t = texts(svg);
   const cross = t.find((x) => x.content === "✗");
   assert.ok(near(cross.xs[0], X(2)) && cross.fill === THEME.ansi1);
@@ -69,4 +70,11 @@ test("figureSvg: <, & and quotes are escaped; a theme without dim or ansi colour
   assert.ok(warn.fill === bare.foreground && warn["font-weight"] === "bold");
   assert.equal(t.find((x) => x.content === "o").fill, bare.foreground);
   assert.equal(t.find((x) => x.content === "n").fill, bare.foreground);
+});
+
+test("figureSvg: a bar of blocks is one rect per colour, even across runs; a gap or a new colour starts another", () => {
+  const rects = (line) => [...figureSvg([line], THEME).svg.matchAll(/<rect\b([^>]*)\/>/g)].map((m) => attrs(m[1]))
+    .filter((r) => r.fill !== THEME.background).map((r) => [r.fill, Number(r.x), Number(r.width)]);
+  assert.deepEqual(rects("{ok:██}{ok:█} █"), [[THEME.ansi2, X(0), 3 * FIGURE_CELL], [THEME.foreground, X(4), FIGURE_CELL]]);
+  assert.deepEqual(rects("{accent:█}{ok:█}"), [[THEME.accent, X(0), FIGURE_CELL], [THEME.ansi2, X(1), FIGURE_CELL]]);
 });

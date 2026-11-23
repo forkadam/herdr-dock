@@ -15,6 +15,7 @@ import {
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
 import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.js";
+import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 
 const MOD = "dock-render";
@@ -93,7 +94,11 @@ export default class Render extends View {
     const base = slashPath(appHome());
     return JSON.stringify({
       cacheDir: `${base}/herdr-dock/render`, relBase: "herdr-dock/render",
-      theme: { background: t.background, foreground: t.foreground, muted: t.muted, border: t.border, accent: t.accent, dark: isDark(t.background) },
+      // The terminal's colours too: nodes take ansi4/6/2/5/3, figures' warn / ok / note take ansi1/2/3.
+      theme: {
+        background: t.background, foreground: t.foreground, muted: t.muted, border: t.border, accent: t.accent, dim: t.dim,
+        ansi1: t.ansi1, ansi2: t.ansi2, ansi3: t.ansi3, ansi4: t.ansi4, ansi5: t.ansi5, ansi6: t.ansi6, dark: isDark(t.background),
+      },
       ...extra,
     });
   }
@@ -204,17 +209,24 @@ export default class Render extends View {
   // ---- drawing ----
 
   diagram(t, s, id, maxW) {
+    if (s.kind === "figure" && (s.error || !s.svg)) {
+      // As prismantis shows it: why, dim, then the figure's source as code.
+      return v_flex().id(id).gap(6)
+        .child(div().text_size(11.5).text_color(t.dim).child(s.error ?? "figure didn't draw"))
+        .child(TextView.markdown(`${id}-src`, "```figure\n" + (s.source ?? "") + "\n```").selectable(true));
+    }
     if (s.error || !s.svg) {
       return v_flex().id(id).gap(6).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
         .child(div().text_size(11.5).text_color(t.blocked).child(`Diagram didn't render: ${s.error ?? "unknown error"}`))
         .child(TextView.markdown(`${id}-src`, "```mermaid\n" + (s.source ?? "") + "\n```").selectable(true));
     }
-    const w = Math.max(40, Math.min(maxW, s.w ?? maxW));
-    const h = s.w && s.h ? Math.round((w * s.h) / s.w) : Math.round(w * 0.6);
-    return div().id(id).rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer()
+    // Natural size when it fits; never below 70% of it: a wider picture scrolls sideways.
+    const { w, h, scroll } = shownSize(s, maxW);
+    const card = div().id(id).flex_none().rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer()
       .hover((st) => st.border_color(t.accent)).tooltip("Open large")
       .on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } }))
       .child(image(s.svg).w(w).h(h));
+    return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
   }
 
   segments(t, list, prefix) {

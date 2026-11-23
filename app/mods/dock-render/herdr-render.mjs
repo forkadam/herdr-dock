@@ -97659,6 +97659,11 @@ function figureSvg(lines, theme) {
     const top = FIGURE_PAD + row * FIGURE_LINE;
     const baseline = px2(top + FIGURE_FONT);
     let col = 0;
+    let block = null;
+    const endBlock = () => {
+      if (block) parts.push(`<rect x="${px2(FIGURE_PAD + block.start * FIGURE_CELL)}" y="${px2(top)}" width="${px2((block.end - block.start) * FIGURE_CELL)}" height="${FIGURE_LINE}" fill="${block.fill}"/>`);
+      block = null;
+    };
     for (const run2 of figureRuns(line)) {
       const style = roleStyle(run2.role, theme);
       const attrs = `font-family="monospace" font-size="${FIGURE_FONT}" fill="${style.fill}"${style.bold ? ' font-weight="bold"' : ""}`;
@@ -97671,11 +97676,19 @@ function figureSvg(lines, theme) {
       };
       for (const g of graphemes(run2.text)) {
         const x = px2(FIGURE_PAD + col * FIGURE_CELL);
-        if (g === " ") flush();
-        else if (g === "\u2588") {
+        if (g === "\u2588") {
           flush();
-          parts.push(`<rect x="${x}" y="${px2(top)}" width="${FIGURE_CELL}" height="${FIGURE_LINE}" fill="${style.fill}"/>`);
-        } else if (g.length > 1) {
+          if (block && block.fill === style.fill && block.end === col) block.end = col + 1;
+          else {
+            endBlock();
+            block = { start: col, end: col + 1, fill: style.fill };
+          }
+          col += 1;
+          continue;
+        }
+        endBlock();
+        if (g === " ") flush();
+        else if (g.length > 1) {
           flush();
           parts.push(`<text x="${x}" y="${baseline}" ${attrs}>${esc(g)}</text>`);
         } else {
@@ -97686,6 +97699,7 @@ function figureSvg(lines, theme) {
       }
       flush();
     }
+    endBlock();
     columns = Math.max(columns, col);
   });
   const w = px2(FIGURE_PAD * 2 + columns * FIGURE_CELL);

@@ -349,12 +349,22 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
 terminal, so you keep Claude Code's own terminal UI:
 
 - **Answer**: the focused agent's latest reply (what came after your last message), formatted (headings, lists,
-  tables, code), with each ```` ```mermaid ```` block drawn as a diagram. It follows the agent you're looking at (the
-  focused pane's, else the tab's first) and updates as the reply arrives.
-- **Diagrams**: every Mermaid diagram of the session, newest first.
+  tables, code), with each ```` ```mermaid ```` block drawn as a diagram and each ```` ```figure ```` block as a
+  picture. It follows the agent you're looking at (the focused pane's, else the tab's first) and updates as the reply
+  arrives.
+- **Diagrams**: every Mermaid diagram and figure of the session, newest first.
 - **Files**: the Markdown files under the agent's folder (plans, specs), newest first; one opens formatted, with its
   diagrams drawn.
 - Click a diagram to open it large. A diagram that doesn't parse shows its error and source.
+- **Colours**: each node, participant, class box and ER entity, and each series of a chart, takes its own colour
+  from your terminal's colours (blue, cyan, green, magenta, yellow, then the accent; red is kept for errors). A node
+  styled in the source (`classDef` / `class`, `style`, `:::`) keeps its own colours. A bar chart with one series shows
+  each value over its bar, the tallest in the accent colour.
+- **Figures**: a ```` ```figure ```` block is a text picture drawn as written, in
+  [prismantis](https://github.com/NahumLitvin/prismantis)'s syntax: `{accent|warn|ok|note|dim|strong:text}` colours a
+  run, at most 100 columns and 80 lines, one-column glyphs. A figure that can't be drawn shows why, then its source.
+  The syntax and its checks are ported from prismantis (MIT).
+- **Size**: a picture is shown at its own size when it fits, and never below 70% of it: a wider one scrolls sideways.
 - **Claude Code** is read from its session transcript (`~/.claude/projects/…/<session>.jsonl`), **Codex** from its
   newest rollout started in the agent's folder. Remote agents aren't followed.
 - Diagrams are drawn by `beautiful-mermaid` (MIT, pure JavaScript, no browser), bundled into the mod's helper
@@ -366,8 +376,9 @@ terminal, so you keep Claude Code's own terminal UI:
 ### Where Render keeps its diagrams
 
 - **Where**: `<app home>/herdr-dock/render/`, which is `~/.config/herdr-app/herdr-dock/render/` by default (or
-  `$HERDR_APP_HOME/herdr-dock/render/`). One `.svg` per diagram and theme, named `<hash of the diagram>-<hash of the
-  theme>.svg`, so each is drawn once and switching themes draws fresh copies.
+  `$HERDR_APP_HOME/herdr-dock/render/`). One `.svg` per picture and theme, named `<hash of the picture>-<hash of the
+  theme and the look version>.svg`, so each is drawn once, and switching themes (or an update that changes how
+  pictures are drawn) draws fresh copies.
 - **Kept while used**: each time a diagram is shown again, its file date is refreshed.
 - **Tidied automatically**, after each read:
   - a diagram not shown for **14 days** is deleted;

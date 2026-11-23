@@ -131,3 +131,14 @@ test("themeKey: the look version is part of the theme id, so drawings from befor
   assert.match(themeKey(t), /^[0-9a-f]{8}$/);
   assert.notEqual(themeKey(t), hashText(JSON.stringify(t)));
 });
+
+// ---- How large the panel shows a picture ----
+import { shownSize } from "../src/shared/render/size.js";
+
+test("shownSize: natural size when it fits; never below 70% (then it scrolls); never below 40; no size → the room", () => {
+  assert.deepEqual(shownSize({ w: 300, h: 150 }, 332), { w: 300, h: 150, scroll: false });
+  assert.deepEqual(shownSize({ w: 424, h: 280 }, 332), { w: 332, h: 219, scroll: false });
+  assert.deepEqual(shownSize({ w: 750, h: 464 }, 332), { w: 525, h: 325, scroll: true });
+  assert.deepEqual(shownSize({ w: 20, h: 10 }, 332), { w: 40, h: 20, scroll: false });
+  assert.deepEqual(shownSize({}, 332), { w: 332, h: 199, scroll: false });
+});
