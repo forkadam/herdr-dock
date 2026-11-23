@@ -166,7 +166,8 @@ try {
   if (browser.enabled) {
     const r = await installAgentBrowser({ appHome, dry, say });
     if (r !== "unsupported") {
-      ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say });
+      // A browser that can't start is a failed deploy, even though everything else went in.
+      if (ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say }) === "failed") process.exitCode = 1;
       if (noSkills) console.log("--no-skills: not writing the dock-browser skill");
       else {
         const template = readFileSync(join(ROOT, "src/app/browser-skill.md"), "utf8");
@@ -179,6 +180,7 @@ try {
   }
 } catch (e) {
   console.error(`browser setup failed (run node mods/dock-browser/herdr-browser-setup.mjs to retry): ${e.message}`);
+  process.exitCode = 1;
 }
 
 if (!hasKeys) {

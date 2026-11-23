@@ -322,3 +322,21 @@ test("deploy --dry-run with browser.enabled lists the agent-browser, Chrome and 
     assert.match(off.stdout, /--no-skills: not writing the dock-browser skill/);
   } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(claude, { recursive: true, force: true }); }
 });
+
+test("deploy exits 1 when the browser can't be set up (Chrome install fails), after installing the rest", { skip: process.platform === "win32" }, () => {
+  const tmp = tmpHome();
+  try {
+    const cfg = JSON.parse(HEAD_CONFIG);
+    const repo = fixtureRepo(JSON.stringify({ ...cfg, browser: { ...(cfg.browser ?? {}), enabled: true, chrome: "" } }, null, 2) + "\n");
+    // agent-browser already in place at the pinned version, so nothing is downloaded; its `install` (Chrome) fails.
+    const pins = JSON.parse(readFileSync("src/shared/browser/pins.json", "utf8"));
+    const bin = join(tmp, "herdr-dock/browser/bin/agent-browser");
+    mkdirSync(join(tmp, "herdr-dock/browser/bin"), { recursive: true });
+    writeFileSync(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    writeFileSync(`${bin}.version`, `${pins.version}\n`);
+    const r = run(["--app-home", tmp, "--no-skills", "--no-statusline"], { DOCK_SKIP_CHECK: "1", DOCK_REPO: repo });
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.match(r.stdout + r.stderr, /Chrome install failed \(exit 3\)/);
+    assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
