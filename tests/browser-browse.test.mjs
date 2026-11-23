@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { main } from "../src/app/browse.js";
+import { pathToFileURL } from "node:url";
+import { main, appHomeOf } from "../src/app/browse.js";
 import { sessionName } from "../src/shared/browser/session.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-agent-browser.mjs");
@@ -287,5 +288,30 @@ test("window-open and window-done move the state between the sessions", async ()
     c = x.calls();
     assert.ok(c.some((a) => a.includes("state") && a.includes("load")));
     assert.ok(c.some((a) => a.includes("reload")));
+  } finally { x.done(); }
+});
+
+test("the default app home is two folders above mods/dock-browser/browse.mjs", async () => {
+  const x = setup();
+  try {
+    const script = join(x.home, "mods", "dock-browser", "browse.mjs");
+    assert.equal(appHomeOf(pathToFileURL(script).href), x.home);
+    // main without DOCK_APP_HOME and DOCK_AGENT_BROWSER looks for the binary under the default home, not elsewhere.
+    const code = await x.run(["open", "localhost:3000"], { DOCK_APP_HOME: "", DOCK_AGENT_BROWSER: "" });
+    assert.equal(code, 2);
+    assert.match(x.err.join("\n"), /agent-browser is not installed/);
+  } finally { x.done(); }
+});
+
+test("wait: a handoff older than handoffMinutes times out, exit 1, handoff cleared", async () => {
+  const x = setup();
+  try {
+    await x.run(["open", "localhost:3000"]);
+    await x.run(["handoff", "log in"]);
+    const r = x.rec("t3.json");
+    x.write("t3.json", { ...r, handoff: { ...r.handoff, since: Date.now() - 16 * 60_000 } });
+    assert.equal(await x.run(["wait"]), 1);
+    assert.match(x.out.join("\n"), /nobody answered in 15 minutes/);
+    assert.equal(x.rec("t3.json").handoff, null);
   } finally { x.done(); }
 });

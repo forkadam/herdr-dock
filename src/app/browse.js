@@ -34,9 +34,15 @@ const tailOf = (scope) => String(scope ?? "").toLowerCase().replace(/[^a-z0-9]/g
 
 // Runs a program; .cmd/.bat shims (Windows) need a shell.
 function run(cmd, args, opts = {}) {
-  const shell = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
-  return spawnSync(cmd, args, { encoding: "utf8", shell, windowsHide: true, ...opts });
+  const win = process.platform === "win32";
+  const go = (shell) => spawnSync(cmd, args, { encoding: "utf8", shell, windowsHide: true, ...opts });
+  const r = go(win && /\.(cmd|bat)$/i.test(cmd));
+  // Windows: a bare name that is a .cmd shim (hc, herdr-app) isn't found without a shell.
+  return win && r.error?.code === "ENOENT" ? go(true) : r;
 }
+
+// The app home for a script at <home>/mods/dock-browser/browse.mjs.
+export const appHomeOf = (scriptUrl) => resolve(dirname(fileURLToPath(scriptUrl)), "..", "..");
 
 function readText(path) {
   try { return readFileSync(path, "utf8"); } catch { return null; }
@@ -70,7 +76,7 @@ export async function main(argv, env = process.env, io = defaultIo()) {
   }
   if (args.cmd === "help") { USAGE.split("\n").forEach((l) => io.out(l)); return 0; }
 
-  const home = env.DOCK_APP_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+  const home = env.DOCK_APP_HOME || appHomeOf(import.meta.url);
   const bin = env.DOCK_AGENT_BROWSER || join(home, binRel(process.platform));
   const cfg = browserSettings(home);
   const scope = env.HC_SCOPE ?? "";
