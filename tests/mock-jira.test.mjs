@@ -519,3 +519,23 @@ test("workflow: Resolved is an in-progress status that holds one unresolved bug;
   const high = await search('issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved AND priority in (P0, P1) ORDER BY priority DESC', "&fields=status");
   assert.deepEqual(high.data.issues.map((i) => i.fields.status.name).sort(), ["In Progress", "Resolved", "To Do"]);
 });
+
+test("history: of the mock user's Sprint 42 issues only the deliberate cases are new in it", async () => {
+  const sprint = (await agile("/board/1/sprint?state=active")).data.values.find((s) => s.name === "Sprint 42");
+  const start = Date.parse(sprint.startDate);
+  const mine = (await search("sprint = 42 AND assignee = currentUser() ORDER BY key ASC", "&fields=created&expand=changelog&maxResults=100")).data.issues;
+  assert.ok(mine.length >= 10);
+  // Created after the sprint started: just the one issue made into it.
+  assert.deepEqual(mine.filter((i) => Date.parse(i.fields.created) > start).map((i) => i.key), ["WEB-46"]);
+  // The rules the brief reads history by: a Sprint item after the start adding Sprint 42 to an empty `from` is added
+  // (a non-empty `from` is a carry-over), an assignee item to the mock user after the start is assigned.
+  const why = (i) => {
+    const after = i.changelog.histories.filter((h) => Date.parse(h.created) > start).flatMap((h) => h.items);
+    if (after.some((x) => x.field === "Sprint" && x.from === "" && x.to.split(",").map((s) => s.trim()).includes("42"))) return "added";
+    if (Date.parse(i.fields.created) > start) return "created";
+    if (after.some((x) => x.field === "assignee" && x.to === "me")) return "assigned";
+    return null;
+  };
+  assert.deepEqual(Object.fromEntries(mine.map((i) => [i.key, why(i)]).filter(([, w]) => w)), { "WEB-43": "added", "WEB-45": "assigned", "WEB-46": "created" });
+  assert.equal(why(mine.find((i) => i.key === "WEB-44")), null, "the carry-over is not new");
+});
