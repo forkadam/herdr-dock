@@ -2,7 +2,8 @@
 // the board's own columns (each covering several statuses) sharing the width, one lane per parent story (its header
 // folds it), scrolling down only. src/shared/jira/sprint.js decides; this draws. `page` is the Jira view: sprint,
 // shown(), collapsed, sprintOpen, drag, dropChoice, dropNote, dropColumn, scroll(key), card(t, r), choiceBox(t),
-// noteBox(t), dragBar(t), pointerMoved(e, cx), released(cx), showSprint(id, cx), toggleLane(key, cx).
+// noteBox(t), dragBar(t), pointerMoved(e, cx), released(cx), openSprintMenu(open, cx), showSprint(id, cx),
+// toggleLane(key, cx).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
 import { laneCells, litColumns, menuSprint, sprintLabel, sprintRows, sprintSeries } from "../../shared/jira/sprint.js";
@@ -11,24 +12,30 @@ import { laneCells, litColumns, menuSprint, sprintLabel, sprintRows, sprintSerie
 const laneKey = (lane) => lane.parent?.key ?? "";
 
 // The sprint menu: the shown sprint's label; open, the current sprint's series (sprintSeries) to pick from, newest
-// first. On a board with no active sprint, the series of the one that ended last (menuSprint).
+// first. On a board with no active sprint, the series of the one that ended last (menuSprint). Its closed sprints are
+// read when it opens (openSprintMenu): until then it lists the active and future ones, with a dim line saying the
+// older ones are loading, or couldn't be.
 export function sprintMenu(page, t) {
   const sp = page.sprint;
-  const items = sprintSeries(menuSprint(sp.current, sp.all), sp.all, sp.mine);
+  const sprints = [...sp.all, ...(sp.closed ?? [])];
+  const items = sprintSeries(menuSprint(sp.current, sprints), sprints, sp.mine);
+  const older = sp.closedAt != null ? null : sp.closedProblem ? "Couldn't load older sprints" : "Loading older sprints…";
   const item = (s) => h_flex().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer()
     .bg(s.id === sp.shown?.id ? t.selected : t.popover).hover((st) => st.bg(t.hover))
     .on_click((_e, cx) => page.showSprint(s.id, cx))
     .child(div().flex_1().min_w(0).truncate().child(s.name))
     .child(div().flex_none().text_size(11).text_color(t.dim).child(s.id === sp.current?.id ? "current" : s.state));
   return Popover.new("jira-sprint-menu").open(page.sprintOpen)
-    .on_open_change((open, cx) => { page.sprintOpen = open; cx.notify(); })
+    .on_open_change((open, cx) => page.openSprintMenu(open, cx))
     .trigger(h_flex().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border)
       .cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5)
       .child(div().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints"))
       .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim)))
     .content(v_flex().id("jira-sprint-list").w(280).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
       .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground)
-      .children(items.length ? items.map(item) : [div().p(8).text_color(t.dim).child("No sprints on this board.")]));
+      .children(items.map(item))
+      .when(Boolean(older), (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(older)))
+      .when(!items.length && !older, (el) => el.child(div().p(8).text_color(t.dim).child("No sprints on this board."))));
 }
 
 export function sprintBoard(page, t) {

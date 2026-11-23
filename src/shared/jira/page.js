@@ -59,6 +59,13 @@ export function countText(shown, total) {
   return `${shown} of ${total}`;
 }
 
+// The key column's width in px: the longest key at 12 px (about 7.5 px a character) and a little air, within
+// 56–132, so a key such as "ABCDEFGH-19211" fits on one line and short keys do not leave a wide gap.
+export function keyColumnWidth(keys) {
+  const longest = (keys ?? []).reduce((n, k) => (k == null ? n : Math.max(n, String(k).length)), 0);
+  return Math.min(132, Math.max(56, Math.ceil(longest * 7.5) + 6));
+}
+
 // ---- Actions ----
 
 // Assign to me: offered unless the issue is already mine (and only once Jira has said who I am).

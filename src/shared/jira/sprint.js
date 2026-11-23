@@ -38,6 +38,18 @@ export function pickSprint(active, mineBySprint) {
   return sorted[0] ?? null;
 }
 
+// The sprint Today's board shows: the one picked in the menu (`picked`: its id; null: none) while it's still on the
+// board, else `current`. On the board: among `all` (the active and future sprints) and `closed` (null until the menu
+// loads them). A closed sprint picked before a re-read dropped the closed ones stays (`shown`, while `closed` is null):
+// a closed sprint stays closed, and they're read again only with the menu.
+export function shownSprint({ picked, shown, all, closed, current }) {
+  if (picked == null) return current ?? null;
+  const found = [...list(all), ...list(closed)].find((s) => s?.id === picked);
+  if (found) return found;
+  if (closed == null && shown?.id === picked && shown.state === "closed") return shown;
+  return current ?? null;
+}
+
 // The sprint's series: its name with the last number as "#" ("Heron Sprint 3" -> "Heron Sprint #"); null when the
 // name has no number (a plain "Planning" sprint belongs to no series).
 export function seriesKey(name) {
@@ -133,6 +145,14 @@ export const sprintMineJql = (id) => `sprint = ${id} AND assignee = currentUser(
 // hour (or on a refresh by hand), and at once the first time.
 export const SPRINT_CACHE_MS = 60 * 60e3;
 export const sprintCacheDue = (at, now) => !Number.isFinite(at) || now - at >= SPRINT_CACHE_MS;
+
+// Today reads the board's active and future sprints; the closed ones (a board keeps every sprint it ever had, pages of
+// them) only when needed: not read since the sprints were last read (`closedAt` null), and the sprint menu is open (its
+// last closed of the series) or no sprint is active (the menu then takes the series of the one that ended last:
+// menuSprint).
+export function closedNeeded({ active, menuOpen, closedAt }) {
+  return closedAt == null && (Boolean(menuOpen) || !list(active).length);
+}
 
 // The columns that light up while a card is dragged: each holding a status its workflow reaches now (`targets`,
 // dropTargets'), except the card's own column (a drop there never changes its status: columnDrop).

@@ -10,6 +10,7 @@ import { wikiToText } from "./model.js";
 const MINUTE_MS = 60e3;
 const DEFAULT_SINCE_MINUTES = 14 * 24 * 60;
 const PARENTS_PER_SEARCH = 50;
+const KEYS_PER_SEARCH = 50;
 const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 const list = (v) => (Array.isArray(v) ? v : []);
 const isField = (item, name) => String(item?.field ?? "").toLowerCase() === name;
@@ -49,6 +50,32 @@ export function changedSearches({ since, parentKeys }) {
   for (let i = 0; i < keys.length; i += PARENTS_PER_SEARCH) {
     searches.push(`key in (${keys.slice(i, i + PARENTS_PER_SEARCH).join(",")}) AND ${recent}`);
   }
+  return searches;
+}
+
+// Which issues found in the window (changedSearches' answers, `updated` only: [{ key, updated }]) need their history
+// read, against what was read before (`cache`: Map key -> { updated, issue }): `keep`, those whose `updated` is the one
+// cached (a missing stamp, on either side, never matches: nothing says the history is unchanged); `stale`, the others
+// found, including those new to the cache. Each key once, in the order found. A key cached but not found is in
+// neither: it left the window.
+export function historyPlan(found, cache) {
+  const stale = [], keep = [], seen = new Set();
+  for (const f of list(found)) {
+    const key = f?.key;
+    if (typeof key !== "string" || !key || seen.has(key)) continue;
+    seen.add(key);
+    const cached = cache?.get?.(key);
+    (cached && cached.updated != null && cached.updated === f.updated ? keep : stale).push(key);
+  }
+  return { stale, keep };
+}
+
+// The searches that read these issues (`key in (…)`, 50 keys a search, each key once). Only keys shaped like an issue
+// key go in, as in changedSearches. None: no search.
+export function keySearches(keys) {
+  const wanted = [...new Set(list(keys).filter((k) => typeof k === "string" && ISSUE_KEY.test(k)))];
+  const searches = [];
+  for (let i = 0; i < wanted.length; i += KEYS_PER_SEARCH) searches.push(`key in (${wanted.slice(i, i + KEYS_PER_SEARCH).join(",")})`);
   return searches;
 }
 

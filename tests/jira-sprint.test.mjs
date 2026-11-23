@@ -267,3 +267,33 @@ test("menuSprint with sprintSeries: a board with no active sprint still offers i
   const all = [s39, s40, s43, otter];
   assert.deepEqual(ids(sprintSeries(menuSprint(null, all.filter((s) => s.state !== "active")), all, new Map())), [43, 40, 39]);
 });
+
+// ---- Today reads only the active and future sprints; the closed ones load with the menu ----
+import { closedNeeded, shownSprint } from "../src/shared/jira/sprint.js";
+
+test("closedNeeded: only for the sprint menu, or when no sprint is active", () => {
+  const a = [{ id: 42, state: "active" }];
+  assert.equal(closedNeeded({ active: a, menuOpen: false, closedAt: null }), false);
+  assert.equal(closedNeeded({ active: a, menuOpen: true, closedAt: null }), true);
+  assert.equal(closedNeeded({ active: [], menuOpen: false, closedAt: null }), true);
+  assert.equal(closedNeeded({ active: [], menuOpen: true, closedAt: 123 }), false);
+});
+
+test("shownSprint: the sprint picked in the menu while it's on the board, else the current one", () => {
+  const s40 = S(40, "Sprint 40", "closed", 1, 5);
+  const all = [s42, s43];
+  assert.equal(shownSprint({ picked: null, shown: s42, all, closed: null, current: s42 }).id, 42);
+  assert.equal(shownSprint({ picked: 43, shown: s43, all, closed: null, current: s42 }).id, 43);
+  assert.equal(shownSprint({ picked: 40, shown: s40, all, closed: [s41, s40], current: s42 }).id, 40, "a closed one, once loaded");
+  assert.equal(shownSprint({ picked: 40, shown: s40, all, closed: [s41], current: s42 }).id, 42, "gone from the board");
+  assert.equal(shownSprint({ picked: 99, shown: null, all, closed: null, current: s42 }).id, 42);
+  assert.equal(shownSprint({ picked: null, shown: null, all: [s43], closed: null, current: null }), null, "no active sprint");
+});
+
+test("shownSprint: a closed sprint picked before a re-read dropped the closed ones stays shown", () => {
+  const s40 = S(40, "Sprint 40", "closed", 1, 5);
+  assert.equal(shownSprint({ picked: 40, shown: s40, all: [s42, s43], closed: null, current: s42 }), s40);
+  // Only the closed one shown: an active or future sprint gone from a fresh read is gone.
+  assert.equal(shownSprint({ picked: 43, shown: s43, all: [s42], closed: null, current: s42 }).id, 42);
+  assert.equal(shownSprint({ picked: 40, shown: s42, all: [s42], closed: null, current: s42 }).id, 42);
+});
