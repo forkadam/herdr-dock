@@ -37,3 +37,14 @@ writes arrows that way. Adam asked for it fixed in the Render panel.
 - Trade-off: only the bundle is patched. Running `src/app/render-helper.js` directly (the existing helper tests) still
   uses the unpatched library.
 - Branch `mermaid-arrow-ids` from `main`, merged back by fast-forward.
+
+## Addendum (2026-11-23): the class shorthand
+
+Adam asked for `A:::hot-->B` too. beautiful-mermaid's `:::class` pattern, `var CLASS_SHORTHAND_REGEX = /^:::([\w][\w-]*)/;`,
+swallows `hot--` the same way: one node, class `hot--`, no edge. It becomes `/^:::(\w(?:\w|-(?![-.>]))*)/`, the same
+rule. `patchMermaidIds` replaces that exact line and throws if it isn't there exactly once. `LOOK_VERSION` 4 → 5.
+
+- Goals: `A:::hot-->B`, `A-->B:::hot`, `A:::hot-->B:::cold`, `A[x]:::hot-.->B`, `A:::hot---B`: two nodes, one edge, the
+  class's colour on its node. `A:::hot --> B` and `A:::hot` unchanged.
+- Not: a hyphenated `classDef` name (`classDef my-cls …`). beautiful-mermaid reads a `classDef` name as `\w+`, so that
+  line draws a stray node `classDef`; pre-existing and separate.
