@@ -55,6 +55,12 @@ export const MARKER_DEFS_HEADS = MARKER_DEFS + '\n  parts.push(`<marker id="circ
   '<marker id="crosshead-start" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker>`);';
 export const EDGE_LABEL = 'if (edge.label) {\n      parts.push(renderEdgeLabel(edge, font));';
 export const EDGE_LABEL_VISIBLE = 'if (edge.label && edge.style !== "invisible") {\n      parts.push(renderEdgeLabel(edge, font));';
+// A two-way arrow's start head: beautiful-mermaid flipped its polygon AND set orient="auto-start-reverse", reversing it
+// twice, so it pointed away from its node and hid inside it. It takes the end head's shape and refX; the orient turns it.
+export const START_HEAD = '  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />';
+export const START_HEAD_TURNED = '  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />';
+export const START_HEAD_COLOURED = '  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />';
+export const START_HEAD_COLOURED_TURNED = '  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />';
 // Each must be in the source exactly once, or the build fails.
 export const LINE_REWRITES = [
   { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
@@ -71,6 +77,8 @@ export const LINE_REWRITES = [
   { name: "start marker", from: START_MARKER, to: START_MARKER_KIND },
   { name: "head markers", from: MARKER_DEFS, to: MARKER_DEFS_HEADS },
   { name: "invisible label", from: EDGE_LABEL, to: EDGE_LABEL_VISIBLE },
+  { name: "start marker shape", from: START_HEAD, to: START_HEAD_TURNED },
+  { name: "coloured start marker shape", from: START_HEAD_COLOURED, to: START_HEAD_COLOURED_TURNED },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.

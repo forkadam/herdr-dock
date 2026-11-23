@@ -94880,8 +94880,8 @@ function arrowMarkerDefs() {
     `  <marker id="arrowhead" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto">
     <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>
-  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">
-    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />
+  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">
+    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>`
   );
 }
@@ -94895,8 +94895,8 @@ function arrowMarkerDefsForColor(color) {
   return `  <marker id="arrowhead-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto">
     <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>
-  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">
-    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />
+  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">
+    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>`;
 }
 function markerSuffix(color) {
@@ -97330,7 +97330,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 9;
+var LOOK_VERSION = 10;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;

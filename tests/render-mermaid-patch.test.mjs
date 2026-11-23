@@ -17,7 +17,7 @@ test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied on
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW) - added(NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID) + added(NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 14);
+  assert.equal(LINE_REWRITES.length, 16);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -267,4 +267,22 @@ test("the built Render helper: a linkStyle-coloured edge's arrowheads, at either
   assert.equal(markerFill(twoWay, ref(twoWay, "start")), "#ff0000");
   assert.equal(markerFill(twoWay, ref(twoWay, "end")), "#ff0000");
   assert.notEqual(ref(twoWay, "start"), ref(twoWay, "end"));
+});
+
+test("the built Render helper: a two-way arrow's start head points at its node, like the end head (plain and coloured)", () => {
+  const [plain, coloured] = drawAll(["flowchart LR\n  A <--> B", "flowchart LR\n  A <--> B\n  linkStyle 0 stroke:#ff0000"]);
+  for (const svg of [plain, coloured]) {
+    for (const [end, orient] of [["end", "auto"], ["start", "auto-start-reverse"]]) {
+      const id = new RegExp(`marker-${end}="url\\(#([^)]*)\\)"`).exec(edgeTags(svg)[0])[1];
+      const marker = new RegExp(`<marker id="${id}"([^>]*)>\\s*<polygon points="([^"]*)"`).exec(svg);
+      const a = (name) => new RegExp(`\\b${name}="([^"]*)"`).exec(marker[1])[1];
+      const pts = marker[2].split(",").map((p) => p.trim().split(/\s+/).map(Number));
+      const mid = Number(a("refY"));
+      const apex = pts.find(([, y]) => y === mid);
+      assert.equal(a("orient"), orient, id);
+      assert.ok(pts.every(([x]) => x <= apex[0]), `${id}: the apex leads (it's the point furthest along the marker's axis)`);
+      const past = apex[0] - Number(a("refX"));
+      assert.ok(past >= 0 && past <= 2, `${id}: the apex sits at the line's end (${past} past refX)`);
+    }
+  }
 });
