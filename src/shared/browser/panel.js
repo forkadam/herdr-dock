@@ -16,6 +16,10 @@ export function panelMode(session, control, now, handoffMinutes) {
 // "pick" or "notes" while the person is pointing at the page (a take-over with that reason), else null.
 export const pickKind = (mode) => (mode?.kind === "takeover" && (mode.reason === "pick" || mode.reason === "notes") ? mode.reason : null);
 
+// Put the pick script back in the page: only when it is gone and the control record, read fresh, still says this
+// copy's Pick or Notes (a Cancel elsewhere, or one in flight, never brings it back).
+export const shouldReinstall = (present, control, kind) => !present && !!kind && control?.takeover?.reason === kind;
+
 // The person drives the page (clicks and keys go to it) in a handoff or a take-over.
 export const inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
 

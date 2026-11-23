@@ -4,7 +4,7 @@
 import { openOverlay } from "herdr";
 import { realSessionName } from "../../shared/browser/session.js";
 import { activeTab, pageHeading } from "../../shared/browser/frame.js";
-import { bigWindow, changes, finishOf, inControl, newTabId, panelMode, sizeCommands } from "../../shared/browser/panel.js";
+import { bigWindow, changes, finishOf, inControl, newTabId, panelMode, pickKind, sizeCommands } from "../../shared/browser/panel.js";
 import { STOP_SCRIPT } from "../../shared/browser/pick-script.js";
 import { browse, readControl, run, writeControl } from "./actions.js";
 
@@ -82,6 +82,8 @@ export const personControls = {
   switchTab(tabId, cx) {
     this.act("Switching tab…", cx, async (t, rec) => {
       if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
+      // Pointing: the script leaves the tab being left (marked off there); the new tab gets it on its URL change.
+      if (pickKind(this.mode())) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
       await this.ab(rec, ["tab", tabId]);
     });
   },

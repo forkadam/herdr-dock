@@ -564,6 +564,7 @@ function panelMode(session, control, now, handoffMinutes) {
   return c.takeover ? { kind: "takeover", reason: c.takeover.reason } : { kind: "view" };
 }
 var pickKind = (mode) => mode?.kind === "takeover" && (mode.reason === "pick" || mode.reason === "notes") ? mode.reason : null;
+var shouldReinstall = (present, control, kind) => !present && !!kind && control?.takeover?.reason === kind;
 var inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
 function controlOf(text, created2) {
   const c = parseControl(text);
@@ -934,20 +935,33 @@ var NOTES_MAX = 20;
 var TEXT_MAX = 200;
 var PICTURE_DAYS = 1;
 var R = "[redacted]";
-var PAIR = /\b(password|passwd|pwd|pass|token|access_token|refresh_token|id_token|auth_token|api_key|apikey|secret|client_secret|session_id|sessionid|auth)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
+var PAIR = /([\w-]*(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]*)(\s*[=:]\s*)(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
 var JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
-var BEARER = /\b(Bearer|Basic|Token)(\s+)[A-Za-z0-9._~+/=-]{4,}/g;
+var BEARER = /\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]+)/gi;
+var AWS_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
 var HEX = /\b[0-9a-fA-F]{32,}\b/g;
+var RUN40 = /[A-Za-z0-9/+=]{40,}/g;
 var B642 = /[A-Za-z0-9+_-]{32,}={0,2}/g;
-var looksRandom = (m) => /[0-9]/.test(m) && /[a-z]/.test(m) && /[A-Z]/.test(m) && m.split(/[-_]/).some((p) => p.length >= 16);
+var classes = (m) => [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(m)).length;
+var mixed = (m) => /[a-z]/.test(m) && /[A-Z]/.test(m) && /[0-9]/.test(m);
+function switches(m) {
+  const kind = (c) => /[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : /[0-9]/.test(c) ? 2 : 3;
+  let n = 0;
+  for (let i = 1; i < m.length; i++) if (kind(m[i]) !== kind(m[i - 1])) n++;
+  return n / Math.max(1, m.length - 1);
+}
+var looksRandom = (m, min) => mixed(m) && switches(m) >= min && m.split(/[-_]/).some((p) => p.length >= 16);
+var authValue = (k, v) => /^bearer$/i.test(k) ? v.length >= 8 && classes(v) >= 2 : v.length >= 16 && classes(v) >= 2;
 function redact(s) {
   let out = String(s ?? "");
   if (!out) return "";
-  out = out.replace(PAIR, (_m, k, sep) => `${k}${sep}${R}`);
+  out = out.replace(BEARER, (m, k, sp, v) => authValue(k, v) ? `${k}${sp}${R}` : m);
+  out = out.replace(PAIR, (m, k, sep, v) => v === R ? m : `${k}${sep}${R}`);
   out = out.replace(JWT, R);
-  out = out.replace(BEARER, (_m, k, sp) => `${k}${sp}${R}`);
+  out = out.replace(AWS_ID, R);
   out = out.replace(HEX, R);
-  out = out.replace(B642, (m) => looksRandom(m) ? R : m);
+  out = out.replace(B642, (m) => looksRandom(m, 0.45) ? R : m);
+  out = out.replace(RUN40, (m) => mixed(m) && switches(m) >= 0.35 ? R : m);
   return out;
 }
 var oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
@@ -1007,6 +1021,7 @@ var SECRET_WORDS = [
   "token"
 ];
 var PICK_SCRIPT = `(function () {
+  if (window.__dockPickOff) return 'off';
   if (window.__dockPick) return 'ok';
   var SECRET = ${JSON.stringify(SECRET_WORDS)};
   var TEXT_MAX = ${TEXT_MAX};
@@ -1125,7 +1140,9 @@ var PICK_SCRIPT = `(function () {
   function onClick(e) {
     stop(e);
     var el = target(e);
-    if (!el) return;
+    if (el) record(el);
+  }
+  function record(el) {
     var r = el.getBoundingClientRect();
     var n = ++count;
     els[n] = el;
@@ -1156,6 +1173,14 @@ var PICK_SCRIPT = `(function () {
 
   window.__dockPick = {
     read: function () { return JSON.stringify(picks.splice(0)); },
+    // The element at a viewport point when it is a frame: picked whole (clicks inside a frame never reach this
+    // window's listeners, so the panel keeps them from the page and asks here). True when it was one.
+    at: function (x, y) {
+      var el = document.elementFromPoint(x, y);
+      if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) return false;
+      record(el);
+      return true;
+    },
     hold: function (n) { var el = els[n]; if (!el || !el.isConnected) return false; hover.style.display = 'none'; held = el; place(hold, el); return true; },
     release: function () { held = null; hold.style.display = 'none'; return true; },
     mark: function (list) {
@@ -1176,9 +1201,15 @@ var PICK_SCRIPT = `(function () {
   };
   return 'ok';
 })()`;
-var READ_PICKS = "(function () { return window.__dockPick ? window.__dockPick.read() : '[]'; })()";
+var START_SCRIPT = `(function () { delete window.__dockPickOff; })();
+${PICK_SCRIPT}`;
+var READ_PICKS = "(function () { return window.__dockPick ? window.__dockPick.read() : 'absent'; })()";
 var RELEASE_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.release()); })()";
-var STOP_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.stop()); })()";
+var STOP_SCRIPT = "(function () { window.__dockPickOff = true; return !!(window.__dockPick && window.__dockPick.stop()); })()";
+var probeScript = (x, y) => {
+  const n = (v) => Math.round(Number(v)) || 0;
+  return `(function () { var d = window.__dockPick; return JSON.stringify(d ? { present: true, frame: d.at(${n(x)}, ${n(y)}) } : { present: false, off: !!window.__dockPickOff }); })()`;
+};
 var holdScript = (n) => `(function () { return !!(window.__dockPick && window.__dockPick.hold(${Math.floor(Number(n)) || 0})); })()`;
 function markScript(list) {
   const safe = (list ?? []).map((x) => ({ n: Math.floor(Number(x.n)) || 0, label: Math.floor(Number(x.label)) || 0 }));
@@ -1192,6 +1223,37 @@ function pickOf(o) {
   const s = o.source;
   const source = s && typeof s === "object" && typeof s.file === "string" && s.file && Number.isFinite(s.line) ? { file: s.file, line: s.line } : null;
   return { n: Number.isFinite(o.n) ? o.n : 0, selector: str(o.selector, 400), text: str(o.text, TEXT_MAX), tag: str(o.tag, 40), box, source };
+}
+function evalValue(text) {
+  let v;
+  try {
+    v = JSON.parse(String(text ?? ""));
+  } catch {
+    return void 0;
+  }
+  if (v && typeof v === "object" && !Array.isArray(v) && v.data && "result" in v.data) v = v.data.result;
+  return v;
+}
+function readResult(text) {
+  const v = evalValue(text);
+  if (v === "absent" || v === void 0) return { present: false, picks: [] };
+  return { present: true, picks: parsePicks(text) };
+}
+function parseProbe(text) {
+  let v = evalValue(text);
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!v || typeof v !== "object") return null;
+  return { present: v.present === true, off: v.off === true, frame: v.frame === true };
+}
+function pointerGate(probe) {
+  if (!probe?.present) return "absent";
+  return probe.frame ? "frame" : "send";
 }
 function parsePicks(text) {
   let v;
@@ -1288,6 +1350,7 @@ var personControls = {
   switchTab(tabId, cx) {
     this.act("Switching tab\u2026", cx, async (t, rec) => {
       if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
+      if (pickKind(this.mode())) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
       await this.ab(rec, ["tab", tabId]);
     });
   },
@@ -1323,8 +1386,7 @@ import * as fs3 from "fs/promises";
 var home2 = () => slashPath(appHome3());
 var READ_TRIES = 6;
 var BACKSTOP_MS = 2e3;
-var READ_AGAIN = `${PICK_SCRIPT};
-${READ_PICKS}`;
+var OFF_TAB = "Pick was ended in this tab. Cancel, then start it again to pick here.";
 var pickControls = {
   // The note fields, made once (InputState needs a live host call, not render): one per element Notes can hold.
   makeNoteInputs() {
@@ -1335,20 +1397,25 @@ var pickControls = {
     this.freeSlots = this.noteInputs.map((_x, i) => i);
     this.pickWanted = false;
     this.pickReading = false;
+    this.pickPending = null;
     this.picking = null;
   },
   startPick(kind, cx) {
     this.act(kind === "pick" ? "Starting Pick\u2026" : "Starting Notes\u2026", cx, async (t, rec, cx2) => {
       this.dropPicks();
       await this.setControl(t, changes.pick(kind, Date.now()));
-      this.picking = { kind, t, items: [] };
+      const r = await this.ab(rec, ["eval", START_SCRIPT]).catch((e) => ({ stdout: "", err: e }));
+      if (String(r.stdout).trim() !== '"ok"') {
+        await this.setControl(t, changes.handBack());
+        throw new Error(`Pick couldn't start in this page${r.err ? `: ${r.err.message ?? r.err}` : ""}`);
+      }
+      this.picking = { kind, t, items: [], url: this.stream?.state?.url ?? null };
       this.flash = null;
-      await this.ab(rec, ["eval", PICK_SCRIPT]);
       this.pickBackstop(this.picking, cx2);
     });
   },
   // Besides the read after each click here: one every few seconds while it runs (a click that reached the page
-  // another way, one whose read gave up early, or a page that lost the script).
+  // another way, one whose read gave up early, or a page that lost the script: ensurePick).
   pickBackstop(p, cx) {
     if (!p) return;
     cx.spawn(async (cx2) => {
@@ -1357,6 +1424,69 @@ var pickControls = {
         if (this.picking !== p) return;
         if (this.terminal === p.t && !this.pickReading) this.pickClicked(cx2, 1);
       }
+    });
+  },
+  // A press on the picture while this copy picks: held back until a probe says the script is in the page and the
+  // pointer isn't on a frame; then the press (and its release, when it came meanwhile) goes to the page.
+  pickPress(down, at, cx) {
+    const p = this.myPick(), rec = this.record;
+    if (!p || !rec || this.pickPending) return;
+    const press = this.pickPending = { up: null, ready: false };
+    cx.spawn(async (cx2) => {
+      const r = await this.ab(rec, ["eval", probeScript(at.x, at.y)]).catch(() => null);
+      if (this.pickPending !== press) return;
+      const gate = pointerGate(parseProbe(r?.stdout));
+      if (gate === "send" && this.myPick() === p) {
+        this.sendToPage(down);
+        if (press.up) {
+          this.sendToPage(press.up);
+          this.pickPending = null;
+          this.pickClicked(cx2);
+        } else press.ready = true;
+        return;
+      }
+      this.pickPending = null;
+      if (gate === "frame") this.pickClicked(cx2);
+      else await this.ensurePick(rec);
+      cx2.notify();
+    });
+  },
+  pickRelease(up, cx) {
+    const press = this.pickPending;
+    if (!press) return;
+    if (!press.ready) {
+      press.up = up;
+      return;
+    }
+    this.sendToPage(up);
+    this.pickPending = null;
+    this.pickClicked(cx);
+  },
+  sendToPage(msgs) {
+    const s = this.stream;
+    if (s) for (const m of msgs) s.send(m);
+  },
+  // The script is gone from the page (a reload, another page, another tab): back in, only while the control record,
+  // read fresh, still says this copy's Pick or Notes. A tab that left Pick (STOP_SCRIPT's mark) stays off.
+  async ensurePick(rec) {
+    const p = this.myPick();
+    if (!p || !rec) return false;
+    if (!shouldReinstall(false, await readControl(p.t, this.created), p.kind) || this.myPick() !== p) return false;
+    const r = await this.ab(rec, ["eval", PICK_SCRIPT]).catch(() => null);
+    const v = String(r?.stdout ?? "").trim();
+    if (v === '"off"') this.error = OFF_TAB;
+    return v === '"ok"';
+  },
+  // The stream's URL changed while this copy picks: the script goes back in now, not at the next backstop read.
+  pickUrlCheck(cx) {
+    const p = this.myPick(), url = this.stream?.state?.url;
+    if (!p || !url || url === p.url) return;
+    p.url = url;
+    const rec = this.record;
+    cx.spawn(async (cx2) => {
+      await this.ensurePick(rec);
+      if (p.kind === "notes") await this.markNotes(rec);
+      cx2.notify();
     });
   },
   // A click went to the page while picking: read what the script recorded (one read loop at a time; a click during
@@ -1383,8 +1513,13 @@ var pickControls = {
     const p = this.picking, rec = this.record;
     for (let i = 0; i < tries && this.picking === p && rec; i++) {
       await cx.sleep(i ? 150 : 80);
-      const r = await this.ab(rec, ["eval", READ_AGAIN]).catch(() => null);
-      const picks = parsePicks(r?.stdout);
+      const r = await this.ab(rec, ["eval", READ_PICKS]).catch(() => null);
+      if (!r) continue;
+      const { present, picks } = readResult(r.stdout);
+      if (!present) {
+        await this.ensurePick(rec);
+        continue;
+      }
       if (!picks.length) continue;
       await this.addPicked(p, rec, picks);
       cx.notify();
@@ -1484,6 +1619,8 @@ var pickControls = {
   dropPicks() {
     const p = this.picking;
     this.picking = null;
+    this.pickPending = null;
+    if (this.error === OFF_TAB) this.error = null;
     if (p) this.dropItems(p.items);
   },
   dropItems(items) {
@@ -1748,7 +1885,10 @@ var Browser = class extends View {
       port: rec.port,
       framesRel: this.framesOf(t),
       onChange: () => {
-        if (this.stream === s) cx.notify();
+        if (this.stream === s) {
+          this.pickUrlCheck(cx);
+          cx.notify();
+        }
       },
       onLost: () => {
         if (this.stream === s) cx.spawn(async (cx2) => this.lost(s, cx2));
@@ -1900,15 +2040,22 @@ var Browser = class extends View {
     }).when(live, (el) => el.track_focus(this.h).on_mouse_down("left", (e, cx) => {
       if (!pointing) this.h.focus();
       if (!s.size || !e.local_position || !clicks) return;
+      cx.stop_propagation();
+      if (pointing) {
+        this.pickPress(mouseEvents("down", e, s.size.w, drawnW), toPage(e.local_position, s.size.w, drawnW), cx);
+        return;
+      }
       this.pressed = true;
       send(mouseEvents("down", e, s.size.w, drawnW));
-      cx.stop_propagation();
     }).on_mouse_up("left", (e, cx) => {
       this.pressed = false;
       if (!s.size || !e.local_position || !clicks) return;
-      send(mouseEvents("up", e, s.size.w, drawnW));
-      if (pointing) this.pickClicked(cx);
       cx.stop_propagation();
+      if (pointing) {
+        this.pickRelease(mouseEvents("up", e, s.size.w, drawnW), cx);
+        return;
+      }
+      send(mouseEvents("up", e, s.size.w, drawnW));
     }).on_mouse_move((e) => {
       const now = Date.now();
       if (!s.size || !e.local_position || now - this.lastMove < MOVE_MS) return;

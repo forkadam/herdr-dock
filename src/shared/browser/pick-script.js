@@ -13,6 +13,7 @@ const SECRET_WORDS = ["access_token", "auth_token", "api_key", "apikey", "client
   "session_id", "sessionid", "csrf", "secret", "password", "token"];
 
 export const PICK_SCRIPT = `(function () {
+  if (window.__dockPickOff) return 'off';
   if (window.__dockPick) return 'ok';
   var SECRET = ${JSON.stringify(SECRET_WORDS)};
   var TEXT_MAX = ${TEXT_MAX};
@@ -131,7 +132,9 @@ export const PICK_SCRIPT = `(function () {
   function onClick(e) {
     stop(e);
     var el = target(e);
-    if (!el) return;
+    if (el) record(el);
+  }
+  function record(el) {
     var r = el.getBoundingClientRect();
     var n = ++count;
     els[n] = el;
@@ -162,6 +165,14 @@ export const PICK_SCRIPT = `(function () {
 
   window.__dockPick = {
     read: function () { return JSON.stringify(picks.splice(0)); },
+    // The element at a viewport point when it is a frame: picked whole (clicks inside a frame never reach this
+    // window's listeners, so the panel keeps them from the page and asks here). True when it was one.
+    at: function (x, y) {
+      var el = document.elementFromPoint(x, y);
+      if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) return false;
+      record(el);
+      return true;
+    },
     hold: function (n) { var el = els[n]; if (!el || !el.isConnected) return false; hover.style.display = 'none'; held = el; place(hold, el); return true; },
     release: function () { held = null; hold.style.display = 'none'; return true; },
     mark: function (list) {
@@ -183,9 +194,20 @@ export const PICK_SCRIPT = `(function () {
   return 'ok';
 })()`;
 
-export const READ_PICKS = "(function () { return window.__dockPick ? window.__dockPick.read() : '[]'; })()";
+// Pick or Notes starting: the page's "off" mark (left by STOP_SCRIPT) cleared, then the script installed.
+export const START_SCRIPT = `(function () { delete window.__dockPickOff; })();\n${PICK_SCRIPT}`;
+// The records as JSON, or "absent" when the script isn't in the page (a reload, another page).
+export const READ_PICKS = "(function () { return window.__dockPick ? window.__dockPick.read() : 'absent'; })()";
 export const RELEASE_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.release()); })()";
-export const STOP_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.stop()); })()";
+// Everything out, and the page marked off: a read or reinstall still in flight can't put the script back.
+export const STOP_SCRIPT = "(function () { window.__dockPickOff = true; return !!(window.__dockPick && window.__dockPick.stop()); })()";
+
+// Before a press reaches the page while pointing: is the script there, and is the point on a frame (then it is
+// picked whole here and the press goes nowhere)?
+export const probeScript = (x, y) => {
+  const n = (v) => Math.round(Number(v)) || 0;
+  return `(function () { var d = window.__dockPick; return JSON.stringify(d ? { present: true, frame: d.at(${n(x)}, ${n(y)}) } : { present: false, off: !!window.__dockPickOff }); })()`;
+};
 
 // Outlines pick n (its picture is taken while this outline shows).
 export const holdScript = (n) => `(function () { return !!(window.__dockPick && window.__dockPick.hold(${Math.floor(Number(n)) || 0})); })()`;
@@ -205,6 +227,36 @@ function pickOf(o) {
   const s = o.source;
   const source = s && typeof s === "object" && typeof s.file === "string" && s.file && Number.isFinite(s.line) ? { file: s.file, line: s.line } : null;
   return { n: Number.isFinite(o.n) ? o.n : 0, selector: str(o.selector, 400), text: str(o.text, TEXT_MAX), tag: str(o.tag, 40), box, source };
+}
+
+// eval's output as the value the script returned (plain output prints it JSON-quoted; --json wraps it).
+function evalValue(text) {
+  let v;
+  try { v = JSON.parse(String(text ?? "")); } catch { return undefined; }
+  if (v && typeof v === "object" && !Array.isArray(v) && v.data && "result" in v.data) v = v.data.result;
+  return v;
+}
+
+// READ_PICKS' output: the picks, and whether the script was in the page.
+export function readResult(text) {
+  const v = evalValue(text);
+  if (v === "absent" || v === undefined) return { present: false, picks: [] };
+  return { present: true, picks: parsePicks(text) };
+}
+
+// probeScript's output, or null.
+export function parseProbe(text) {
+  let v = evalValue(text);
+  if (typeof v === "string") { try { v = JSON.parse(v); } catch { return null; } }
+  if (!v || typeof v !== "object") return null;
+  return { present: v.present === true, off: v.off === true, frame: v.frame === true };
+}
+
+// What a press does while pointing: "send" (to the page, where the script takes the click), "frame" (the frame was
+// picked by the probe; nothing goes to the page), "absent" (the script isn't there: nothing goes to the page).
+export function pointerGate(probe) {
+  if (!probe?.present) return "absent";
+  return probe.frame ? "frame" : "send";
 }
 
 // The picks READ_PICKS returned, from `agent-browser eval`'s output (plain: the JSON string printed JSON-quoted; or

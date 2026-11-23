@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   designFeedback, redact, INTENTS, PRIORITIES, NOTES_MAX, addPicks, pictureName, stalePicks,
 } from "../src/shared/browser/feedback.js";
-import { PICK_SCRIPT, READ_PICKS, STOP_SCRIPT, RELEASE_SCRIPT, holdScript, markScript, parsePicks } from "../src/shared/browser/pick-script.js";
-import { changes, finishOf, panelMode, pickKind } from "../src/shared/browser/panel.js";
+import {
+  PICK_SCRIPT, START_SCRIPT, READ_PICKS, STOP_SCRIPT, RELEASE_SCRIPT, holdScript, markScript, probeScript, parsePicks, readResult,
+  parseProbe, pointerGate,
+} from "../src/shared/browser/pick-script.js";
+import { changes, finishOf, panelMode, pickKind, shouldReinstall } from "../src/shared/browser/panel.js";
 import { parseControl } from "../src/shared/browser/registry.js";
 
 const save = { selector: "button#save", text: "Save", note: "make it green", picture: "/home/me/.config/herdr-app/herdr-dock/browser/picks/t1-abc-1.png" };
@@ -67,7 +70,7 @@ test("redact: JWTs, bearer tokens, password/token pairs, long hex and base64 run
   assert.equal(redact("token=abc&next=1"), "token=[redacted]&next=1");
   assert.equal(redact("api_key: s3cr3tvalue"), "api_key: [redacted]");
   assert.equal(redact(`id ${"a1b2c3d4e5".repeat(4)} ok`), "id [redacted] ok");
-  assert.equal(redact("k QWxhZGRpbjpvcGVuIHNlc2FtZQ0123456789abcdefXYZ== z"), "k [redacted] z");
+  assert.equal(redact("k QWxhZGRpbjpvcGVuIHNlc2FtZQ7xK2pR9mZ4vB8 z"), "k [redacted] z");
   assert.equal(redact("the button is blue"), "the button is blue");
   assert.equal(redact("a-very-long-hyphenated-slug-made-only-of-words"), "a-very-long-hyphenated-slug-made-only-of-words");
   const path = "file:///tmp/c-1000/-home-me-Projects-herdr-dock/763eaa6c-7aff-457e-8fd3-6f14a179a44a/scratchpad/t9/page.html";
@@ -76,6 +79,26 @@ test("redact: JWTs, bearer tokens, password/token pairs, long hex and base64 run
   assert.equal(redact("/reset/aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z"), "/reset/[redacted]");
   assert.equal(redact(""), "");
   assert.equal(redact(null), "");
+});
+
+test("redact: real secret shapes", () => {
+  assert.equal(redact("key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY end"), "key [redacted] end");
+  assert.equal(redact("aws_secret_access_key=abc"), "aws_secret_access_key=[redacted]");
+  assert.equal(redact("secret_key=abc"), "secret_key=[redacted]");
+  assert.equal(redact("X-Api-Key: abc123"), "X-Api-Key: [redacted]");
+  assert.equal(redact("api-key=abc123"), "api-key=[redacted]");
+  assert.equal(redact("private_key: xyz"), "private_key: [redacted]");
+  assert.equal(redact("authorization: bearer abc.def-123_xyz"), "authorization: bearer [redacted]");
+  assert.equal(redact("id AKIAIOSFODNN7EXAMPLE ok"), "id [redacted] ok");
+  assert.equal(redact("id ASIAY34FZKBOKMUTVV7A ok"), "id [redacted] ok");
+});
+
+test("redact: ordinary words stay", () => {
+  for (const s of ["Choose the Basic plan", "Token expired banner", "pass: the test", "handleSubmitButtonClickEvent2024Handler",
+    "author: Jane", "the button is blue", "handleSubmitButtonClickEvent2024HandlerFactoryProvider"]) {
+    assert.equal(redact(s), s);
+  }
+  assert.equal(redact("Basic dXNlcjpQYXNzd29yZDEyMzQ1Ng=="), "Basic [redacted]");
 });
 
 test("parsePicks: agent-browser's eval output, valid or not", () => {
@@ -102,7 +125,7 @@ test("parsePicks: agent-browser's eval output, valid or not", () => {
 });
 
 test("the page scripts parse", () => {
-  for (const s of [PICK_SCRIPT, READ_PICKS, STOP_SCRIPT, RELEASE_SCRIPT, holdScript(3), markScript([{ n: 1, label: 1 }])]) {
+  for (const s of [PICK_SCRIPT, START_SCRIPT, READ_PICKS, STOP_SCRIPT, RELEASE_SCRIPT, holdScript(3), markScript([{ n: 1, label: 1 }]), probeScript(10, 20)]) {
     assert.doesNotThrow(() => new Function(s));
   }
   assert.ok(PICK_SCRIPT.includes("__dockPick"));
@@ -149,4 +172,48 @@ test("Pick and Notes take over with their reason; hand back stops the page scrip
   assert.equal(finishOf(c).stopPick, true);
   assert.equal(finishOf(free).stopPick, false);
   assert.equal(changes.handBack()(c).takeover, null);
+});
+
+// Runs a page script against a bare window (no document): enough for what happens before the script touches the page.
+function inWindow(win, script) {
+  return new Function("window", "script", "return eval(script)")(win, script); // eval: the last expression's value, as agent-browser gives
+}
+
+test("STOP_SCRIPT marks the page off; only START_SCRIPT's install clears it", () => {
+  const win = {};
+  assert.equal(inWindow(win, STOP_SCRIPT), false); // nothing was installed
+  assert.equal(win.__dockPickOff, true);
+  assert.equal(inWindow(win, PICK_SCRIPT), "off"); // a reinstall respects it
+  assert.equal(win.__dockPick, undefined);
+  win.__dockPick = { read: () => "[]" }; // installed: START gets past the marker to the idempotent check
+  assert.equal(inWindow(win, START_SCRIPT), "ok");
+  assert.equal(win.__dockPickOff, undefined);
+  assert.equal(inWindow({}, READ_PICKS), "absent");
+});
+
+test("readResult: the picks, and whether the script is in the page", () => {
+  assert.deepEqual(readResult(JSON.stringify("absent")), { present: false, picks: [] });
+  assert.deepEqual(readResult(JSON.stringify("[]")), { present: true, picks: [] });
+  assert.equal(readResult(JSON.stringify(JSON.stringify([{ n: 1, selector: "#a" }]))).picks.length, 1);
+  assert.deepEqual(readResult("garbage"), { present: false, picks: [] });
+});
+
+test("pointerGate: a press reaches the page only when the script is there and the pointer isn't on a frame", () => {
+  assert.equal(pointerGate(parseProbe(JSON.stringify(JSON.stringify({ present: true, frame: false })))), "send");
+  assert.equal(pointerGate(parseProbe(JSON.stringify(JSON.stringify({ present: true, frame: true })))), "frame");
+  assert.equal(pointerGate(parseProbe(JSON.stringify(JSON.stringify({ present: false, off: false })))), "absent");
+  assert.equal(pointerGate(parseProbe("not json")), "absent");
+  assert.equal(pointerGate(null), "absent");
+  assert.deepEqual(parseProbe(JSON.stringify(JSON.stringify({ present: false, off: true }))), { present: false, off: true, frame: false });
+});
+
+test("shouldReinstall: only when the script is gone and the record still says this pick", () => {
+  const free = parseControl(null);
+  const notes = changes.pick("notes", 5)(free);
+  assert.equal(shouldReinstall(false, notes, "notes"), true);
+  assert.equal(shouldReinstall(true, notes, "notes"), false);
+  assert.equal(shouldReinstall(false, notes, "pick"), false);
+  assert.equal(shouldReinstall(false, changes.handBack()(notes), "notes"), false);
+  assert.equal(shouldReinstall(false, { ...free, takeover: { reason: "person", since: 1 } }, "notes"), false);
+  assert.equal(shouldReinstall(false, null, "notes"), false);
 });

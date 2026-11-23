@@ -19,7 +19,7 @@ import { browserOf } from "../../shared/browser/config.js";
 import { isProduction } from "../../shared/browser/hosts.js";
 import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
-import { afterLoss, drawnHeight, isPaste, keyEvents, mouseEvents, pasteEvents, PASTE_LIMIT, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
+import { afterLoss, toPage, drawnHeight, isPaste, keyEvents, mouseEvents, pasteEvents, PASTE_LIMIT, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
 import { fitWidth, inControl, pickKind } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
@@ -200,7 +200,7 @@ export default class Browser extends View {
     const t = this.terminal;
     const s = new Stream({
       port: rec.port, framesRel: this.framesOf(t),
-      onChange: () => { if (this.stream === s) cx.notify(); },
+      onChange: () => { if (this.stream === s) { this.pickUrlCheck(cx); cx.notify(); } },
       onLost: () => { if (this.stream === s) cx.spawn(async (cx) => this.lost(s, cx)); },
     });
     s.session = rec.session;
@@ -345,8 +345,8 @@ export default class Browser extends View {
     const layer = (rel) => div().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
     const live = inControl(mode);
     const edge = mode.kind === "handoff" ? t.working : t.accent;
-    // Pointing (Pick, Notes): moves and clicks go to the page's script, keys stay in the panel (the note fields). A
-    // copy that didn't start it sends moves only, so its clicks aren't picks nobody reads.
+    // Pointing (Pick, Notes): moves go to the page's script, presses only through pickPress (once the script is seen
+    // there), keys stay in the panel (the note fields). A copy that didn't start it sends moves only.
     const pointing = !!pickKind(mode), mine = !!this.myPick();
     const clicks = !pointing || mine;
     // Input goes to the stream only (Stream.send): never logged, kept or sent anywhere else.
@@ -363,16 +363,18 @@ export default class Browser extends View {
         .on_mouse_down("left", (e, cx) => {
           if (!pointing) this.h.focus();
           if (!s.size || !e.local_position || !clicks) return;
+          cx.stop_propagation();
+          // Pointing: the press waits for the probe (the script there, not a frame), so the page never gets it.
+          if (pointing) { this.pickPress(mouseEvents("down", e, s.size.w, drawnW), toPage(e.local_position, s.size.w, drawnW), cx); return; }
           this.pressed = true;
           send(mouseEvents("down", e, s.size.w, drawnW));
-          cx.stop_propagation();
         })
         .on_mouse_up("left", (e, cx) => {
           this.pressed = false;
           if (!s.size || !e.local_position || !clicks) return;
-          send(mouseEvents("up", e, s.size.w, drawnW));
-          if (pointing) this.pickClicked(cx);
           cx.stop_propagation();
+          if (pointing) { this.pickRelease(mouseEvents("up", e, s.size.w, drawnW), cx); return; }
+          send(mouseEvents("up", e, s.size.w, drawnW));
         })
         .on_mouse_move((e) => {
           const now = Date.now();
