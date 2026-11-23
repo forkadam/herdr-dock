@@ -268,6 +268,7 @@ export default class Jira extends View {
     this.detailProblem = null;
     this.openChange(this.selected);
     const key = this.selected;
+    if (key) this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
     if (key) cx.spawn(async (cx) => this.loadDetail(cx, key));
   }
 
@@ -562,12 +563,6 @@ export default class Jira extends View {
     this.counts.set("today", { total: badge?.count });
   }
 
-  // A brief row: the issue opens beside the brief, and its New-in-sprint and bug items are read (readOnOpen).
-  openBriefItem(key, cx) {
-    this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
-    this.select(key, cx);
-  }
-
   markAllRead(cx) {
     this.updateMarks((marks) => readAll(marks, this.brief));
     cx.notify();
@@ -760,7 +755,10 @@ export default class Jira extends View {
     if (!s.fetchedAt && !s.loading) await this.refresh(cx);
   }
 
+  // Opens an issue in the detail (from the brief, the board, a list or a key). Opening it reads its New-in-sprint and
+  // bug items (readOnOpen); a Changed item waits for Mark read.
   select(key, cx) {
+    this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
     if (key !== this.selected) {
       this.actionMsg = null;
       this.pendingStep = null;
@@ -925,6 +923,16 @@ export default class Jira extends View {
     else if (!col.statuses.includes(drag.row.status)) {
       this.dropNote = { status: col.name, key: drag.row.key, text: refusedDropText(drag.row.key, drag.row.status, col.name, drag.targets) };
     }
+  }
+
+  // A release anywhere on the page: a drag still going ends without a move (a release over the board's columns was
+  // already handled there: its own handler runs first), and a press that never became a drag is forgotten, so
+  // neither is left stuck (over the brief, the header, the tabs or the detail).
+  dragEnded(cx) {
+    this.press = null;
+    if (!this.drag) return;
+    this.drag = null;
+    cx.notify();
   }
 
   // The move runs like one picked in the status menu, with the issue opened beside the board to show the result.
@@ -1488,7 +1496,8 @@ export default class Jira extends View {
     const t = theme();
     const state = checking() || !this.jira ? "setup"
       : pageState({ settings: this.jira.settings, token: this.jira.token, editing: this.editing, connected: this.connected, problem: this.problem, checking: this.checkingNow });
-    const root = v_flex().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground);
+    const root = v_flex().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+      .on_mouse_up("left", (_e, cx) => this.dragEnded(cx));
     if (state === "setup" || state === "settings") return root.child(this.settingsForm(t, state === "setup"));
     if (state === "problem") return root.child(this.problemView(t));
     if (state === "checking") {

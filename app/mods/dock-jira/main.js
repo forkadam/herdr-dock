@@ -1321,7 +1321,7 @@ function briefView(page, t) {
   const lists = briefLists(b, page.marks());
   const newBugs = lists.bugs.filter((x) => x.unread).length;
   const unread = lists.changed.length + lists.sprint.length + newBugs;
-  const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.openBriefItem(item.key, cx)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(item.key)).child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key)).when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new"))).child(div().flex_none().max_w(220).truncate().text_size(11.5).text_color(t.muted).child(why)).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(item.at, now)));
+  const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.select(item.key, cx)).child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(item.key)).child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key)).when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new"))).child(div().flex_none().max_w(220).truncate().text_size(11.5).text_color(t.muted).child(why)).child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(item.at, now)));
   const section = (title, count, rows, none) => [
     h_flex().h(28).px(16).pt(6).gap(6).flex_none().items_center().child(div().text_size(11.5).font_medium().text_color(t.muted).child(title)).child(div().text_size(11.5).text_color(t.dim).child(count)),
     ...rows.length ? rows : [div().px(16).pb(4).text_size(12).text_color(t.dim).child(none)]
@@ -1708,6 +1708,7 @@ var Jira = class extends View {
     this.detailProblem = null;
     this.openChange(this.selected);
     const key = this.selected;
+    if (key) this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
     if (key) cx.spawn(async (cx2) => this.loadDetail(cx2, key));
   }
   // ---- data ----
@@ -2022,11 +2023,6 @@ var Jira = class extends View {
     setShared2(BADGE_KEY, badge);
     this.counts.set("today", { total: badge?.count });
   }
-  // A brief row: the issue opens beside the brief, and its New-in-sprint and bug items are read (readOnOpen).
-  openBriefItem(key, cx) {
-    this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
-    this.select(key, cx);
-  }
   markAllRead(cx) {
     this.updateMarks((marks) => readAll(marks, this.brief));
     cx.notify();
@@ -2229,7 +2225,10 @@ var Jira = class extends View {
     const s = this.shown();
     if (!s.fetchedAt && !s.loading) await this.refresh(cx);
   }
+  // Opens an issue in the detail (from the brief, the board, a list or a key). Opening it reads its New-in-sprint and
+  // bug items (readOnOpen); a Changed item waits for Mark read.
   select(key, cx) {
+    this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
     if (key !== this.selected) {
       this.actionMsg = null;
       this.pendingStep = null;
@@ -2408,6 +2407,15 @@ var Jira = class extends View {
     else if (!col.statuses.includes(drag.row.status)) {
       this.dropNote = { status: col.name, key: drag.row.key, text: refusedDropText(drag.row.key, drag.row.status, col.name, drag.targets) };
     }
+  }
+  // A release anywhere on the page: a drag still going ends without a move (a release over the board's columns was
+  // already handled there: its own handler runs first), and a press that never became a drag is forgotten, so
+  // neither is left stuck (over the brief, the header, the tabs or the detail).
+  dragEnded(cx) {
+    this.press = null;
+    if (!this.drag) return;
+    this.drag = null;
+    cx.notify();
   }
   // The move runs like one picked in the status menu, with the issue opened beside the board to show the result.
   // A drop's move that needs a value (Resolution) asks for it right there in the column, before opening anything.
@@ -2838,7 +2846,7 @@ ${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` })).child(this.
   render() {
     const t = theme();
     const state = checking() || !this.jira ? "setup" : pageState({ settings: this.jira.settings, token: this.jira.token, editing: this.editing, connected: this.connected, problem: this.problem, checking: this.checkingNow });
-    const root = v_flex3().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground);
+    const root = v_flex3().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_mouse_up("left", (_e, cx) => this.dragEnded(cx));
     if (state === "setup" || state === "settings") return root.child(this.settingsForm(t, state === "setup"));
     if (state === "problem") return root.child(this.problemView(t));
     if (state === "checking") {

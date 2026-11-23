@@ -210,10 +210,10 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     you.
   - **High-priority bugs**: every bug `briefBugs` finds at a priority in `highPriorities`, unread ones first and
     marked **new**. A bug that leaves the list (fixed, reprioritised, reassigned) is new again if it comes back.
-  - **Read marks** are kept per PC. Opening a New-in-sprint or bug item reads it. A Changed item is read only by
-    **Mark read** (in its detail) or **Mark all read** (on the brief): opening it doesn't, so it doesn't vanish
-    between reading the change and checking it against your work. Read Changed and New-in-sprint items drop off; a
-    newer edit makes a Changed item unread again.
+  - **Read marks** are kept per PC. Opening an issue (from the brief, the board or any tab) reads its New-in-sprint
+    and bug items. A Changed item is read only by **Mark read** (in its detail) or **Mark all read** (on the brief):
+    opening it doesn't, so it doesn't vanish between reading the change and checking it against your work. Read
+    Changed and New-in-sprint items drop off; a newer edit makes a Changed item unread again.
   - **What changed**: a Changed item's detail opens with the description's line diff (added and removed lines
     marked, long unchanged stretches folded: click to show all), from before the first unread edit to after the
     last, so 8 edits read as one change; who edited and when; **Mark read**, **Open in browser** and **Check against

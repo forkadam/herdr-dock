@@ -1,7 +1,7 @@
 // Today's brief (above the sprint board, or alone when no board is set) and, in an issue's detail, What changed and
 // Recent changes. src/shared/jira/brief.js and diff.js decide; this draws. `page` is the Jira view: brief, marks(),
 // options, subtasks, selected, detail, change, recent, scroll(key), button(t, id, label, onClick, opts),
-// openBriefItem(key, cx), markAllRead(cx), markRead(cx), checkMyWork(item, cx), openUrl(url), toggleRecent(key, cx).
+// select(key, cx), markAllRead(cx), markRead(cx), checkMyWork(item, cx), openUrl(url), toggleRecent(key, cx).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { briefLists, checkWork, editsText, isUnread } from "../../shared/jira/brief.js";
@@ -58,7 +58,7 @@ export function briefView(page, t) {
   const unread = lists.changed.length + lists.sprint.length + newBugs;
   const row = (kind, item, why, fresh) => h_flex().id(`jira-brief-${kind}-${item.key}`).h(30).px(16).gap(10).flex_none().items_center()
     .cursor_pointer().bg(page.selected === item.key ? t.selected : t.background).hover((s) => s.bg(t.hover))
-    .on_click((_e, cx) => page.openBriefItem(item.key, cx))
+    .on_click((_e, cx) => page.select(item.key, cx))
     .child(div().w(76).flex_none().text_size(12).text_color(t.dim).child(item.key))
     .child(div().flex_1().min_w(0).truncate().text_size(12.8).text_color(t.foreground).child(item.summary || item.key))
     .when(fresh, (el) => el.child(div().flex_none().px(5).rounded(4).border_1().border_color(WARN).text_size(10.5).text_color(WARN).child("new")))

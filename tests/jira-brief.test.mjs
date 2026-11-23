@@ -268,7 +268,7 @@ test("briefLists: Changed and New in sprint unread only, newest first; every bug
   assert.deepEqual(briefLists(undefined, {}), { changed: [], sprint: [], bugs: [] });
 });
 
-test("readOnOpen: the issue's New-in-sprint and bug items are read, its Changed item is not", () => {
+test("readOnOpen: opening an issue (from anywhere) reads its New-in-sprint and bug items, not its Changed item", () => {
   const marks = readOnOpen({}, brief, "WEB-46");
   assert.deepEqual(marks, { "WEB-46": { sprint: 42, bug: true } });
   assert.deepEqual(readOnOpen({ "WEB-40": { sprint: 41 } }, brief, "WEB-40"), { "WEB-40": { sprint: 41 } }); // only a Changed item: nothing

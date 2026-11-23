@@ -185,9 +185,9 @@ function readEach(marks, brief, pick) {
   return out;
 }
 
-// An issue opened from the brief: its New-in-sprint and bug items have nothing more to read, so they are read. Its
-// Changed item stays unread until Mark read (the diff is read, then checked against your work). The same object when
-// nothing changed.
+// An issue opened (its detail, from the brief, the board or any list): its New-in-sprint and bug items have nothing
+// more to read, so they are read. Its Changed item stays unread until Mark read (the diff is read, then checked against
+// your work). The same object when nothing changed.
 export const readOnOpen = (marks, brief, key) => readEach(marks, brief, (kind, item) => kind !== "changed" && item.key === key);
 
 // Mark all read: every unread item of the three lists (the same object when nothing was unread).
