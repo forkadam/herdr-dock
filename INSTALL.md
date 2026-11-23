@@ -62,15 +62,33 @@ If they don't want it, run `node scripts/deploy.mjs --no-statusline` next time a
 
 Offer to install a missing CLI, and do it only if they say yes. Otherwise skip this step.
 
-## 6. Restart Herdr if you installed a CLI
+## 6. The browser beside agents
+
+**Ask first.** Turn on the browser beside agents? Downloads agent-browser (~20 MB) and, without a `chrome` path, Chrome
+for Testing (~150 MB). Agents then open and drive a real page with `browse`, and the person watches it in the Browser
+panel. It is off by default, and a "no" skips this step.
+
+If they say yes, set it in `<app home>/herdr-dock/local.json` (this PC only; the file is `{ "v": 1, ... }`):
+
+```
+"browser": { "enabled": true }
+```
+
+Add `"chrome": "<path to Chrome or Chromium>"` if they have one and want it used (nothing is downloaded then). Run
+`npm run deploy` again. It downloads the pinned agent-browser into `herdr-dock/browser/bin/` (the download is checked
+against a pinned checksum), gets Chrome, and writes the `dock-browser` skill to `~/.claude/skills`, `~/.codex/skills`
+and, where it has a `skills` folder, `~/.gemini/config/skills`. `--no-skills` skips the skills. Setting `enabled`
+back to false and deploying removes the binary and the skills; the signed-in profile stays.
+
+## 7. Restart Herdr if you installed a CLI
 
 Herdr reads PATH when it starts. If you installed `gh` or `glab`, tell the user to restart Herdr. If you only
 logged in, they can press the refresh button in Git projects instead.
 
-## 7. Finish
+## 8. Finish
 
 Give the user a short summary: where it is cloned, that deploy and `herdr-app status` passed, whether the status
-line and the CLIs were set up or skipped, and whether they need to restart Herdr. Mention the layout switch
+line, the CLIs and the browser were set up or skipped, and whether they need to restart Herdr. Mention the layout switch
 (Ctrl+Shift+L, pick `herdr-dock`) and that updates arrive from the Dock layout dialog or `npm run update`.
 
 ## Never

@@ -1,0 +1,10 @@
+{
+  "version": "0.43.0",
+  "packages": {
+    "linux-x64":   { "name": "@agent-browser/cli-linux-x64-gnu",   "integrity": "sha512-WY8vy2Saa3oRt6XEmz4Sae1W5qS9TjYcbX6IE+dxb8s2APfL9XyQjMHC6jBZrhwqDBIvUeTMCT/P2cq3XLPSBw==", "member": "package/bin/agent-browser" },
+    "linux-arm64": { "name": "@agent-browser/cli-linux-arm64-gnu", "integrity": "sha512-8DC234LGlXCn8A2YXGk6woy1uTjyexvtHd/TOQHLrV2sfUMZD647HTHEJyF+2z1J1oR34LaB5jqHJ9d0REC+Cw==", "member": "package/bin/agent-browser" },
+    "darwin-arm64":{ "name": "@agent-browser/cli-darwin-arm64",    "integrity": "sha512-HV6GP59IjNnowlrXR/5rVM8msPWwQDEONt/tWC8STzUfKZQHKZI/Iv9sf2h2ZhwK8xwoqLhxpf+KxcFgJ0sExQ==", "member": "package/bin/agent-browser" },
+    "darwin-x64":  { "name": "@agent-browser/cli-darwin-x64",      "integrity": "sha512-3NKnKFOWLYDYTz4bJxo4jt+GwjM4VtcW5FDrQY35eUrytig65FEDdXmXKuRbZGq9jEEWxh6rmpS4R6xS53XCaw==", "member": "package/bin/agent-browser" },
+    "win32-x64":   { "name": "@agent-browser/cli-win32-x64-msvc",  "integrity": "sha512-xhk8wnHk3aiBFSR0pd1Ye3ay2jKjgRardgBJLiB9nXJv0ZkbeP/wh3X7jMiKUfUGE1qqJrKdaM5szQ6iz8/8+w==", "member": "package/bin/agent-browser.exe" }
+  }
+}

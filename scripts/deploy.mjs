@@ -11,13 +11,17 @@ import { BINDINGS, mergeKeys, SECTION } from "./keys.mjs";
 import { resolveAppHome } from "./app-home.mjs";
 import { setupStatusline } from "../src/app/statusline-setup.js";
 import { AGY_MARK } from "../src/shared/statusline.js";
+import { browserOf } from "../src/shared/browser/config.js";
+import { binRel } from "../src/shared/browser/session.js";
+import { ensureChrome, installAgentBrowser, installSkills, removeBrowser, removeSkills, skillTargets, skillText } from "../src/app/browser-install.js";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
 const noStatusline = args.includes("--no-statusline");
+const noSkills = args.includes("--no-skills");
 const appHome = resolveAppHome(args);
 if (!appHome) {
-  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run] [--no-statusline]");
+  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run] [--no-statusline] [--no-skills]");
   process.exit(1);
 }
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
@@ -46,7 +50,9 @@ if (!local.ok) fail(`invalid local file ${slashPath(localPath)}: ${local.error}`
 // Build with this PC's right panel state (Herdr's shared.json) so a deploy keeps it.
 let sharedState = null;
 try { sharedState = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8").replace(/^\uFEFF/, "")); } catch { sharedState = null; }
-const layout = buildLayout(mergeWithLocal(parsed.config, host, local.local), rightStateFromShared(sharedState));
+const merged = mergeWithLocal(parsed.config, host, local.local);
+const layout = buildLayout(merged, rightStateFromShared(sharedState));
+const browser = browserOf(merged);
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");
@@ -60,7 +66,9 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 if (!isObj(keys)) fail("keys.json: root must be an object");
 if (SECTION in keys && !isObj(keys[SECTION])) fail(`keys.json: "${SECTION}" must be an object`);
 
-const names = await buildAll().catch((e) => fail(`build failed: ${e.message}`));
+const built = await buildAll().catch((e) => fail(`build failed: ${e.message}`));
+// browser.enabled false: dock-browser isn't installed (and an installed one is removed below).
+const names = browser.enabled ? built : built.filter((n) => n !== "dock-browser");
 for (const name of names) {
   if (!name.startsWith("dock-")) fail(`refusing to write mods/${name}: not prefixed dock-`);
 }
@@ -107,6 +115,11 @@ try {
   if (!dry) rmSync(stage, { recursive: true, force: true });
 }
 
+if (!browser.enabled && existsSync(join(appHome, "mods/dock-browser"))) {
+  say("remove mods/dock-browser (browser.enabled is false)");
+  if (!dry) rmSync(join(appHome, "mods/dock-browser"), { recursive: true, force: true });
+}
+
 say("write layouts/herdr-dock.json");
 if (!dry) {
   mkdirSync(join(appHome, "layouts"), { recursive: true });
@@ -144,6 +157,28 @@ if (existsSync(agyHome) && !noStatusline) {
   } catch (e) {
     console.error(`Antigravity status line setup failed (Quotas offers Set up): ${e.message}`);
   }
+}
+
+// The browser beside agents (dock-browser): agent-browser, Chrome and the skill when browser.enabled; otherwise
+// the binary and the skill are removed. The signed-in profile is left alone either way.
+const skillTargetList = skillTargets({});
+try {
+  if (browser.enabled) {
+    const r = await installAgentBrowser({ appHome, dry, say });
+    if (r !== "unsupported") {
+      ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say });
+      if (noSkills) console.log("--no-skills: not writing the dock-browser skill");
+      else {
+        const template = readFileSync(join(ROOT, "src/app/browser-skill.md"), "utf8");
+        installSkills({ targets: skillTargetList, text: skillText(template, { browse: join(appHome, "mods/dock-browser/browse.mjs") }), dry, say });
+      }
+    }
+  } else {
+    removeSkills({ targets: skillTargetList, dry, say });
+    removeBrowser({ appHome, dry, say });
+  }
+} catch (e) {
+  console.error(`browser setup failed (run node mods/dock-browser/herdr-browser-setup.mjs to retry): ${e.message}`);
 }
 
 if (!hasKeys) {

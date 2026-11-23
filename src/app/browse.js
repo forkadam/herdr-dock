@@ -4,14 +4,11 @@
 // Bundled into mods/dock-browser/browse.mjs. Exit codes: 0 ok, 1 cancelled or handoff timed out, 2 usage/refused/no
 // Herdr terminal, 3 the person has control, 4 still waiting at the limit, otherwise agent-browser's own code.
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
-import { mergeWithLocal, parseConfig, parseLocal, LOCAL_REL } from "../shared/config.js";
-import { installOf } from "../shared/install.js";
-import { browserOf } from "../shared/browser/config.js";
+import { browserSettings } from "./browser-settings.js";
 import { UsageError, parseBrowse, refused } from "../shared/browser/args.js";
 import { isProduction, hostOf } from "../shared/browser/hosts.js";
 import { BROWSER_REL, binRel, controlFileRel, framesRel, normalizeUrl, sessionFileRel, sessionName, sessionsRel, signedInRel } from "../shared/browser/session.js";
@@ -54,18 +51,6 @@ function writeAtomic(file, text, mode) {
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, text, mode ? { mode } : undefined);
   renameSync(tmp, file);
-}
-
-// browser settings from the merged config (dock-core's source.json -> config, plus the local file); defaults if unreadable.
-function browserSettings(home) {
-  try {
-    const src = JSON.parse(readText(join(home, "mods/dock-core/source.json")));
-    const inst = installOf(src, home);
-    const parsed = parseConfig(readText(inst.configPath));
-    if (!parsed.ok) return browserOf(null);
-    const local = parseLocal(readText(join(home, LOCAL_REL)));
-    return browserOf(mergeWithLocal(parsed.config, hostname().toLowerCase(), local.ok ? local.local : null));
-  } catch { return browserOf(null); }
 }
 
 export async function main(argv, env = process.env, io = defaultIo()) {

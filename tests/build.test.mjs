@@ -32,8 +32,10 @@ after(() => { for (const d of repos) rmSync(d, { recursive: true, force: true })
 const noClaude = join(tmpdir(), "dock-no-claude-" + process.pid);
 // The same for Antigravity's settings (~/.gemini/antigravity-cli): never the real ones.
 const noAgy = join(tmpdir(), "dock-no-agy-" + process.pid);
+// And Codex's folder, which the dock-browser skill is written to / removed from.
+const noCodex = join(tmpdir(), "dock-no-codex-" + process.pid);
 const run = (args, env = {}) =>
-  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, DOCK_AGY_HOME: noAgy, DOCK_REPO: cleanRepo, ...env } });
+  spawnSync("node", ["scripts/deploy.mjs", ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: noClaude, DOCK_AGY_HOME: noAgy, DOCK_CODEX_HOME: noCodex, DOCK_REPO: cleanRepo, ...env } });
 const tmpHome = () => mkdtempSync(join(tmpdir(), "dock-app-"));
 
 test("deploy --dry-run into a temp app home writes nothing and lists actions", () => {
@@ -136,7 +138,7 @@ test("deploy writes the hostname into source.json and leaves no temp folders", a
     const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
     assert.equal(src.hostname, hostname().toLowerCase());
     assert.deepEqual(readdirSync(tmp).sort(), ["keys.json", "layouts", "mods"]);
-    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-attention", "dock-browser", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-jira", "dock-limits", "dock-notifications", "dock-overview", "dock-pages", "dock-pipelines", "dock-quotas", "dock-rail", "dock-render", "dock-spaces", "dock-system", "dock-tabs", "dock-toast", "dock-warnings", "dock-where"]);
+    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-attention", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-jira", "dock-limits", "dock-notifications", "dock-overview", "dock-pages", "dock-pipelines", "dock-quotas", "dock-rail", "dock-render", "dock-spaces", "dock-system", "dock-tabs", "dock-toast", "dock-warnings", "dock-where"]);
     assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
@@ -281,4 +283,42 @@ test("deploy sets up Antigravity's status line too, when its folder exists", () 
     rmSync(tmp, { recursive: true, force: true });
     rmSync(agy, { recursive: true, force: true });
   }
+});
+
+test("deploy: browser.enabled false installs no dock-browser, removes an installed one and its skills", () => {
+  const tmp = tmpHome(), claude = tmpHome();
+  try {
+    mkdirSync(join(tmp, "mods/dock-browser"), { recursive: true });
+    writeFileSync(join(tmp, "mods/dock-browser/browse.mjs"), "old");
+    mkdirSync(join(claude, "skills/dock-browser"), { recursive: true });
+    writeFileSync(join(claude, "skills/dock-browser/SKILL.md"), "<!-- herdr-dock: dock-browser -->\nold\n");
+    const dry = run(["--app-home", tmp, "--dry-run"], { DOCK_CLAUDE_HOME: claude });
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.doesNotMatch(dry.stdout, /install mods\/dock-browser/);
+    assert.match(dry.stdout, /remove mods\/dock-browser/);
+    assert.ok(existsSync(join(tmp, "mods/dock-browser/browse.mjs")), "a dry run keeps it");
+    const r = run(["--app-home", tmp], { DOCK_CLAUDE_HOME: claude, DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(existsSync(join(tmp, "mods/dock-browser")), false);
+    assert.equal(existsSync(join(claude, "skills/dock-browser")), false);
+    assert.equal(existsSync(join(tmp, "herdr-dock/browser")), false);
+  } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(claude, { recursive: true, force: true }); }
+});
+
+test("deploy --dry-run with browser.enabled lists the agent-browser, Chrome and skill steps and writes nothing", () => {
+  const tmp = tmpHome(), claude = tmpHome();
+  try {
+    mkdirSync(join(tmp, "herdr-dock"), { recursive: true });
+    writeFileSync(join(tmp, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: { enabled: true } }));
+    const r = run(["--app-home", tmp, "--dry-run"], { DOCK_CLAUDE_HOME: claude });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /install mods\/dock-browser/);
+    assert.match(r.stdout, /would download agent-browser 0\.43\.0/);
+    assert.match(r.stdout, /would run agent-browser install/);
+    assert.match(r.stdout, /would write skill for Claude Code/);
+    assert.equal(existsSync(join(claude, "skills")), false);
+    assert.equal(existsSync(join(tmp, "herdr-dock/browser")), false);
+    const off = run(["--app-home", tmp, "--dry-run", "--no-skills"], { DOCK_CLAUDE_HOME: claude });
+    assert.match(off.stdout, /--no-skills: not writing the dock-browser skill/);
+  } finally { rmSync(tmp, { recursive: true, force: true }); rmSync(claude, { recursive: true, force: true }); }
 });

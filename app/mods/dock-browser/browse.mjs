@@ -1,10 +1,14 @@
 // src/app/browse.js
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync as readFileSync2, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join as join2, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+
+// src/app/browser-settings.js
+import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { join } from "node:path";
 
 // src/shared/browser/config.js
 var DEFAULT_BROWSER = { enabled: false, chrome: "", production: [], handoffMinutes: 15 };
@@ -189,6 +193,27 @@ function installOf(src, home) {
   const configPath = slashPath(src.config);
   const repo = isText(src.repo) ? slashPath(src.repo) : configPath.split("/").slice(0, -2).join("/");
   return { mode, configPath, repo, versionPath: null };
+}
+
+// src/app/browser-settings.js
+var readText = (path) => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
+function browserSettings(home) {
+  try {
+    const src = JSON.parse(readText(join(home, "mods/dock-core/source.json")));
+    const inst = installOf(src, home);
+    const parsed = parseConfig(readText(inst.configPath));
+    if (!parsed.ok) return browserOf(null);
+    const local = parseLocal(readText(join(home, LOCAL_REL)));
+    return browserOf(mergeWithLocal(parsed.config, hostname().toLowerCase(), local.ok ? local.local : null));
+  } catch {
+    return browserOf(null);
+  }
 }
 
 // src/shared/browser/args.js
@@ -386,9 +411,9 @@ function run(cmd, args, opts = {}) {
   return win && r.error?.code === "ENOENT" ? go(true) : r;
 }
 var appHomeOf = (scriptUrl) => resolve(dirname(fileURLToPath(scriptUrl)), "..", "..");
-function readText(path) {
+function readText2(path) {
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync2(path, "utf8");
   } catch {
     return null;
   }
@@ -398,18 +423,6 @@ function writeAtomic(file, text, mode) {
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, text, mode ? { mode } : void 0);
   renameSync(tmp, file);
-}
-function browserSettings(home) {
-  try {
-    const src = JSON.parse(readText(join(home, "mods/dock-core/source.json")));
-    const inst = installOf(src, home);
-    const parsed = parseConfig(readText(inst.configPath));
-    if (!parsed.ok) return browserOf(null);
-    const local = parseLocal(readText(join(home, LOCAL_REL)));
-    return browserOf(mergeWithLocal(parsed.config, hostname().toLowerCase(), local.ok ? local.local : null));
-  } catch {
-    return browserOf(null);
-  }
 }
 async function main(argv, env = process.env, io = defaultIo()) {
   let args;
@@ -427,10 +440,10 @@ async function main(argv, env = process.env, io = defaultIo()) {
     return 0;
   }
   const home = env.DOCK_APP_HOME || appHomeOf(import.meta.url);
-  const bin = env.DOCK_AGENT_BROWSER || join(home, binRel(process.platform));
+  const bin = env.DOCK_AGENT_BROWSER || join2(home, binRel(process.platform));
   const cfg = browserSettings(home);
   const scope = env.HC_SCOPE ?? "";
-  const abs = (rel) => join(home, rel);
+  const abs = (rel) => join2(home, rel);
   const needsTerminal = !["login", "window-open", "window-done"].includes(args.cmd);
   const terminal = args.terminal || env.HC_TERMINAL_ID || "";
   if (needsTerminal && !terminal) {
@@ -451,7 +464,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
   const sessionFile = abs(sessionFileRel(terminal)), controlFile = abs(controlFileRel(terminal)), frames = abs(framesRel(terminal));
   const name = sessionName(scope, terminal);
   const readSession = () => {
-    const t = readText(sessionFile);
+    const t = readText2(sessionFile);
     return t == null ? null : parseSession(t);
   };
   const wipe = () => {
@@ -478,7 +491,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
     session = null;
   }
   const readControl = () => {
-    const t = readText(controlFile);
+    const t = readText2(controlFile);
     const c = parseControl(t);
     return t != null && created2 != null && isStale(c, created2) ? parseControl(null) : c;
   };
@@ -621,14 +634,14 @@ async function login(args, { io, ab, scope, abs }) {
 }
 function windowCmd(args, { io, ab, abs, terminal }) {
   const t = args.terminal;
-  const text = readText(abs(sessionFileRel(t)));
+  const text = readText2(abs(sessionFileRel(t)));
   const rec = text == null ? null : parseSession(text);
   if (!rec) {
     io.err(`no browser session for ${t}`);
     return 2;
   }
   const tmpDir = abs(`${BROWSER_REL}/tmp`);
-  const out = join(tmpDir, `${t}.json`), done = join(tmpDir, `${t}.done.json`);
+  const out = join2(tmpDir, `${t}.json`), done = join2(tmpDir, `${t}.done.json`);
   const real = `${rec.session}-real`;
   mkdirSync(tmpDir, { recursive: true });
   if (args.cmd === "window-open") {
@@ -650,7 +663,7 @@ function sweep(abs, bin, cfg, env) {
     const live = /* @__PURE__ */ new Set();
     for (const s of JSON.parse(r.stdout).spaces ?? []) for (const tab of s.tabs ?? []) for (const x of tab.terminals ?? []) live.add(x.terminal);
     const dir = abs(sessionsRel());
-    const sessions = readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".control.json")).map((f) => parseSession(readText(join(dir, f)))).filter(Boolean);
+    const sessions = readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".control.json")).map((f) => parseSession(readText2(join2(dir, f)))).filter(Boolean);
     for (const g of goneSessions(sessions, live)) {
       run(bin, ["--session", g.session, ...cfg.chrome ? ["--executable-path", cfg.chrome] : [], "close"], { env });
       rmSync(abs(sessionFileRel(g.terminal)), { force: true });

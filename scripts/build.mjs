@@ -44,6 +44,12 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
         entryPoints: [join(ROOT, "src/app/browse.js")], outfile: join(dest, "browse.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
       });
+      // The installer an app install runs with node (agent-browser, Chrome, the skill), and the skill it fills in.
+      await build({
+        entryPoints: [join(ROOT, "src/app/browser-install.js")], outfile: join(dest, "herdr-browser-setup.mjs"),
+        bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
+      });
+      copyFileSync(join(ROOT, "src/app/browser-skill.md"), join(dest, "browser-skill.md"));
     }
     if (name === "dock-quotas") {
       // The status-line writer Claude Code runs, and the setup that puts it in ~/.claude/settings.json (one file,
