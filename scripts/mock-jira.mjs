@@ -235,8 +235,10 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
 
   const find = (key) => issues.find((i) => i.key.toLowerCase() === String(key).toLowerCase());
   // An issue's history, as Jira's `expand=changelog` gives it: the fixture's `history`, oldest first (none is an empty list).
+  // As on Jira Server, an author has its key beside its name, and an assignee item's `from` / `to` are user keys (the
+  // fixture's; the mock user's key, JIRAUSER10000, is not its name).
   const changelog = (issue) => {
-    const histories = (issue.history ?? []).map((h) => ({ id: h.id, author: { name: users[h.author].name, displayName: users[h.author].displayName }, created: h.created, items: clone(h.items) }));
+    const histories = (issue.history ?? []).map((h) => ({ id: h.id, author: { key: users[h.author].key, name: users[h.author].name, displayName: users[h.author].displayName }, created: h.created, items: clone(h.items) }));
     return { startAt: 0, maxResults: histories.length, total: histories.length, histories };
   };
   const show = (issue, fields, expand) => {

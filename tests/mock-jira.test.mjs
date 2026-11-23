@@ -32,6 +32,7 @@ test("serverInfo needs no token; everything else wants the Bearer token", async 
   const me = await call("/rest/api/2/myself");
   assert.equal(me.status, 200);
   assert.equal(me.data.name, "me");
+  assert.equal(me.data.key, "JIRAUSER10000"); // as Jira Server's newer users: the key is not the name
   assert.equal(me.data.displayName, "Mock User");
 });
 
@@ -453,14 +454,14 @@ test("history: the fixture's cases, timed against Sprint 42's start", async () =
   // WEB-40, the parent of the mock user's sub-tasks: three description edits in this sprint, whole texts, each from the last.
   const parent = await open("WEB-40");
   const edits = items(parent, "description");
-  assert.deepEqual(edits.map((e) => e.by), [{ name: "ana", displayName: "Ana Lima" }, { name: "me", displayName: "Mock User" }, { name: "ana", displayName: "Ana Lima" }]);
+  assert.deepEqual(edits.map((e) => e.by), [{ key: "ana", name: "ana", displayName: "Ana Lima" }, { key: "JIRAUSER10000", name: "me", displayName: "Mock User" }, { key: "ana", name: "ana", displayName: "Ana Lima" }]);
   assert.ok(edits.every((e, k) => e.at > start && e.at < NOW && (k === 0 || e.at > edits[k - 1].at)), "after the start, before now, oldest first");
   assert.ok(edits.every((e) => e.fieldtype === "jira" && e.from === null && e.to === null && e.fromString && e.toString));
   assert.ok(edits.every((e, k) => k === 0 || e.fromString === edits[k - 1].toString));
   assert.equal(edits.at(-1).toString, parent.fields.description, "the last edit is what the description is now");
   assert.ok(Date.parse(parent.fields.updated) >= edits.at(-1).at);
   assert.deepEqual(Object.keys(parent.changelog.histories[0]).sort(), ["author", "created", "id", "items"]);
-  assert.deepEqual(Object.keys(parent.changelog.histories[0].author).sort(), ["displayName", "name"]);
+  assert.deepEqual(Object.keys(parent.changelog.histories[0].author).sort(), ["displayName", "key", "name"]);
   assert.deepEqual([parent.changelog.startAt, parent.changelog.maxResults, parent.changelog.total], [0, parent.changelog.histories.length, parent.changelog.histories.length]);
   const ids = (await search("sprint in openSprints()", "&fields=summary&expand=changelog&maxResults=100")).data.issues.flatMap((i) => i.changelog.histories.map((h) => h.id));
   assert.ok(ids.every((id) => typeof id === "string") && new Set(ids).size === ids.length, "history ids are strings, one each");
@@ -477,10 +478,10 @@ test("history: the fixture's cases, timed against Sprint 42's start", async () =
   assert.ok(carried.at > start && carried.at < NOW);
   assert.ok(Date.parse((await open("WEB-44")).fields.created) < start);
 
-  // Reassigned to the mock user after the start; it was already in the sprint.
+  // Reassigned to the mock user after the start; it was already in the sprint. `from` and `to` are user keys.
   const reassigned = await open("WEB-45");
   const [to] = items(reassigned, "assignee");
-  assert.deepEqual([to.fieldtype, to.from, to.fromString, to.to, to.toString], ["jira", "dana", "Dana Lee", "me", "Mock User"]);
+  assert.deepEqual([to.fieldtype, to.from, to.fromString, to.to, to.toString], ["jira", "dana", "Dana Lee", "JIRAUSER10000", "Mock User"]);
   assert.ok(to.at > start && to.at < NOW);
   assert.equal(reassigned.fields.assignee.name, "me");
   assert.equal(items(reassigned, "Sprint").length, 0);
@@ -528,12 +529,13 @@ test("history: of the mock user's Sprint 42 issues only the deliberate cases are
   // Created after the sprint started: just the one issue made into it.
   assert.deepEqual(mine.filter((i) => Date.parse(i.fields.created) > start).map((i) => i.key), ["WEB-46"]);
   // The rules the brief reads history by: a Sprint item after the start adding Sprint 42 to an empty `from` is added
-  // (a non-empty `from` is a carry-over), an assignee item to the mock user after the start is assigned.
+  // (a non-empty `from` is a carry-over), an assignee item to the mock user (its key) after the start is assigned.
+  const me = (await call("/rest/api/2/myself")).data;
   const why = (i) => {
     const after = i.changelog.histories.filter((h) => Date.parse(h.created) > start).flatMap((h) => h.items);
     if (after.some((x) => x.field === "Sprint" && x.from === "" && x.to.split(",").map((s) => s.trim()).includes("42"))) return "added";
     if (Date.parse(i.fields.created) > start) return "created";
-    if (after.some((x) => x.field === "assignee" && x.to === "me")) return "assigned";
+    if (after.some((x) => x.field === "assignee" && x.to === me.key)) return "assigned";
     return null;
   };
   assert.deepEqual(Object.fromEntries(mine.map((i) => [i.key, why(i)]).filter(([, w]) => w)), { "WEB-43": "added", "WEB-45": "assigned", "WEB-46": "created" });

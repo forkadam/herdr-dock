@@ -6,7 +6,7 @@
   "favourite": true,
   "owner": {
    "name": "me",
-   "key": "me",
+   "key": "JIRAUSER10000",
    "displayName": "Mock User",
    "emailAddress": "me@example.com",
    "active": true

@@ -496,6 +496,16 @@ var ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 var list = (v) => Array.isArray(v) ? v : [];
 var isField = (item, name) => String(item?.field ?? "").toLowerCase() === name;
 var timeOf = (v) => Date.parse(v);
+var ME = (me) => me && typeof me === "object" ? { key: me.key, name: me.name } : { key: void 0, name: me };
+var given = (v) => typeof v === "string" && v !== "";
+var byMe = (author, me) => {
+  const { key, name } = ME(me);
+  return given(key) && author?.key === key || given(name) && author?.name === name;
+};
+var isMe = (user, me) => {
+  const { key, name } = ME(me);
+  return given(user) && (user === key || user === name);
+};
 function sinceMinutes(sprint, now) {
   const start = sprint?.startMs;
   const minutes = Number.isFinite(start) ? Math.ceil((now - start) / MINUTE_MS) : 0;
@@ -534,7 +544,7 @@ function bugsSearch({ briefBugs, highPriorities }) {
 function descriptionEdits(issue, { me } = {}) {
   const edits = [];
   for (const history of list(issue?.changelog?.histories)) {
-    if (me != null && history?.author?.name === me) continue;
+    if (byMe(history?.author, me)) continue;
     const at = timeOf(history?.created);
     if (!Number.isFinite(at)) continue;
     for (const item of list(history?.items)) {
@@ -566,7 +576,7 @@ function newInSprintItem(issue, { sprint, me } = {}) {
     if (!(time2 > start)) continue;
     for (const item of list(history?.items)) {
       if (isField(item, "sprint") && sprintIds(item.to).includes(String(sprint.id)) && !sprintIds(item.from).length) latest("added", time2);
-      else if (isField(item, "assignee") && me != null && item.to === me) latest("assigned", time2);
+      else if (isField(item, "assignee") && isMe(item.to, me)) latest("assigned", time2);
     }
   }
   const created = timeOf(issue?.fields?.created);
@@ -1964,7 +1974,7 @@ var Jira = class extends View {
         }
       }
     }
-    if (this.me?.name) {
+    if (this.me?.key || this.me?.name) {
       const stop = await this.readBrief(c, { fresh, live, fail, current });
       if (stop === "gone") return;
       if (stop === "page") {
@@ -1983,7 +1993,7 @@ var Jira = class extends View {
   // first failure ends the searches and is the brief's `problem`; what was read before it is used, and a list not read
   // keeps what it had. "gone": the answer is for a Today the page has left; "page": a failure took the page.
   async readBrief(c, { fresh, live, fail, current }) {
-    const me = this.me.name;
+    const me = this.me;
     const now = Date.now();
     const since = sinceMinutes(this.sprint.current, now);
     const sinceMs = now - since * 6e4;
@@ -2100,7 +2110,7 @@ var Jira = class extends View {
     cx.spawn(async (cx2) => {
       const r = await this.client(cx2).issueHistory(key);
       if (this.recent !== asked) return;
-      this.recent = { ...asked, edits: r.ok ? recentEdits(r.data.histories, { me: this.me?.name, sinceMs }).map((e) => ({ ...e, ops: changeDiff(e.from, e.to) })) : { problem: r.problem } };
+      this.recent = { ...asked, edits: r.ok ? recentEdits(r.data.histories, { me: this.me, sinceMs }).map((e) => ({ ...e, ops: changeDiff(e.from, e.to) })) : { problem: r.problem } };
       cx2.notify();
     });
   }

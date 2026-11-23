@@ -474,7 +474,7 @@ export default class Jira extends View {
       }
     }
     // The brief, only once Jira has said who you are (your own edits would otherwise read as someone else's).
-    if (this.me?.name) {
+    if (this.me?.key || this.me?.name) {
       const stop = await this.readBrief(c, { fresh, live, fail, current });
       if (stop === "gone") return;
       if (stop === "page") { done(); return; }
@@ -491,7 +491,7 @@ export default class Jira extends View {
   // first failure ends the searches and is the brief's `problem`; what was read before it is used, and a list not read
   // keeps what it had. "gone": the answer is for a Today the page has left; "page": a failure took the page.
   async readBrief(c, { fresh, live, fail, current }) {
-    const me = this.me.name;
+    const me = this.me; // { key, name, … } (/myself): Jira Server's history names you by key
     const now = Date.now();
     const since = sinceMinutes(this.sprint.current, now);
     const sinceMs = now - since * 60e3;
@@ -602,7 +602,7 @@ export default class Jira extends View {
     cx.spawn(async (cx) => {
       const r = await this.client(cx).issueHistory(key);
       if (this.recent !== asked) return;
-      this.recent = { ...asked, edits: r.ok ? recentEdits(r.data.histories, { me: this.me?.name, sinceMs }).map((e) => ({ ...e, ops: changeDiff(e.from, e.to) })) : { problem: r.problem } };
+      this.recent = { ...asked, edits: r.ok ? recentEdits(r.data.histories, { me: this.me, sinceMs }).map((e) => ({ ...e, ops: changeDiff(e.from, e.to) })) : { problem: r.problem } };
       cx.notify();
     });
   }

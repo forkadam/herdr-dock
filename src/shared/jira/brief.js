@@ -15,6 +15,22 @@ const list = (v) => (Array.isArray(v) ? v : []);
 const isField = (item, name) => String(item?.field ?? "").toLowerCase() === name;
 const timeOf = (v) => Date.parse(v);
 
+// You, as the brief tells your doings from others': `me` is { key, name } (Jira's /myself), or a plain string taken as
+// your name. Jira Server's history names a user by key (an assignee item's `from` / `to`: a key such as JIRAUSER10000,
+// not the name, for users made since Jira 8), some Jira versions by name; a history's author carries both.
+const ME = (me) => (me && typeof me === "object" ? { key: me.key, name: me.name } : { key: undefined, name: me });
+const given = (v) => typeof v === "string" && v !== "";
+// A history's author is you when its key is your key, or its name your name.
+const byMe = (author, me) => {
+  const { key, name } = ME(me);
+  return (given(key) && author?.key === key) || (given(name) && author?.name === name);
+};
+// A user in a history item (an assignee's `to`) is you when it is your key, or your name.
+const isMe = (user, me) => {
+  const { key, name } = ME(me);
+  return given(user) && (user === key || user === name);
+};
+
 // ---- what it asks Jira ----
 
 // The brief looks back to the sprint's start (rounded up to a whole minute); 14 days without one.
@@ -64,12 +80,12 @@ export function bugsSearch({ briefBugs, highPriorities }) {
 
 // ---- Changed ----
 
-// The description edits on an issue by someone other than you, oldest first, as { at, author, from, to } (the text
-// before and after, in Jira's markup; author is the display name when there is one).
+// The description edits on an issue by someone other than you (`me`: by key or name), oldest first, as { at, author,
+// from, to } (the text before and after, in Jira's markup; author is the display name when there is one).
 export function descriptionEdits(issue, { me } = {}) {
   const edits = [];
   for (const history of list(issue?.changelog?.histories)) {
-    if (me != null && history?.author?.name === me) continue;
+    if (byMe(history?.author, me)) continue;
     const at = timeOf(history?.created);
     if (!Number.isFinite(at)) continue;
     for (const item of list(history?.items)) {
@@ -100,8 +116,8 @@ const sprintIds = (text) => String(text ?? "").split(",").map((s) => s.trim()).f
 
 // How an issue came to be new in the sprint after it started, or null: its history added the sprint to nothing
 // (`added`; a Sprint item that already held another sprint is the previous sprint closing, a carry-over), it was
-// `created` after the start, or its history `assigned` it to you after the start. When several apply, the first of
-// those wins, and `at` is the latest time of that reason.
+// `created` after the start, or its history `assigned` it to you after the start (to your key, as Jira Server writes
+// it, or your name). When several apply, the first of those wins, and `at` is the latest time of that reason.
 export function newInSprintItem(issue, { sprint, me } = {}) {
   const start = sprint?.startMs;
   if (!Number.isFinite(start)) return null;
@@ -112,7 +128,7 @@ export function newInSprintItem(issue, { sprint, me } = {}) {
     if (!(time > start)) continue;
     for (const item of list(history?.items)) {
       if (isField(item, "sprint") && sprintIds(item.to).includes(String(sprint.id)) && !sprintIds(item.from).length) latest("added", time);
-      else if (isField(item, "assignee") && me != null && item.to === me) latest("assigned", time);
+      else if (isField(item, "assignee") && isMe(item.to, me)) latest("assigned", time);
     }
   }
   const created = timeOf(issue?.fields?.created);

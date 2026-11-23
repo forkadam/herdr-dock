@@ -170,6 +170,55 @@ test("newInSprintItem: a carry-over does not hide a later assignment to you; add
   assert.equal(newInSprintItem(mk(added, assigned), { sprint, me }).why, "added");
 });
 
+// ---- you, by key and by name (Jira Server's history names users by key) ----
+
+const you = { key: "JIRAUSER10000", name: "me" };
+
+test("newInSprintItem: an assignment to you is matched by your user key (as Jira Server writes it), or by your name", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const mk = (to) => ({ key: "WEB-1", fields: { summary: "s", created: "2026-11-01T00:00:00.000+0000" },
+    changelog: { histories: [{ author: { key: "lead", name: "lead" }, created: "2026-11-18T00:00:00.000+0000", items: [{ field: "assignee", from: "ana", to }] }] } });
+  assert.equal(newInSprintItem(mk("JIRAUSER10000"), { sprint, me: you }).why, "assigned"); // the key
+  assert.equal(newInSprintItem(mk("me"), { sprint, me: you }).why, "assigned"); // a Jira that writes names
+  assert.equal(newInSprintItem(mk("JIRAUSER10001"), { sprint, me: you }), null);
+  // A plain string is your name, as before.
+  assert.equal(newInSprintItem(mk("me"), { sprint, me: "me" }).why, "assigned");
+  assert.equal(newInSprintItem(mk("JIRAUSER10000"), { sprint, me: "me" }), null);
+  // A key or name Jira didn't send matches nothing.
+  assert.equal(newInSprintItem(mk(undefined), { sprint, me: { name: "me" } }), null);
+  assert.equal(newInSprintItem(mk(null), { sprint, me: { key: null, name: "me" } }), null);
+  assert.equal(newInSprintItem(mk(""), { sprint, me: { key: "", name: "" } }), null);
+  assert.equal(newInSprintItem(mk("JIRAUSER10000"), { sprint, me: null }), null);
+});
+
+test("descriptionEdits and changedItem: an edit is yours when its author's key or its name is yours", () => {
+  const by = (author) => ({ key: "WEB-1", fields: { summary: "s" },
+    changelog: { histories: [{ author, created: "2026-11-19T10:00:00.000+0000", items: [{ field: "description", fromString: "a", toString: "b" }] }] } });
+  assert.deepEqual(descriptionEdits(by({ key: "JIRAUSER10000", name: "me", displayName: "Me" }), { me: you }), []);
+  assert.deepEqual(descriptionEdits(by({ key: "JIRAUSER10000", name: "renamed" }), { me: you }), []); // the key still says so
+  assert.deepEqual(descriptionEdits(by({ name: "me" }), { me: you }), []); // no key sent: the name
+  assert.equal(descriptionEdits(by({ key: "JIRAUSER10001", name: "ana" }), { me: you }).length, 1);
+  assert.equal(changedItem(by({ key: "JIRAUSER10000", name: "x" }), { me: you, sinceMs: 0, marks: {} }), null);
+  assert.equal(changedItem(by({ key: "JIRAUSER10001", name: "ana" }), { me: you, sinceMs: 0, marks: {} }).edits.length, 1);
+  // Key against key, name against name: another user whose key is your name is someone else.
+  assert.equal(descriptionEdits(by({ key: "me", name: "someone" }), { me: you }).length, 1);
+  assert.equal(descriptionEdits(by({ key: "x", name: "JIRAUSER10000" }), { me: you }).length, 1);
+  // A plain string is your name, as before.
+  assert.deepEqual(descriptionEdits(by({ key: "JIRAUSER10000", name: "me" }), { me: "me" }), []);
+  assert.equal(descriptionEdits(by({ key: "JIRAUSER10000", name: "other" }), { me: "me" }).length, 1);
+  // An author without a key or name is never you.
+  assert.equal(descriptionEdits(by({}), { me: { key: undefined, name: undefined } }).length, 1);
+  assert.equal(descriptionEdits(by({ displayName: "Ghost" }), { me: you }).length, 1);
+});
+
+test("recentEdits: your own edits are left out by your key too", () => {
+  const histories = [
+    { author: { key: "JIRAUSER10000", name: "me" }, created: "2026-11-19T10:00:00.000+0000", items: [{ field: "description", fromString: "a", toString: "b" }] },
+    { author: { key: "ana", name: "ana" }, created: "2026-11-19T11:00:00.000+0000", items: [{ field: "description", fromString: "b", toString: "c" }] },
+  ];
+  assert.deepEqual(recentEdits(histories, { me: you, sinceMs: 0 }).map((e) => e.author), ["ana"]);
+});
+
 // ---- the read marks and the badge ----
 
 test("isUnread: each kind has its own mark", () => {
