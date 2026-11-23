@@ -1,7 +1,9 @@
 // Figures: ```figure blocks, text pictures drawn as written, checked and drawn as SVG (pure; no host imports).
 // `{role:text}` colours a run. Each character sits at its own column, so a font's own advance never moves one, and █
-// is a rect filling its cell, so bars are solid and meet.
+// fills its cell, and all █ of a colour are one shape, so bars are solid and meet.
 // Ported from prismantis's hooks/figure.tsx (MIT, (c) 2026 Nahum Litvin: https://github.com/NahumLitvin/prismantis).
+
+import { contrast } from "./paint.js";
 
 export const FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
 export const FIGURE_MAX_COLUMNS = 100;
@@ -31,6 +33,8 @@ const EMOJI_CAPABLE = /\p{Extended_Pictographic}/u;
 const CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
 const DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
+// Not allowed in XML (the SVG wouldn't parse): U+FFFE, U+FFFF and an unpaired surrogate.
+const NONCHARACTER = /[\uFFFE\uFFFF]|\p{Cs}/u;
 const isRole = (name) => FIGURE_ROLES.includes(name);
 const textForm = (text) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
 
@@ -92,6 +96,7 @@ const lineMessages = (line) => {
     ...(CONTROL.test(text) ? ["control character, use plain text"] : []),
     ...(DIRECTION_MARK.test(text) ? ["direction mark, use plain text"] : []),
     ...(INVISIBLE.test(text) ? ["invisible character, use plain text"] : []),
+    ...(NONCHARACTER.test(text) ? ["noncharacter, use plain text"] : []),
     ...(emoji.length ? [`${quoted(emoji)} may draw as an emoji, use a text glyph`] : []),
     ...(wide.length ? [`${quoted(wide)} take two columns, use one-column glyphs`] : []),
     ...markupMessages(line),
@@ -164,13 +169,17 @@ function boxPath(arms, left, top, colour) {
 }
 
 // A role's colour (and boldness) from the panel's theme; a theme without that colour falls back as prismantis does.
+// A terminal colour a role may use: a hex colour that reads on the background (the palette's 3:1 rule).
+const isHex = (c) => typeof c === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim());
+const readable = (c, theme) => isHex(c) && (!isHex(theme.background) || contrast(c, theme.background) >= 3);
+
 function roleStyle(role, theme) {
   const fg = theme.foreground;
   switch (role) {
     case "accent": return { fill: theme.accent ?? fg };
-    case "warn": return theme.ansi1 ? { fill: theme.ansi1 } : { fill: fg, bold: true };
-    case "ok": return { fill: theme.ansi2 ?? fg };
-    case "note": return { fill: theme.ansi3 ?? fg };
+    case "warn": return readable(theme.ansi1, theme) ? { fill: theme.ansi1 } : { fill: fg, bold: true };
+    case "ok": return { fill: readable(theme.ansi2, theme) ? theme.ansi2 : fg };
+    case "note": return { fill: readable(theme.ansi3, theme) ? theme.ansi3 : fg };
     case "dim": return { fill: theme.dim ?? theme.muted ?? fg };
     case "strong": return { fill: fg, bold: true };
     default: return { fill: fg };
@@ -178,18 +187,25 @@ function roleStyle(role, theme) {
 }
 
 // Checked lines -> { svg, w, h }. A run of non-space characters is one <text> with an x per character; spaces draw
-// nothing; █ fills its whole cell, and a row's adjacent █ of one colour are one rect.
+// nothing; █ fills its whole cell, and all █ of a colour are one path.
 export function figureSvg(lines, theme) {
   const parts = [];
+  // Every block run, by colour: all blocks of a colour are one path, filled as one shape, so cells that meet (across
+  // columns or rows) show no seam.
+  const blocks = new Map();
   let columns = 0;
   lines.forEach((line, row) => {
     const top = FIGURE_PAD + row * FIGURE_LINE;
     const baseline = px(top + FIGURE_FONT);
     let col = 0;
-    // A row's adjacent blocks of one colour, drawn as one rect: separate cells at fractional x leave hairline seams.
+    // A row's adjacent blocks of one colour, one rectangle of its colour's path.
     let block = null;
     const endBlock = () => {
-      if (block) parts.push(`<rect x="${px(FIGURE_PAD + block.start * FIGURE_CELL)}" y="${px(top)}" width="${px((block.end - block.start) * FIGURE_CELL)}" height="${FIGURE_LINE}" fill="${block.fill}"/>`);
+      if (block) {
+        const w = px((block.end - block.start) * FIGURE_CELL);
+        if (!blocks.has(block.fill)) blocks.set(block.fill, []);
+        blocks.get(block.fill).push(`M${px(FIGURE_PAD + block.start * FIGURE_CELL)} ${px(top)}h${w}v${FIGURE_LINE}h-${w}z`);
+      }
       block = null;
     };
     for (const run of figureRuns(line)) {
@@ -234,6 +250,7 @@ export function figureSvg(lines, theme) {
     endBlock();
     columns = Math.max(columns, col);
   });
+  for (const [fill, rects] of blocks) parts.push(`<path d="${rects.join("")}" fill="${fill}"/>`);
   const w = px(FIGURE_PAD * 2 + columns * FIGURE_CELL);
   const h = px(FIGURE_PAD * 2 + lines.length * FIGURE_LINE);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">\n`

@@ -11,6 +11,9 @@ const attrs = (tag) => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/
 const texts = (svg) => [...svg.matchAll(/<text\b([^>]*)>([^<]*)<\/text>/g)]
   .map(([, a, content]) => { const at = attrs(a); return { ...at, xs: at.x.split(/\s+/).map(Number), content }; });
 const near = (a, b) => Math.abs(a - b) < 0.01;
+// The rectangles of the █ path of one colour: [x, y, w, h] per run (box lines are stroked paths, fill="none").
+const blocks = (svg, fill) => [...svg.matchAll(/<path\b([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((p) => p.fill === fill)
+  .flatMap((p) => [...p.d.matchAll(/M([\d.]+) ([\d.]+)h([\d.]+)v([\d.]+)h-[\d.]+z/g)].map((r) => r.slice(1, 5).map(Number)));
 
 test("figureRuns: {role:text} runs; a role it doesn't know stays text; ▶ ◀ become ► ◄", () => {
   assert.deepEqual(figureRuns("a {accent:──}{warn:✗} b"),
@@ -43,10 +46,7 @@ test("figureSvg: each character at its own column, █ a rect filling its cell, 
   assert.equal(h, FIGURE_PAD * 2 + 2 * FIGURE_LINE);
   assert.match(svg, new RegExp(`^<svg[^>]*viewBox="0 0 ${w} ${h}"`));
   assert.match(svg, new RegExp(`<rect x="0" y="0" width="${w}" height="${h}" fill="${THEME.background}"/>`));
-  // Adjacent blocks of one colour are one rect: separate cells at fractional x leave hairline seams between them.
-  const blocks = [...svg.matchAll(/<rect\b([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((r) => r.fill === THEME.accent);
-  assert.deepEqual(blocks.map((r) => [Number(r.x), Number(r.y), Number(r.width), Number(r.height)]),
-    [[X(0), FIGURE_PAD, 2 * FIGURE_CELL, FIGURE_LINE]]);
+  assert.deepEqual(blocks(svg, THEME.accent), [[X(0), FIGURE_PAD, 2 * FIGURE_CELL, FIGURE_LINE]]);
   const t = texts(svg);
   const cross = t.find((x) => x.content === "✗");
   assert.ok(near(cross.xs[0], X(2)) && cross.fill === THEME.ansi1);
@@ -72,11 +72,11 @@ test("figureSvg: <, & and quotes are escaped; a theme without dim or ansi colour
   assert.equal(t.find((x) => x.content === "n").fill, bare.foreground);
 });
 
-test("figureSvg: a bar of blocks is one rect per colour, even across runs; a gap or a new colour starts another", () => {
-  const rects = (line) => [...figureSvg([line], THEME).svg.matchAll(/<rect\b([^>]*)\/>/g)].map((m) => attrs(m[1]))
-    .filter((r) => r.fill !== THEME.background).map((r) => [r.fill, Number(r.x), Number(r.width)]);
-  assert.deepEqual(rects("{ok:██}{ok:█} █"), [[THEME.ansi2, X(0), 3 * FIGURE_CELL], [THEME.foreground, X(4), FIGURE_CELL]]);
-  assert.deepEqual(rects("{accent:█}{ok:█}"), [[THEME.accent, X(0), FIGURE_CELL], [THEME.ansi2, X(1), FIGURE_CELL]]);
+test("figureSvg: a bar of blocks is one rectangle per colour run, even across runs; a gap or a new colour starts another", () => {
+  assert.deepEqual(blocks(figureSvg(["{ok:██}{ok:█} █"], THEME).svg, THEME.ansi2), [[X(0), FIGURE_PAD, 3 * FIGURE_CELL, FIGURE_LINE]]);
+  assert.deepEqual(blocks(figureSvg(["{ok:██}{ok:█} █"], THEME).svg, THEME.foreground), [[X(4), FIGURE_PAD, FIGURE_CELL, FIGURE_LINE]]);
+  assert.deepEqual(blocks(figureSvg(["{accent:█}{ok:█}"], THEME).svg, THEME.accent), [[X(0), FIGURE_PAD, FIGURE_CELL, FIGURE_LINE]]);
+  assert.deepEqual(blocks(figureSvg(["{accent:█}{ok:█}"], THEME).svg, THEME.ansi2), [[X(1), FIGURE_PAD, FIGURE_CELL, FIGURE_LINE]]);
 });
 
 test("figureSvg: box-drawing characters are lines on the cell grid, so a box's sides meet from row to row", () => {
@@ -104,4 +104,26 @@ test("figureSvg: box lines end exactly on their cell's edge, with butt caps, so 
   assert.ok(paths.every((p) => (p["stroke-linecap"] ?? "butt") === "butt"));
   const ys = paths.flatMap((p) => [...p.d.matchAll(/M[\d.]+ ([\d.]+)L[\d.]+ ([\d.]+)/g)].flatMap((m) => [Number(m[1]), Number(m[2])]));
   assert.ok(near(Math.min(...ys), FIGURE_PAD) && near(Math.max(...ys), FIGURE_PAD + 2 * FIGURE_LINE), "from the top edge of row 0 to the bottom of row 1");
+});
+
+test("figureSvg: all blocks of one colour are one path, so stacked rows have no seam; box lines stay separate", () => {
+  const { svg } = figureSvg(["{ok:██}", "{ok:██} {ok:█}", "{ok:│}"], THEME);
+  const okPaths = [...svg.matchAll(/<path\b([^>]*)\/>/g)].map((m) => attrs(m[1])).filter((p) => p.fill === THEME.ansi2);
+  assert.equal(okPaths.length, 1);
+  assert.deepEqual(blocks(svg, THEME.ansi2), [[X(0), FIGURE_PAD, 2 * FIGURE_CELL, FIGURE_LINE],
+    [X(0), FIGURE_PAD + FIGURE_LINE, 2 * FIGURE_CELL, FIGURE_LINE], [X(3), FIGURE_PAD + FIGURE_LINE, FIGURE_CELL, FIGURE_LINE]]);
+  assert.ok([...svg.matchAll(/<path\b([^>]*)\/>/g)].map((m) => attrs(m[1])).some((p) => p.stroke === THEME.ansi2 && p.fill === "none"), "the │ is a stroked line");
+});
+
+test("figureSvg: a role colour too faint on the background falls back to the foreground (warn bold)", () => {
+  const faint = { ...THEME, ansi1: "#1a1a1a", ansi2: "#151515", ansi3: "#121212" };
+  const t = texts(figureSvg(["{warn:w}{ok:o}{note:n}"], faint).svg);
+  const w = t.find((x) => x.content === "w");
+  assert.ok(w.fill === THEME.foreground && w["font-weight"] === "bold");
+  assert.equal(t.find((x) => x.content === "o").fill, THEME.foreground);
+  assert.equal(t.find((x) => x.content === "n").fill, THEME.foreground);
+});
+
+test("checkFigure: noncharacters (U+FFFE, U+FFFF, an unpaired surrogate) are a finding", () => {
+  for (const ch of ["\uFFFE", "\uFFFF", "\uD800"]) assert.deepEqual(checkFigure([`a${ch}b`]).map((f) => f.message), ["noncharacter, use plain text"]);
 });

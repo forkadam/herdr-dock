@@ -29,7 +29,8 @@ const luminance = (hex) => {
   const [r, g, b] = channels(hex).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
-const contrast = (a, b) => {
+// The WCAG contrast ratio of two hex colours (1 to 21).
+export const contrast = (a, b) => {
   const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
   return (x + 0.05) / (y + 0.05);
 };

@@ -97575,6 +97575,7 @@ var EMOJI_CAPABLE = /\p{Extended_Pictographic}/u;
 var CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
 var DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 var INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
+var NONCHARACTER = /[\uFFFE\uFFFF]|\p{Cs}/u;
 var isRole = (name) => FIGURE_ROLES.includes(name);
 var textForm = (text) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
 function figureRuns(line) {
@@ -97628,6 +97629,7 @@ var lineMessages = (line) => {
     ...CONTROL.test(text) ? ["control character, use plain text"] : [],
     ...DIRECTION_MARK.test(text) ? ["direction mark, use plain text"] : [],
     ...INVISIBLE.test(text) ? ["invisible character, use plain text"] : [],
+    ...NONCHARACTER.test(text) ? ["noncharacter, use plain text"] : [],
     ...emoji.length ? [`${quoted(emoji)} may draw as an emoji, use a text glyph`] : [],
     ...wide.length ? [`${quoted(wide)} take two columns, use one-column glyphs`] : [],
     ...markupMessages(line)
@@ -97682,17 +97684,19 @@ function boxPath(arms, left, top, colour) {
   }).join("");
   return `<path d="${d}" stroke="${colour}" stroke-width="${width2}" fill="none"/>`;
 }
+var isHex2 = (c) => typeof c === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim());
+var readable = (c, theme) => isHex2(c) && (!isHex2(theme.background) || contrast(c, theme.background) >= 3);
 function roleStyle(role, theme) {
   const fg = theme.foreground;
   switch (role) {
     case "accent":
       return { fill: theme.accent ?? fg };
     case "warn":
-      return theme.ansi1 ? { fill: theme.ansi1 } : { fill: fg, bold: true };
+      return readable(theme.ansi1, theme) ? { fill: theme.ansi1 } : { fill: fg, bold: true };
     case "ok":
-      return { fill: theme.ansi2 ?? fg };
+      return { fill: readable(theme.ansi2, theme) ? theme.ansi2 : fg };
     case "note":
-      return { fill: theme.ansi3 ?? fg };
+      return { fill: readable(theme.ansi3, theme) ? theme.ansi3 : fg };
     case "dim":
       return { fill: theme.dim ?? theme.muted ?? fg };
     case "strong":
@@ -97703,6 +97707,7 @@ function roleStyle(role, theme) {
 }
 function figureSvg(lines, theme) {
   const parts = [];
+  const blocks = /* @__PURE__ */ new Map();
   let columns = 0;
   lines.forEach((line, row) => {
     const top = FIGURE_PAD + row * FIGURE_LINE;
@@ -97710,7 +97715,11 @@ function figureSvg(lines, theme) {
     let col = 0;
     let block = null;
     const endBlock = () => {
-      if (block) parts.push(`<rect x="${px2(FIGURE_PAD + block.start * FIGURE_CELL)}" y="${px2(top)}" width="${px2((block.end - block.start) * FIGURE_CELL)}" height="${FIGURE_LINE}" fill="${block.fill}"/>`);
+      if (block) {
+        const w2 = px2((block.end - block.start) * FIGURE_CELL);
+        if (!blocks.has(block.fill)) blocks.set(block.fill, []);
+        blocks.get(block.fill).push(`M${px2(FIGURE_PAD + block.start * FIGURE_CELL)} ${px2(top)}h${w2}v${FIGURE_LINE}h-${w2}z`);
+      }
       block = null;
     };
     for (const run2 of figureRuns(line)) {
@@ -97757,6 +97766,7 @@ function figureSvg(lines, theme) {
     endBlock();
     columns = Math.max(columns, col);
   });
+  for (const [fill, rects] of blocks) parts.push(`<path d="${rects.join("")}" fill="${fill}"/>`);
   const w = px2(FIGURE_PAD * 2 + columns * FIGURE_CELL);
   const h = px2(FIGURE_PAD * 2 + lines.length * FIGURE_LINE);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
