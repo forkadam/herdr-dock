@@ -89,6 +89,15 @@ export function parseSettings(text) {
   };
 }
 
+// The settings file changed on disk (edited by hand) while the page runs: what to do with its new text (`file`: its
+// name). Text that doesn't parse never replaces the settings in use: { kind: "keep", problem } says why. Otherwise
+// { kind: "load", newSite }: `newSite` when the address differs, so the old site's issues are forgotten first.
+export function settingsReload(current, text, file) {
+  const parsed = parseSettings(text);
+  if (!parsed.ok) return { kind: "keep", problem: `herdr-dock/${file} ${parsed.error}; the page keeps the settings it had until the file is fixed` };
+  return { kind: "load", newSite: parsed.settings.baseUrl !== (current?.baseUrl ?? "") };
+}
+
 // The settings file's text; a token never goes in it.
 export function formatSettings(settings) {
   const { token: _never, ...rest } = settings ?? {};

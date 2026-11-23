@@ -414,6 +414,7 @@ function afterProblem(kind) {
   const token = kind === "auth" || kind === "forbidden";
   return { connected: !token, clearBadge: token, pause: token };
 }
+var countFailure = (kind) => kind === "auth" || kind === "forbidden" ? "page" : "tab";
 function previewTask(issue, template) {
   if (!issue?.key) return "";
   const shown = !("description" in issue) && needsDetail(template) ? { ...issue, description: "(its description, fetched when you start)" } : issue;
@@ -583,6 +584,11 @@ function parseSettings(text) {
       filters: (Array.isArray(raw.filters) ? raw.filters : []).filter((f) => isObj(f) && str(f.name).trim() && str(f.jql).trim()).map((f) => ({ name: f.name.trim(), jql: f.jql.trim() }))
     }
   };
+}
+function settingsReload(current, text, file) {
+  const parsed = parseSettings(text);
+  if (!parsed.ok) return { kind: "keep", problem: `herdr-dock/${file} ${parsed.error}; the page keeps the settings it had until the file is fixed` };
+  return { kind: "load", newSite: parsed.settings.baseUrl !== (current?.baseUrl ?? "") };
 }
 function formatSettings(settings) {
   const { token: _never, ...rest } = settings ?? {};
@@ -1179,7 +1185,8 @@ var Jira = class extends View {
     return true;
   }
   // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time.
-  // A failed one marks its own tab ("!"); one that means Jira can't be reached takes the page, as the list's would.
+  // A failed one marks only its own tab ("!"), except a rejected or forbidden token, which takes the page
+  // (countFailure). Whether Jira can be reached at all is the shown tab's search to say.
   async refreshCounts(cx) {
     if (!this.connected || this.problem || !this.jira) return;
     const due = countsDue(this.tabs(), this.tab().id, this.countsAt, Date.now());
@@ -1190,7 +1197,8 @@ var Jira = class extends View {
       const r = await this.client(cx).search(withSearch(this.source(tab).jql, this.state(tab.id).query), { maxResults: 0 });
       if (tab.id === this.tab().id) continue;
       if (r.ok) this.counts.set(tab.id, { total: r.data?.total });
-      else if (this.pageProblem(r.problem)) {
+      else if (countFailure(r.problem.kind) === "page") {
+        this.pageProblem(r.problem);
         cx.notify();
         return;
       } else this.counts.set(tab.id, { problem: r.problem });
@@ -1238,14 +1246,32 @@ var Jira = class extends View {
       if (this.selected && shown) await this.loadDetail(cx2, this.selected);
     });
   }
-  // Reads the settings file again (cheap) and, when its text changed, loads it and rebuilds the tabs: a tab whose
-  // search changed starts over, every tab is counted again, and the shown one (maybe another now: its view may have
-  // gone) is loaded if it never was.
+  // Reads the settings file again (cheap) and, when its text changed, acts on it (settingsReload). Text that doesn't
+  // parse keeps the settings and tabs in use, with the problem in the form. Another address starts over, as Save does
+  // for one. Otherwise it loads and rebuilds the tabs: a tab whose search changed starts over, every tab is counted
+  // again, and the shown one (maybe another now: its view may have gone) is loaded if it never was.
   async reloadSettings(cx) {
     const path = this.jira?.paths.settingsPath;
     if (!path) return;
     const text = await readTextFile(path).catch(() => null);
     if (text === this.jira.settingsText || this.editing) return;
+    const plan = settingsReload(this.jira.settings, text, path.split("/").pop());
+    if (plan.kind === "keep") {
+      const warnings = [...this.options.warnings.filter((w) => w !== this.jira.problem), plan.problem];
+      this.jira = { ...this.jira, settingsText: text, problem: plan.problem };
+      this.options = { ...this.options, warnings };
+      cx.notify();
+      return;
+    }
+    if (plan.newSite) {
+      this.clearView();
+      this.connected = false;
+      setShared2(BADGE_KEY, null);
+      await this.load();
+      cx.notify();
+      if (this.jira.settings.baseUrl && this.jira.token) await this.connect(cx);
+      return;
+    }
     const searches = new Map(this.tabs().map((x) => [x.id, x.jql]));
     const before = this.selected;
     const query = this.shown().query;
@@ -1592,12 +1618,12 @@ var Jira = class extends View {
     }))).child(div2().flex_1()).when(Boolean(this.jira?.token), (el) => el.child(this.button(t, "jira-disconnect", "Disconnect", (cx) => {
       this.editing = false;
       this.disconnect(cx);
-    }, { tip: "Forget the token on this PC" })))).when(Boolean(this.jira?.problem), (el) => el.child(div2().text_size(11.5).text_color(WARN).child(this.jira.problem))));
+    }, { tip: "Forget the token on this PC" })))).when(Boolean(this.jira?.problem) && !this.options.warnings.includes(this.jira.problem), (el) => el.child(div2().text_size(11.5).text_color(WARN).child(this.jira.problem))));
   }
   // Where the tabs (views) and the other options are edited by hand, and each entry of that file the page skipped.
   fileNote(t) {
     const path = this.jira?.paths.settingsPath;
-    return v_flex().gap(3).when(Boolean(path), (el) => el.child(div2().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`))).children(this.options.warnings.map((w) => div2().text_size(11.5).text_color(WARN).child(`Skipped ${w}`)));
+    return v_flex().gap(3).when(Boolean(path), (el) => el.child(div2().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`))).children(this.options.warnings.map((w) => div2().text_size(11.5).text_color(WARN).child(w === this.jira?.problem ? w : `Skipped ${w}`)));
   }
   // What Start work would send for the open issue (else the first one listed), as typed.
   preview(t) {

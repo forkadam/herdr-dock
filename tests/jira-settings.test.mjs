@@ -393,3 +393,25 @@ test("syncCurlConfig: a curl config that drifted from the token file is rewritte
     assert.deepEqual(await syncCurlConfig(h.io, "work", "right"), { ok: true, changed: false });
   } finally { h.done(); }
 });
+
+// ---- The settings file edited by hand while the page runs ----
+import { settingsReload } from "../src/shared/jira/settings.js";
+
+test("settingsReload: text that doesn't parse keeps the settings in use, and says why", () => {
+  const current = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com" };
+  const bad = settingsReload(current, '{ "baseUrl": ', "jira-work.json");
+  assert.equal(bad.kind, "keep");
+  assert.match(bad.problem, /^herdr-dock\/jira-work\.json not valid JSON \(.+\); the page keeps the settings it had until the file is fixed$/);
+  assert.deepEqual(settingsReload(current, "[1]", "jira-work.json"),
+    { kind: "keep", problem: "herdr-dock/jira-work.json not a JSON object; the page keeps the settings it had until the file is fixed" });
+});
+
+test("settingsReload: good text loads; another address is a new site", () => {
+  const current = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com" };
+  const text = (baseUrl) => JSON.stringify({ baseUrl, views: [{ id: "sec", name: "Security", jql: "project = SEC" }] });
+  assert.deepEqual(settingsReload(current, text("https://jira.example.com"), "jira-work.json"), { kind: "load", newSite: false });
+  assert.deepEqual(settingsReload(current, text("https://other.example.com"), "jira-work.json"), { kind: "load", newSite: true });
+  // The file removed: the defaults, which have no address.
+  assert.deepEqual(settingsReload(current, null, "jira-work.json"), { kind: "load", newSite: true });
+  assert.deepEqual(settingsReload({ ...DEFAULT_SETTINGS }, null, "jira-work.json"), { kind: "load", newSite: false });
+});

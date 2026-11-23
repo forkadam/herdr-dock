@@ -111,6 +111,11 @@ export function afterProblem(kind) {
   return { connected: !token, clearBadge: token, pause: token };
 }
 
+// A hidden tab's count-only search that failed: "page" when the token was rejected or forbidden (afterProblem then
+// pauses polling and clears the badge), else "tab": only that tab's count is marked ("!"). The shown tab's own search
+// is what tells whether Jira can be reached at all.
+export const countFailure = (kind) => (kind === "auth" || kind === "forbidden" ? "page" : "tab");
+
 // The Start-work message for a preview or a tooltip: as it will be sent, except that a list row's missing
 // description is named rather than shown empty (Start work fetches it).
 export function previewTask(issue, template) {

@@ -252,3 +252,12 @@ test("keepMoved: a card just moved stays on the board in its new status until th
   assert.deepEqual(keepMoved(rows, moved).map((r) => `${r.key}:${r.status}`), ["A-1:Done", "A-2:To Do", "A-9:Done"]);
   assert.equal(keepMoved(rows, new Map()), rows);
 });
+
+// ---- A hidden tab's count that failed ----
+import { countFailure } from "../src/shared/jira/page.js";
+
+test("countFailure: only a rejected or forbidden token takes the page; anything else marks the tab's count", () => {
+  assert.equal(countFailure("auth"), "page");
+  assert.equal(countFailure("forbidden"), "page");
+  for (const kind of ["invalid", "notfound", "offline", "tls", "timeout", "server", "nocurl", "unknown"]) assert.equal(countFailure(kind), "tab", kind);
+});
