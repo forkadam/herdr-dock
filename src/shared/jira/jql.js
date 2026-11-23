@@ -7,8 +7,8 @@ export const BUILTIN_FILTERS = [
   { id: "recent", name: "Recently viewed", jql: "issuekey in issueHistory() ORDER BY lastViewed DESC" },
 ];
 
-// What a search asks for: just what a list row or a board card shows.
-export const ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated"];
+// What a search asks for: just what a list row or a board card shows (`parent` only comes back on a sub-task).
+export const ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated", "parent"];
 
 const quote = (text) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
@@ -25,8 +25,9 @@ export function withSearch(jql, text) {
   return `${scoped ? `${scoped} AND ` : ""}text ~ ${quote(q)}${order}`;
 }
 
-// GET /rest/api/2/search for one page of a filter.
-export function searchUrl(base, jql, { startAt = 0, maxResults = 50, fields = ROW_FIELDS } = {}) {
+// GET /rest/api/2/search for one page of a filter (`expand`, e.g. "changelog", goes on the query only when given).
+export function searchUrl(base, jql, { startAt = 0, maxResults = 50, fields = ROW_FIELDS, expand } = {}) {
   const params = new URLSearchParams({ jql, startAt: String(startAt), maxResults: String(maxResults), fields: fields.join(",") });
+  if (expand) params.set("expand", expand);
   return `${String(base).replace(/\/+$/, "")}/rest/api/2/search?${params}`;
 }

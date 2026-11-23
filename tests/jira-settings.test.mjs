@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { DEFAULT_SETTINGS, formatSettings, jiraPaths, normalizeBaseUrl, parseSettings, siteName, validateToken } from "../src/shared/jira/settings.js";
+import { DEFAULT_BRIEF_BUGS, DEFAULT_CHECK_TASK, DEFAULT_HIGH_PRIORITIES, DEFAULT_SETTINGS, formatSettings, jiraOptions, jiraPaths, normalizeBaseUrl, parseSettings, siteName, validateToken } from "../src/shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../src/shared/jira/store.js";
 import { curlConfig } from "../src/shared/jira/transport.js";
 
@@ -70,6 +70,204 @@ test("parseSettings: defaults for junk, types checked, unknown keys kept", () =>
   const text = formatSettings({ ...s.settings, token: "secret" });
   assert.ok(!text.includes("secret"));
   assert.deepEqual(parseSettings(text).settings, s.settings);
+});
+
+test("jiraOptions: defaults when nothing is set", () => {
+  const o = jiraOptions(parseSettings("").settings);
+  assert.deepEqual(o, { board: null, highPriorities: ["Highest", "High"], briefBugs: DEFAULT_BRIEF_BUGS, views: [], actions: [], checkTask: DEFAULT_CHECK_TASK, warnings: [] });
+});
+
+test("jiraOptions: views, actions, board and priorities, bad entries skipped with a warning each", () => {
+  const o = jiraOptions({ board: "12", highPriorities: ["P0", "P1"], views: [
+    { id: "sec", name: "Security", jql: "project = SEC", group: "type" },
+    { id: "today", name: "Mine", jql: "x" },
+    { id: "bugs", name: "Bugs" },
+    { id: "sec", name: "Again", jql: "y" },
+  ], actions: [{ project: "SEC", start: "/triage {key}" }, { subtask: true, parentType: "Story", finish: "/close {key}" }, { project: "X" }] });
+  assert.equal(o.board, 12);
+  assert.deepEqual(o.highPriorities, ["P0", "P1"]);
+  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }]);
+  assert.deepEqual(o.actions[1], { subtask: true, parentType: ["Story"], finish: "/close {key}" });
+  assert.equal(o.actions.length, 2);
+  assert.deepEqual(o.warnings, [
+    'views[1]: "today" is the Today tab\'s id',
+    "views[2]: needs a name and a jql",
+    'views[3]: the id "sec" is already used',
+    "actions[2]: needs a start or a finish",
+  ]);
+});
+
+test("formatSettings never writes option defaults", () => {
+  const text = formatSettings(parseSettings('{"baseUrl":"https://j"}').settings);
+  for (const k of ["views", "actions", "board", "highPriorities", "briefBugs", "checkTask"]) assert.ok(!text.includes(`"${k}"`), k);
+});
+
+test("jiraOptions: board is a positive whole number or its digits, anything else is null with a warning", () => {
+  for (const [given, want] of [[12, 12], ["12", 12], [" 9 ", 9], ["007", 7]]) {
+    const o = jiraOptions({ board: given });
+    assert.equal(o.board, want, JSON.stringify(given));
+    assert.deepEqual(o.warnings, [], JSON.stringify(given));
+  }
+  for (const bad of [0, -3, 7.5, "0", "-3", "1.5", "abc", "", true, {}, [], 1e300]) {
+    const o = jiraOptions({ board: bad });
+    assert.equal(o.board, null, JSON.stringify(bad));
+    assert.deepEqual(o.warnings, ["board: not a board id"], JSON.stringify(bad));
+  }
+  assert.deepEqual(jiraOptions({ board: null }).warnings, []);
+});
+
+test("jiraOptions: highPriorities falls back to the default for anything but a list of names, and is a copy", () => {
+  assert.deepEqual(jiraOptions({ highPriorities: [" P0 ", "P1"] }).highPriorities, ["P0", "P1"]);
+  for (const bad of ["High", [], ["P0", ""], ["P0", 3], ["  "], {}, 5, null]) {
+    const o = jiraOptions({ highPriorities: bad });
+    assert.deepEqual(o.highPriorities, ["Highest", "High"], JSON.stringify(bad));
+    assert.deepEqual(o.warnings, [], JSON.stringify(bad));
+  }
+  jiraOptions({}).highPriorities.push("Low");
+  assert.deepEqual(jiraOptions({}).highPriorities, ["Highest", "High"]);
+  assert.deepEqual(DEFAULT_HIGH_PRIORITIES, ["Highest", "High"]);
+});
+
+test("jiraOptions: briefBugs and checkTask are passed through, blank or non-text gives the defaults", () => {
+  const o = jiraOptions({ briefBugs: "  project = X AND type = Bug ", checkTask: "Check {key} against {mine}." });
+  assert.equal(o.briefBugs, "project = X AND type = Bug");
+  assert.equal(o.checkTask, "Check {key} against {mine}.");
+  assert.deepEqual(o.warnings, []);
+  for (const bad of ["", "   ", 5, null, ["x"]]) {
+    const b = jiraOptions({ briefBugs: bad, checkTask: bad });
+    assert.equal(b.briefBugs, DEFAULT_BRIEF_BUGS, JSON.stringify(bad));
+    assert.equal(b.checkTask, DEFAULT_CHECK_TASK, JSON.stringify(bad));
+    assert.deepEqual(b.warnings, [], JSON.stringify(bad));
+  }
+});
+
+test("jiraOptions: a view group other than \"type\" becomes null with a warning and the view is kept", () => {
+  const o = jiraOptions({ views: [
+    { id: "a", name: "A", jql: "j1", group: "status" },
+    { id: "b", name: "B", jql: "j2", group: null },
+    { id: "c", name: "C", jql: "j3" },
+    { id: "d", name: "D", jql: "j4", group: "type" },
+  ] });
+  assert.deepEqual(o.views, [
+    { id: "a", name: "A", jql: "j1", group: null },
+    { id: "b", name: "B", jql: "j2", group: null },
+    { id: "c", name: "C", jql: "j3", group: null },
+    { id: "d", name: "D", jql: "j4", group: "type" },
+  ]);
+  assert.deepEqual(o.warnings, ['views[0]: group "status" is not "type"']);
+});
+
+test("jiraOptions: view ids are lower-case letters, digits and dashes (24 at most); names and jql are trimmed", () => {
+  const bad = (i) => `views[${i}]: the id must be lower-case letters, digits and dashes, starting with a letter (24 at most)`;
+  const longest = "a" + "b".repeat(23);
+  const o = jiraOptions({ views: [
+    { id: longest, name: "  Name ", jql: " project = X  " },
+    { id: "a-1", name: "N", jql: "j" },
+    { id: "Sec", name: "N", jql: "j" },
+    { id: "1st", name: "N", jql: "j" },
+    { id: "a_b", name: "N", jql: "j" },
+    { id: "-x", name: "N", jql: "j" },
+    { id: "a" + "b".repeat(24), name: "N", jql: "j" },
+    { name: "N", jql: "j" },
+    { id: 7, name: "N", jql: "j" },
+  ] });
+  assert.deepEqual(o.views, [
+    { id: longest, name: "Name", jql: "project = X", group: null },
+    { id: "a-1", name: "N", jql: "j", group: null },
+  ]);
+  assert.deepEqual(o.warnings, [bad(2), bad(3), bad(4), bad(5), bad(6), bad(7), bad(8)]);
+});
+
+test("jiraOptions: view entries that are not objects, or lack a name or a jql, are skipped with a warning", () => {
+  const o = jiraOptions({ views: [
+    null, "x", [], 5,
+    { id: "a", name: "  ", jql: "j" },
+    { id: "b", name: 5, jql: "j" },
+    { id: "c", name: "C", jql: "" },
+    { id: "d", name: "D" },
+  ] });
+  assert.deepEqual(o.views, []);
+  assert.deepEqual(o.warnings, [
+    "views[0]: not an object", "views[1]: not an object", "views[2]: not an object", "views[3]: not an object",
+    "views[4]: needs a name and a jql", "views[5]: needs a name and a jql", "views[6]: needs a name and a jql", "views[7]: needs a name and a jql",
+  ]);
+});
+
+test("jiraOptions: only an accepted view takes its id, so a rejected one never makes a later one a duplicate", () => {
+  const o = jiraOptions({ views: [
+    { id: "today", name: "A", jql: "j" },
+    { id: "today", name: "B", jql: "j" },
+    { id: "a", name: "", jql: "j" },
+    { id: "a", name: "A", jql: "j" },
+    { id: "a", name: "Again", jql: "j" },
+  ] });
+  assert.deepEqual(o.views, [{ id: "a", name: "A", jql: "j", group: null }]);
+  assert.deepEqual(o.warnings, [
+    'views[0]: "today" is the Today tab\'s id',
+    'views[1]: "today" is the Today tab\'s id',
+    "views[2]: needs a name and a jql",
+    'views[4]: the id "a" is already used',
+  ]);
+});
+
+test("jiraOptions: views or actions that are not a list give a warning and nothing else; warnings come board, views, actions", () => {
+  for (const bad of ["x", 1, {}, true]) {
+    const o = jiraOptions({ views: bad, actions: bad });
+    assert.deepEqual(o.views, [], JSON.stringify(bad));
+    assert.deepEqual(o.actions, [], JSON.stringify(bad));
+    assert.deepEqual(o.warnings, ["views: not a list", "actions: not a list"], JSON.stringify(bad));
+  }
+  assert.deepEqual(jiraOptions({ views: null, actions: null }).warnings, []);
+  assert.deepEqual(jiraOptions({ board: "x", views: 1, actions: 2 }).warnings, ["board: not a board id", "views: not a list", "actions: not a list"]);
+  assert.deepEqual(jiraOptions(null), jiraOptions({}));
+  assert.deepEqual(jiraOptions("junk"), jiraOptions({}));
+});
+
+test("jiraOptions: an action rule keeps only what it declares, trimmed; a null key counts as not declared", () => {
+  const o = jiraOptions({ actions: [
+    { project: " SEC ", type: " Bug ", subtask: false, parentType: [" Story ", "Epic"], start: "/s {key}", finish: "/f {key}", note: "dropped" },
+    { start: "/only-start" },
+    { finish: "/only-finish", project: null, type: null, subtask: null, parentType: null },
+    { project: "SEC", start: "s", finish: 5 },
+    { parentType: " Story ", finish: "f" },
+  ] });
+  assert.deepEqual(o.actions, [
+    { project: "SEC", type: "Bug", subtask: false, parentType: ["Story", "Epic"], start: "/s {key}", finish: "/f {key}" },
+    { start: "/only-start" },
+    { finish: "/only-finish" },
+    { project: "SEC", start: "s" },
+    { parentType: ["Story"], finish: "f" },
+  ]);
+  assert.deepEqual(o.warnings, []);
+});
+
+test("jiraOptions: an action rule with a bad match key, or neither start nor finish, is skipped with a warning", () => {
+  const notName = "parentType is not a type name or a list of them";
+  const o = jiraOptions({ actions: [
+    null, "x", [],
+    { project: "", start: "s" },
+    { project: 5, start: "s" },
+    { type: "  ", start: "s" },
+    { subtask: "yes", start: "s" },
+    { parentType: [], start: "s" },
+    { parentType: ["Story", ""], start: "s" },
+    { parentType: 5, start: "s" },
+    { parentType: "", start: "s" },
+    { project: "SEC" },
+    { start: 5, finish: "  " },
+    { start: "ok" },
+  ] });
+  assert.deepEqual(o.actions, [{ start: "ok" }]);
+  assert.deepEqual(o.warnings, [
+    "actions[0]: not an object", "actions[1]: not an object", "actions[2]: not an object",
+    "actions[3]: project is not a name",
+    "actions[4]: project is not a name",
+    "actions[5]: type is not a name",
+    "actions[6]: subtask is not true or false",
+    `actions[7]: ${notName}`, `actions[8]: ${notName}`, `actions[9]: ${notName}`, `actions[10]: ${notName}`,
+    "actions[11]: needs a start or a finish",
+    "actions[12]: needs a start or a finish",
+  ]);
 });
 
 // ---- the store, on real files ----
@@ -194,4 +392,57 @@ test("syncCurlConfig: a curl config that drifted from the token file is rewritte
     if (POSIX) assert.equal(statSync(p.curlConfigPath).mode & 0o777, 0o600);
     assert.deepEqual(await syncCurlConfig(h.io, "work", "right"), { ok: true, changed: false });
   } finally { h.done(); }
+});
+
+// ---- The settings file edited by hand while the page runs ----
+import { settingsReload } from "../src/shared/jira/settings.js";
+
+test("settingsReload: text that doesn't parse keeps the settings in use, and says why", () => {
+  const current = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com" };
+  const bad = settingsReload(current, '{ "baseUrl": ', "jira-work.json");
+  assert.equal(bad.kind, "keep");
+  assert.match(bad.problem, /^herdr-dock\/jira-work\.json not valid JSON \(.+\); the page keeps the settings it had until the file is fixed$/);
+  assert.deepEqual(settingsReload(current, "[1]", "jira-work.json"),
+    { kind: "keep", problem: "herdr-dock/jira-work.json not a JSON object; the page keeps the settings it had until the file is fixed" });
+});
+
+test("settingsReload: good text loads; another address is a new site", () => {
+  const current = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com" };
+  const text = (baseUrl) => JSON.stringify({ baseUrl, views: [{ id: "sec", name: "Security", jql: "project = SEC" }] });
+  assert.deepEqual(settingsReload(current, text("https://jira.example.com"), "jira-work.json"), { kind: "load", newSite: false });
+  assert.deepEqual(settingsReload(current, text("https://other.example.com"), "jira-work.json"), { kind: "load", newSite: true });
+  // The file removed: the defaults, which have no address.
+  assert.deepEqual(settingsReload(current, null, "jira-work.json"), { kind: "load", newSite: true });
+  assert.deepEqual(settingsReload({ ...DEFAULT_SETTINGS }, null, "jira-work.json"), { kind: "load", newSite: false });
+});
+
+// ---- The settings form's Scrum board and High priorities ----
+import { prioritiesText, withFormOptions } from "../src/shared/jira/settings.js";
+
+test("withFormOptions: the picked board and the typed priorities set their keys; the rest of the file is kept", () => {
+  const s = { ...DEFAULT_SETTINGS, baseUrl: "https://jira.example.com", views: [{ id: "sec", name: "Security", jql: "project = SEC" }], extra: 1 };
+  const out = withFormOptions(s, { board: 12, priorities: " P0, P1 ,, " });
+  assert.deepEqual(out, { ...s, board: 12, highPriorities: ["P0", "P1"] });
+  assert.equal(jiraOptions(out).board, 12);
+  assert.deepEqual(jiraOptions(out).highPriorities, ["P0", "P1"]);
+  assert.equal("board" in s, false, "the settings handed in are not changed");
+});
+
+test("withFormOptions: no board and empty priorities remove the keys, so the defaults apply and are never written", () => {
+  const s = { ...DEFAULT_SETTINGS, board: 7, highPriorities: ["P0"], views: [] };
+  const out = withFormOptions(s, { board: null, priorities: " , " });
+  assert.equal("board" in out, false);
+  assert.equal("highPriorities" in out, false);
+  assert.deepEqual(out.views, []);
+  assert.equal(jiraOptions(out).board, null);
+  assert.deepEqual(jiraOptions(out).highPriorities, [...DEFAULT_HIGH_PRIORITIES]);
+  assert.doesNotMatch(formatSettings(out), /board|highPriorities/);
+});
+
+test("prioritiesText: the file's list as the form shows it; nothing for a missing or odd value", () => {
+  assert.equal(prioritiesText({ highPriorities: ["P0", "P1"] }), "P0, P1");
+  assert.equal(prioritiesText({ highPriorities: [" P0 ", 3, "", "P1"] }), "P0, P1");
+  assert.equal(prioritiesText({}), "");
+  assert.equal(prioritiesText({ highPriorities: "P0" }), "");
+  assert.equal(prioritiesText(null), "");
 });

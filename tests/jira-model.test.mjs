@@ -40,6 +40,22 @@ test("searchUrl asks for the row fields, paged", () => {
   assert.equal(new URL(searchUrl(BASE, "x")).searchParams.get("maxResults"), "50");
 });
 
+test("searchUrl: expand only when given", () => {
+  assert.ok(searchUrl("https://j", "a = 1", { expand: "changelog" }).includes("expand=changelog"));
+  assert.ok(!searchUrl("https://j", "a = 1").includes("expand"));
+});
+
+test("issueRow: project, subtask, parent", () => {
+  const row = issueRow({ key: "WEB-41", fields: { issuetype: { name: "Sub-task", subtask: true },
+    parent: { key: "WEB-40", fields: { summary: "Story", status: { name: "Spec design" }, issuetype: { name: "Story" } } } } }, "https://j");
+  assert.equal(row.project, "WEB");
+  assert.equal(row.subtask, true);
+  assert.deepEqual(row.parent, { key: "WEB-40", summary: "Story", status: "Spec design", type: "Story" });
+  assert.equal(issueRow({ key: "WEB-1", fields: {} }, "https://j").parent, null);
+  assert.equal(issueRow({ key: "WEB-1", fields: {} }, "https://j").subtask, false);
+  assert.equal(issueRow({ key: "MY-APP-12", fields: {} }, "https://j").project, "MY-APP");
+});
+
 test("issueRow: the list's fields, a browse link and the status category", () => {
   const i = byKey("WEB-2");
   const r = issueRow(i, BASE);
@@ -71,21 +87,21 @@ test("groupByCategory: To do, In progress, Done, keeping order, leaving out empt
 
 test("boardColumns: one per status, by category then first seen", () => {
   const cols = boardColumns(rows);
-  assert.deepEqual(cols.map((c) => c.status), ["To Do", "In Progress", "In Review", "Done"]);
+  assert.deepEqual(cols.map((c) => c.status), ["To Do", "In Progress", "In Review", "Resolved", "Done"]);
   assert.equal(cols.reduce((n, c) => n + c.rows.length, 0), rows.length);
   const reviewFirst = [...rows].sort((a, b) => (a.status === "In Review" ? -1 : b.status === "In Review" ? 1 : 0));
-  assert.deepEqual(boardColumns(reviewFirst).map((c) => c.status), ["To Do", "In Review", "In Progress", "Done"]);
+  assert.deepEqual(boardColumns(reviewFirst).map((c) => c.status), ["To Do", "In Review", "In Progress", "Resolved", "Done"]);
   assert.deepEqual(boardColumns([]), []);
   // Jira's own status order wins over the order first seen.
-  assert.deepEqual(boardColumns(reviewFirst, ["To Do", "In Progress", "In Review", "Done"]).map((c) => c.status), ["To Do", "In Progress", "In Review", "Done"]);
-  assert.deepEqual(boardColumns(reviewFirst, ["Done"]).map((c) => c.status), ["To Do", "In Review", "In Progress", "Done"]);
+  assert.deepEqual(boardColumns(reviewFirst, ["To Do", "In Progress", "In Review", "Done"]).map((c) => c.status), ["To Do", "In Progress", "In Review", "Resolved", "Done"]);
+  assert.deepEqual(boardColumns(reviewFirst, ["Done"]).map((c) => c.status), ["To Do", "In Review", "In Progress", "Resolved", "Done"]);
   // The workflow's statuses (from the projects on the board) all get a column, empty ones too: Done shows even when
   // the filter only lists unresolved issues.
   const open = rows.filter((r) => r.category !== "done");
-  const all = [{ name: "To Do", category: "new" }, { name: "In Progress", category: "indeterminate" }, { name: "In Review", category: "indeterminate" }, { name: "Done", category: "done" }];
-  const withAll = boardColumns(open, ["To Do", "In Progress", "In Review", "Done"], all);
-  assert.deepEqual(withAll.map((c) => [c.status, c.rows.length > 0]), [["To Do", true], ["In Progress", true], ["In Review", true], ["Done", false]]);
-  assert.equal(withAll[3].category, "done");
+  const all = [{ name: "To Do", category: "new" }, { name: "In Progress", category: "indeterminate" }, { name: "In Review", category: "indeterminate" }, { name: "Resolved", category: "indeterminate" }, { name: "Done", category: "done" }];
+  const withAll = boardColumns(open, ["To Do", "In Progress", "In Review", "Resolved", "Done"], all);
+  assert.deepEqual(withAll.map((c) => [c.status, c.rows.length > 0]), [["To Do", true], ["In Progress", true], ["In Review", true], ["Resolved", true], ["Done", false]]);
+  assert.equal(withAll[4].category, "done");
   assert.deepEqual(boardColumns(open, [], []).map((c) => c.status), boardColumns(open).map((c) => c.status));
 });
 
@@ -109,6 +125,22 @@ test("issueDetail: description as text, the last 5 comments, links", () => {
   const linked = issues.find((i) => i.fields.issuelinks.length);
   assert.deepEqual(issueDetail(linked, BASE).links, [{ label: "relates to", key: linked.fields.issuelinks[0].outwardIssue.key, url: `${BASE}/browse/${linked.fields.issuelinks[0].outwardIssue.key}` }]);
   assert.equal(issueDetail(issues.find((i) => !i.fields.description), BASE).description, "");
+});
+
+test("issueDetail: project, subtask and parent as issueRow derives them, so an action rule matches a detail opened from anywhere", () => {
+  const sub = { key: "WEB-41", fields: { summary: "Bar", issuetype: { name: "Sub-task", subtask: true },
+    parent: { key: "WEB-40", fields: { summary: "Story", status: { name: "Spec design" }, issuetype: { name: "Story" } } } } };
+  const d = issueDetail(sub, BASE);
+  assert.equal(d.project, "WEB"); // the key's prefix, though the response names no project
+  assert.equal(d.subtask, true);
+  assert.deepEqual(d.parent, { key: "WEB-40", summary: "Story", status: "Spec design", type: "Story" });
+  const plain = issueDetail({ key: "MY-APP-12", fields: { issuetype: { name: "Bug", subtask: false } } }, BASE);
+  assert.deepEqual([plain.project, plain.subtask, plain.parent], ["MY-APP", false, null]);
+  // Each equals what the issue's row says (a row and a detail of one issue agree).
+  for (const i of issues) {
+    const row = issueRow(i, BASE), det = issueDetail(i, BASE);
+    assert.deepEqual([det.project, det.subtask, det.parent], [row.project, row.subtask, row.parent], i.key);
+  }
 });
 
 test("wikiToText: Jira markup as readable text", () => {
@@ -206,11 +238,16 @@ test("the built-in filters, with and without a search, run on the mock Jira", as
         const r = await fetch(searchUrl(mock.url, jql), { headers: { Authorization: "Bearer mock-token" } });
         assert.equal(r.status, 200, jql);
         const data = await r.json();
-        for (const i of data.issues) assert.deepEqual(Object.keys(i.fields).sort(), [...ROW_FIELDS].sort());
+        // `parent` is Jira's alone to send, and only on a sub-task: every other field is always there.
+        for (const i of data.issues) assert.deepEqual(Object.keys(i.fields).filter((k) => k !== "parent").sort(), ROW_FIELDS.filter((k) => k !== "parent").sort());
       }
     }
     const mine = await (await fetch(searchUrl(mock.url, BUILTIN_FILTERS[0].jql), { headers: { Authorization: "Bearer mock-token" } })).json();
-    assert.equal(mine.total, 10);
-    assert.equal(groupByCategory(mine.issues.map((i) => issueRow(i, mock.url))).some((g) => g.category === "done"), false);
+    assert.equal(mine.total, 19);
+    const mineRows = mine.issues.map((i) => issueRow(i, mock.url));
+    assert.equal(groupByCategory(mineRows).some((g) => g.category === "done"), false);
+    // Jira sends `parent` on sub-tasks only (the mock's WEB-41 and WEB-42 sit under story WEB-40).
+    assert.deepEqual(mineRows.filter((r) => r.subtask).map((r) => [r.key, r.parent?.key]), [["WEB-41", "WEB-40"], ["WEB-42", "WEB-40"]]);
+    assert.ok(mineRows.filter((r) => !r.subtask).every((r) => r.parent === null && r.project === r.key.split("-")[0]));
   } finally { await mock.close(); }
 });

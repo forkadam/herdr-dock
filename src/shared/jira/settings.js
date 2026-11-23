@@ -89,8 +89,131 @@ export function parseSettings(text) {
   };
 }
 
+// The settings file changed on disk (edited by hand) while the page runs: what to do with its new text (`file`: its
+// name). Text that doesn't parse never replaces the settings in use: { kind: "keep", problem } says why. Otherwise
+// { kind: "load", newSite }: `newSite` when the address differs, so the old site's issues are forgotten first.
+export function settingsReload(current, text, file) {
+  const parsed = parseSettings(text);
+  if (!parsed.ok) return { kind: "keep", problem: `herdr-dock/${file} ${parsed.error}; the page keeps the settings it had until the file is fixed` };
+  return { kind: "load", newSite: parsed.settings.baseUrl !== (current?.baseUrl ?? "") };
+}
+
 // The settings file's text; a token never goes in it.
 export function formatSettings(settings) {
   const { token: _never, ...rest } = settings ?? {};
   return JSON.stringify({ ...DEFAULT_SETTINGS, ...rest, v: 1 }, null, 2) + "\n";
+}
+
+// ---- options: what the page reads from the keys parseSettings keeps, checked and defaulted ----
+// None of these defaults is ever written to the settings file (formatSettings and DEFAULT_SETTINGS don't know them).
+
+export const DEFAULT_HIGH_PRIORITIES = /* @__PURE__ */ Object.freeze(["Highest", "High"]);
+export const DEFAULT_BRIEF_BUGS = "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved";
+export const DEFAULT_CHECK_TASK =
+  "The description of {key} ({summary}) changed {when}. Read the change with your Jira tools and check it against my work on {mine} in this repo.";
+
+const VIEW_ID = /^[a-z][a-z0-9-]{0,23}$/;
+const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
+
+// A board id: a positive whole number, or its digits as text.
+function boardId(v) {
+  const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v;
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+// One entry of `actions`: what it matches (project, type, subtask, parentType: any of) and what it runs on Start
+// (start) and Finish (finish). A match key of the wrong type skips the rule, so it never ends up matching more than
+// its author meant; a start or finish of the wrong type is as good as missing.
+function parseRule(a) {
+  if (!isObj(a)) return { error: "not an object" };
+  const rule = {};
+  for (const k of ["project", "type"]) {
+    if (a[k] == null) continue;
+    if (!nonEmpty(a[k])) return { error: `${k} is not a name` };
+    rule[k] = a[k].trim();
+  }
+  if (a.subtask != null) {
+    if (typeof a.subtask !== "boolean") return { error: "subtask is not true or false" };
+    rule.subtask = a.subtask;
+  }
+  if (a.parentType != null) {
+    const list = typeof a.parentType === "string" ? [a.parentType] : a.parentType;
+    if (!Array.isArray(list) || !list.length || !list.every(nonEmpty)) return { error: "parentType is not a type name or a list of them" };
+    rule.parentType = list.map((t) => t.trim());
+  }
+  for (const k of ["start", "finish"]) if (nonEmpty(a[k])) rule[k] = a[k];
+  if (rule.start === undefined && rule.finish === undefined) return { error: "needs a start or a finish" };
+  return { rule };
+}
+
+// Settings -> { board, highPriorities, briefBugs, views, actions, checkTask, warnings }. A bad view or rule is skipped
+// with one warning (its place in the file counted from 0), so the rest of the file still works.
+export function jiraOptions(settings) {
+  const s = isObj(settings) ? settings : {};
+  const warnings = [];
+
+  let board = null;
+  if (s.board != null) {
+    board = boardId(s.board);
+    if (board === null) warnings.push("board: not a board id");
+  }
+
+  const hp = s.highPriorities;
+  const highPriorities = Array.isArray(hp) && hp.length && hp.every(nonEmpty) ? hp.map((p) => p.trim()) : [...DEFAULT_HIGH_PRIORITIES];
+
+  const views = [];
+  if (s.views != null && !Array.isArray(s.views)) warnings.push("views: not a list");
+  for (const [i, v] of (Array.isArray(s.views) ? s.views : []).entries()) {
+    const at = `views[${i}]`;
+    if (!isObj(v)) { warnings.push(`${at}: not an object`); continue; }
+    const name = str(v.name).trim();
+    const jql = str(v.jql).trim();
+    if (!name || !jql) { warnings.push(`${at}: needs a name and a jql`); continue; }
+    if (typeof v.id !== "string" || !VIEW_ID.test(v.id)) {
+      warnings.push(`${at}: the id must be lower-case letters, digits and dashes, starting with a letter (24 at most)`);
+      continue;
+    }
+    if (v.id === "today") { warnings.push(`${at}: "today" is the Today tab's id`); continue; }
+    if (views.some((w) => w.id === v.id)) { warnings.push(`${at}: the id "${v.id}" is already used`); continue; }
+    let group = null;
+    if (v.group != null) {
+      if (v.group === "type") group = "type";
+      else warnings.push(`${at}: group "${v.group}" is not "type"`);
+    }
+    views.push({ id: v.id, name, jql, group });
+  }
+
+  const actions = [];
+  if (s.actions != null && !Array.isArray(s.actions)) warnings.push("actions: not a list");
+  for (const [i, a] of (Array.isArray(s.actions) ? s.actions : []).entries()) {
+    const { rule, error } = parseRule(a);
+    if (error) warnings.push(`actions[${i}]: ${error}`);
+    else actions.push(rule);
+  }
+
+  return {
+    board,
+    highPriorities,
+    briefBugs: nonEmpty(s.briefBugs) ? s.briefBugs.trim() : DEFAULT_BRIEF_BUGS,
+    views,
+    actions,
+    checkTask: nonEmpty(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
+    warnings,
+  };
+}
+
+// ---- The settings form's Scrum board and High priorities ----
+
+// The file's highPriorities as the form's comma-separated text (only its names; anything else is no list).
+export function prioritiesText(settings) {
+  const hp = isObj(settings) ? settings.highPriorities : null;
+  return Array.isArray(hp) ? hp.filter(nonEmpty).map((p) => p.trim()).join(", ") : "";
+}
+
+// The settings with the form's choices: `board` (a picked board's id, or null for none) and `priorities` (the typed
+// text, comma-separated). None or nothing typed removes the key, so the default applies and is never written.
+export function withFormOptions(settings, { board, priorities }) {
+  const { board: _b, highPriorities: _h, ...rest } = isObj(settings) ? settings : {};
+  const names = String(priorities ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  return { ...rest, ...(board != null ? { board } : {}), ...(names.length ? { highPriorities: names } : {}) };
 }
