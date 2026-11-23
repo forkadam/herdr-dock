@@ -23,12 +23,16 @@ export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s
 export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+-|={2,}>|={3,})/;";
 export const ARROW_STYLE_HEAD = "function arrowStyleFromOp(op) {";
 export const ARROW_STYLE_NORMALISE = '\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
+// A text arrow's closing operator (`-- text ..->`) is looked up the same way: normalised to its short form first.
+export const TEXT_ARROW_STYLE_HEAD = "function textArrowStyleFromOps(openOp, closeOp) {";
+export const TEXT_ARROW_STYLE_NORMALISE = '\n  closeOp = closeOp.replace(/^\\.+->$/, ".->").replace(/^-\\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
 // Each must be in the source exactly once, or the build fails.
 export const LINE_REWRITES = [
   { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
   { name: "arrow pattern", from: ARROW, to: ARROW_WIDE },
   { name: "text arrow pattern", from: TEXT_ARROW, to: TEXT_ARROW_WIDE },
   { name: "arrow style", from: ARROW_STYLE_HEAD, to: ARROW_STYLE_HEAD + ARROW_STYLE_NORMALISE },
+  { name: "text arrow style", from: TEXT_ARROW_STYLE_HEAD, to: TEXT_ARROW_STYLE_HEAD + TEXT_ARROW_STYLE_NORMALISE },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.

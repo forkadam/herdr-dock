@@ -93228,6 +93228,7 @@ function arrowStyleFromOp(op) {
   return "solid";
 }
 function textArrowStyleFromOps(openOp, closeOp) {
+  closeOp = closeOp.replace(/^\.+->$/, ".->").replace(/^-\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");
   if (openOp === "-." || closeOp === ".->" || closeOp === "-.-") return "dotted";
   if (openOp === "==" || closeOp === "==>" || closeOp === "===") return "thick";
   return "solid";
@@ -97326,7 +97327,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 7;
+var LOOK_VERSION = 8;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;

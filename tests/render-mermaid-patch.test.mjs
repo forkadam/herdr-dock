@@ -15,7 +15,7 @@ test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied on
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 4);
+  assert.equal(LINE_REWRITES.length, 5);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -31,7 +31,7 @@ test("patchMermaidIds: fails loudly when beautiful-mermaid's node patterns move 
   const noClass = "var NODE_PATTERNS = [" + "/^([\\w-]+)/,".repeat(13) + "];\nvar CLASS_SHORTHAND_REGEX = 1;";
   assert.throws(() => patchMermaidIds(noClass), /class shorthand pattern changed/);
   const noArrow = "var NODE_PATTERNS = [" + "/^([\\w-]+)/,".repeat(13) + "];\n" + LINE_REWRITES[0].from;
-  assert.throws(() => patchMermaidIds(noArrow), /arrow pattern changed/);
+  assert.throws(() => patchMermaidIds(noArrow), /beautiful-mermaid's arrow pattern changed$/);
 });
 
 // ---- The built Render helper (app/, kept equal to a fresh build by tests/build-app.test.mjs) ----
@@ -157,5 +157,19 @@ test("the built Render helper: a bare classed node keeps its class; a hyphen ins
     assert.match(bare, /<g class="node" data-id="A"[^>]*>\s*<[a-z]+[^>]*fill="#ff0000"/);
     assert.equal((hyphen.match(/<g class="node"/g) ?? []).length, 2);
     assert.equal((hyphen.match(/class="edge"/g) ?? []).length, 1);
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
+
+test("the built Render helper: a long closing operator in a text arrow takes its style like the short one", () => {
+  const h = mkdtempSync(join(tmpdir(), "render-textlong-"));
+  try {
+    const cases = [["A-- text ..->B", "dotted"], ["A-- text .->B", "dotted"], ["A-- text --->B", "solid"], ["A-- text ===>B", "thick"]];
+    const f = join(h, "text.md");
+    writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
+    const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const segs = JSON.parse(r.stdout).segments;
+    assert.equal(segs.length, cases.length);
+    segs.forEach((s, i) => assert.equal(edgeStyle(readFileSync(join(h, s.svg), "utf8")), cases[i][1], cases[i][0]));
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
