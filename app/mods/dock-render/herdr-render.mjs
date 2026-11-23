@@ -93108,7 +93108,7 @@ var NODE_PATTERNS = [
   // A{text}
 ];
 var BARE_NODE_REGEX = /^((?:\w|-(?![-.>]))+)/;
-var CLASS_SHORTHAND_REGEX = /^:::([\w][\w-]*)/;
+var CLASS_SHORTHAND_REGEX = /^:::(\w(?:\w|-(?![-.>]))*)/;
 function parseEdgeLine(line, graph, subgraphStack) {
   let remaining = line.trim();
   const firstGroup = consumeNodeGroup(remaining, graph, subgraphStack);
@@ -97325,7 +97325,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 4;
+var LOOK_VERSION = 5;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;

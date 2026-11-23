@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { NODE_ID, NODE_ID_BEFORE_ARROW, patchMermaidIds } from "../src/shared/render/mermaid-patch.js";
+import { CLASS_SHORTHAND, CLASS_SHORTHAND_BEFORE_ARROW, NODE_ID, NODE_ID_BEFORE_ARROW, patchMermaidIds } from "../src/shared/render/mermaid-patch.js";
 
 const DIST = fileURLToPath(import.meta.resolve("beautiful-mermaid"));
 const count = (s, sub) => s.split(sub).length - 1;
@@ -14,13 +14,17 @@ test("patchMermaidIds: the 13 node-id patterns get the arrow-aware id; nothing e
   const out = patchMermaidIds(src);
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID), 13);
-  assert.equal(out.length - src.length, 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length));
+  assert.equal(count(out, CLASS_SHORTHAND_BEFORE_ARROW), 1);
+  assert.equal(count(out, CLASS_SHORTHAND), 0);
+  assert.equal(out.length - src.length, 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length) + CLASS_SHORTHAND_BEFORE_ARROW.length - CLASS_SHORTHAND.length);
 });
 
 test("patchMermaidIds: fails loudly when beautiful-mermaid's node patterns move or change", () => {
   assert.throws(() => patchMermaidIds("var x = 1;"), /NODE_PATTERNS/);
   const twelve = "var NODE_PATTERNS = [" + "/^([\\w-]+)/,".repeat(12) + "];\nvar CLASS_SHORTHAND_REGEX = 1;";
   assert.throws(() => patchMermaidIds(twelve), /12 node-id patterns, expected 13/);
+  const noClass = "var NODE_PATTERNS = [" + "/^([\\w-]+)/,".repeat(13) + "];\nvar CLASS_SHORTHAND_REGEX = 1;";
+  assert.throws(() => patchMermaidIds(noClass), /class shorthand pattern changed/);
 });
 
 // ---- The built Render helper (app/, kept equal to a fresh build by tests/build-app.test.mjs) ----
@@ -67,5 +71,25 @@ test("the build's beautiful-mermaid hook: a build it never applied to fails its 
     await build({ ...opts, entryPoints: [join(h, "bm.js")], outfile: join(h, "bm.out.mjs"), plugins: [hit.plugin] });
     hit.check();
     assert.ok(readFileSync(join(h, "bm.out.mjs"), "utf8").includes(NODE_ID_BEFORE_ARROW));
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
+
+test("the built Render helper draws a :::class node followed by an unspaced arrow as two nodes, the class kept", () => {
+  const h = mkdtempSync(join(tmpdir(), "render-cls-"));
+  try {
+    const cases = [["A:::hot-->B", "A"], ["A-->B:::hot", "B"], ["A:::hot-->B:::cold", "A"], ["A[x]:::hot-.->B", "A"], ["A:::hot---B", "A"], ["A:::hot --> B", "A"]];
+    const f = join(h, "cls.md");
+    writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n  classDef hot fill:#ff0000\n  classDef cold fill:#0000ff\n```").join("\n\n"));
+    const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const segs = JSON.parse(r.stdout).segments;
+    assert.equal(segs.length, cases.length);
+    segs.forEach((s, i) => {
+      const svg = readFileSync(join(h, s.svg), "utf8");
+      assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2, cases[i][0]);
+      assert.equal((svg.match(/class="edge"/g) ?? []).length, 1, cases[i][0]);
+      const hot = new RegExp(`<g class="node" data-id="${cases[i][1]}"[^>]*>\\s*<[a-z]+[^>]*fill="#ff0000"`);
+      assert.match(svg, hot, `${cases[i][0]}: ${cases[i][1]} keeps hot's red`);
+    });
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
