@@ -1490,7 +1490,7 @@ var Jira = class extends View {
     const shown = sp.picked != null && sp.all.find((x) => x.id === sp.picked) || sp.current;
     let found = { ok: true, data: { issues: [], total: 0 } };
     if (shown) {
-      found = await c.search(sprintJql(shown.id), { maxResults: refreshSize(sp.shown?.id === shown.id ? sp.total : 0) });
+      found = await c.search(sprintJql(shown.id), { maxResults: REFRESH_CAP });
       if (!live()) return;
       if (!found.ok) {
         this.todayFailed(s, found.problem, cx);

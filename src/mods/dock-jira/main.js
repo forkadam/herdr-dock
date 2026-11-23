@@ -12,7 +12,7 @@ import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countFailure, countText, filterList, needsDetail,
-  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { columnDrop, laneCells, pickSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
@@ -400,7 +400,8 @@ export default class Jira extends View {
     const shown = (sp.picked != null && sp.all.find((x) => x.id === sp.picked)) || sp.current;
     let found = { ok: true, data: { issues: [], total: 0 } };
     if (shown) {
-      found = await c.search(sprintJql(shown.id), { maxResults: refreshSize(sp.shown?.id === shown.id ? sp.total : 0) });
+      // As many as a refresh ever asks for, from the first load: Today has no Load more, so the board is never partial.
+      found = await c.search(sprintJql(shown.id), { maxResults: REFRESH_CAP });
       if (!live()) return;
       if (!found.ok) { this.todayFailed(s, found.problem, cx); return; }
     }
