@@ -1,0 +1,62 @@
+// The Jira page's tab model (pure; no host imports): which tabs the page shows, which one is picked, how a tab's
+// rows are split into sections, and the count written on a tab.
+import { BUILTIN_FILTERS } from "./jql.js";
+import { groupByCategory } from "./model.js";
+
+// What the All tab searches: everything assigned to me, resolved or not.
+export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
+
+// Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|null, filters: boolean }.
+// `filters`: whether the tab shows the filter bar (status, type and text) over its rows.
+const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false };
+const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false };
+const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true };
+
+const fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false });
+
+// The tabs, left to right: Today (when `today`), the user's views, Mine, All. A view with the id `mine` or `all`
+// replaces that built-in's name, jql and group where the built-in stands; the built-in keeps its `filters`.
+export function tabList(views, { today } = {}) {
+  const own = (id) => views.find((v) => v.id === id);
+  const builtin = (tab) => {
+    const v = own(tab.id);
+    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group } : tab;
+  };
+  return [
+    ...(today ? [TODAY] : []),
+    ...views.filter((v) => v.id !== MINE.id && v.id !== ALL.id).map(fromView),
+    builtin(MINE),
+    builtin(ALL),
+  ];
+}
+
+// The remembered tab, else the first (the one remembered may have left the settings).
+export const pickTab = (tabs, id) => tabs.find((t) => t.id === id) ?? tabs[0];
+
+// The id of the tab after (dir 1) or before (dir -1) the one picked, wrapping around at either end.
+export function stepTab(tabs, id, dir) {
+  const at = Math.max(0, tabs.findIndex((t) => t.id === id));
+  return tabs[(at + dir + tabs.length) % tabs.length].id;
+}
+
+// Rows -> [{ title, parts }]. No group: one section over every row, with no title. "type": one section per issue type
+// in the order each first appears (rows with no type under "Other"). `parts` is groupByCategory's: To do, In
+// progress, Done.
+export function sectionsFor(rows, group) {
+  if (group !== "type") return [{ title: null, parts: groupByCategory(rows) }];
+  const types = new Map();
+  for (const row of rows) {
+    const title = row.type || "Other";
+    if (!types.has(title)) types.set(title, []);
+    types.get(title).push(row);
+  }
+  return [...types].map(([title, list]) => ({ title, parts: groupByCategory(list) }));
+}
+
+// The count on a tab: "" until it is known, "!" when its search failed, else the number, "99+" past 99. A tab
+// reloading keeps the count it had.
+export function tabCountText({ total, problem } = {}) {
+  if (problem) return "!";
+  if (!Number.isFinite(total)) return "";
+  return total > 99 ? "99+" : String(total);
+}
