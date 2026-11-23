@@ -315,6 +315,8 @@ var sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 var controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 var framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
 var bigFramesRel = (t) => `${framesRel(t)}-big`;
+var tmpRel = () => `${BROWSER_REL}/tmp`;
+var windowStateRels = (t) => [`${tmpRel()}/${t}.json`, `${tmpRel()}/${t}.done.json`];
 var signedInRel = () => `${BROWSER_REL}/profiles/signed-in.json`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 function normalizeUrl(input) {
@@ -429,6 +431,7 @@ var USAGE = `browse: drive a real browser from this terminal.
   browse login <url>                               the person signs in once; the signed-in profile keeps it`;
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 var num = (v, d) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d;
+var NOT_SAVED = "the window was closed before its state was saved (or it holds no cookies); nothing was changed";
 var tailOf = (scope) => String(scope ?? "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
 function run(cmd, args, opts = {}) {
   const win = process.platform === "win32";
@@ -477,7 +480,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
     return 2;
   }
   if (!existsSync(bin)) {
-    io.err("agent-browser is not installed: set browser.enabled and run npm run deploy");
+    io.err(`agent-browser is not installed: set browser.enabled and ${setupHint(home)}`);
     return 2;
   }
   const ab = (session2, rest, opts) => run(bin, ["--session", session2, ...cfg.chrome ? ["--executable-path", cfg.chrome] : [], ...rest], { env, ...opts });
@@ -498,6 +501,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
     rmSync(controlFile, { force: true });
     rmSync(frames, { recursive: true, force: true });
     rmSync(abs(bigFramesRel(terminal)), { recursive: true, force: true });
+    for (const rel of windowStateRels(terminal)) rmSync(abs(rel), { force: true });
   };
   const save = (rec) => writeAtomic(sessionFile, JSON.stringify(rec, null, 2) + "\n");
   let created2 = null;
@@ -528,6 +532,10 @@ async function main(argv, env = process.env, io = defaultIo()) {
   };
   switch (args.cmd) {
     case "open": {
+      if (session && personHas(session, readControl(), Date.now(), cfg.handoffMinutes)) {
+        io.err("the person has control; run browse wait");
+        return 3;
+      }
       const url = normalizeUrl(args.url);
       if (session && session.profile !== args.profile) {
         ab(session.session, ["close"]);
@@ -552,7 +560,8 @@ async function main(argv, env = process.env, io = defaultIo()) {
         url: query(name, ["get", "url"]) || url,
         title: query(name, ["get", "title"]),
         opened: Date.now(),
-        handoff: null
+        handoff: readSession()?.handoff ?? null
+        // an open handoff stays the person's to answer
       });
       if (env.DOCK_SKIP_SWEEP !== "1") sweep(abs, bin, cfg, env);
       return 0;
@@ -601,7 +610,9 @@ async function main(argv, env = process.env, io = defaultIo()) {
       return 0;
     }
     case "close": {
-      ab(session?.session ?? name, ["close"]);
+      const s = session?.session ?? name;
+      ab(s, ["close"]);
+      ab(realSessionName(s), ["close"]);
       wipe();
       return 0;
     }
@@ -649,15 +660,51 @@ function saveState(ab, session, file) {
   }
   return r;
 }
+function saveChecked(ab, session, file) {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.saving-${process.pid}`;
+  const r = ab(session, ["state", "save", tmp, "--json"]);
+  let relaunched = false, cookies = 0;
+  try {
+    const l = JSON.parse(String(r.stdout ?? "")).data?.lifecycle;
+    relaunched = l?.launched === true || l?.reused === false;
+  } catch {
+  }
+  try {
+    const o = JSON.parse(readFileSync2(tmp, "utf8"));
+    cookies = Array.isArray(o?.cookies) ? o.cookies.length : 0;
+  } catch {
+  }
+  if (r.status !== 0 || relaunched || cookies === 0) {
+    rmSync(tmp, { force: true });
+    return false;
+  }
+  try {
+    chmodSync(tmp, 384);
+  } catch {
+  }
+  renameSync(tmp, file);
+  return true;
+}
 async function login(args, { io, ab, scope, abs }) {
   const session = `dock-login-${tailOf(scope)}`;
   const file = abs(signedInRel());
-  ab(session, ["--headed", ...existsSync(file) ? ["--state", file] : [], "open", normalizeUrl(args.url)], { stdio: ["ignore", "inherit", "inherit"] });
-  io.out("Sign in in the window, then press Enter here.");
+  const o = ab(session, ["--headed", ...existsSync(file) ? ["--state", file] : [], "open", normalizeUrl(args.url)], { stdio: ["ignore", "inherit", "inherit"] });
+  if (o.status !== 0) {
+    ab(session, ["close"]);
+    io.err("the login window didn't open; nothing was changed");
+    return o.status || 2;
+  }
+  io.out("Sign in in the window \u2014 keep it open \u2014 then press Enter here.");
   await io.readLine();
-  const r = saveState(ab, session, file);
+  const saved = saveChecked(ab, session, file);
   ab(session, ["close"]);
-  return r.status ?? 0;
+  if (!saved) {
+    io.err(NOT_SAVED);
+    return 1;
+  }
+  io.out("Saved: the signed-in profile has this login.");
+  return 0;
 }
 function windowCmd(args, { io, ab, abs, terminal }) {
   const t = args.terminal;
@@ -667,21 +714,35 @@ function windowCmd(args, { io, ab, abs, terminal }) {
     io.err(`no browser session for ${t}`);
     return 2;
   }
-  const tmpDir = abs(`${BROWSER_REL}/tmp`);
-  const out = join2(tmpDir, `${t}.json`), done = join2(tmpDir, `${t}.done.json`);
+  const [out, done] = windowStateRels(t).map(abs);
   const real = realSessionName(rec.session);
-  mkdirSync(tmpDir, { recursive: true });
+  mkdirSync(abs(tmpRel()), { recursive: true });
   if (args.cmd === "window-open") {
     saveState(ab, rec.session, out);
     return ab(real, ["--headed", "--state", out, "open", rec.url], { stdio: ["ignore", "inherit", "inherit"] }).status ?? 0;
   }
-  saveState(ab, real, done);
-  ab(real, ["close"]);
-  ab(rec.session, ["state", "load", done]);
-  ab(rec.session, ["reload"]);
   rmSync(out, { force: true });
+  if (!saveChecked(ab, real, done)) {
+    io.err(NOT_SAVED);
+    return 1;
+  }
+  ab(real, ["close"]);
+  const l = ab(rec.session, ["state", "load", done]);
+  ab(rec.session, ["reload"]);
   rmSync(done, { force: true });
+  if (l.status !== 0) {
+    io.err("the window's state couldn't be loaded into the agent's browser");
+    return l.status || 1;
+  }
   return 0;
+}
+function setupHint(home) {
+  let mode = null;
+  try {
+    mode = installOf(JSON.parse(readText2(join2(home, "mods/dock-core/source.json"))), home)?.mode ?? null;
+  } catch {
+  }
+  return mode === "app" ? `run node "${join2(home, "mods/dock-browser/herdr-browser-setup.mjs")}"` : "run npm run deploy";
 }
 function sweep(abs, bin, cfg, env) {
   try {
@@ -696,6 +757,8 @@ function sweep(abs, bin, cfg, env) {
       rmSync(abs(controlFileRel(g.terminal)), { force: true });
       rmSync(abs(framesRel(g.terminal)), { recursive: true, force: true });
       rmSync(abs(bigFramesRel(g.terminal)), { recursive: true, force: true });
+      run(bin, ["--session", realSessionName(g.session), ...cfg.chrome ? ["--executable-path", cfg.chrome] : [], "close"], { env });
+      for (const rel of windowStateRels(g.terminal)) rmSync(abs(rel), { force: true });
     }
   } catch {
   }

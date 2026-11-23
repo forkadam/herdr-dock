@@ -67,6 +67,18 @@ test("migrationPlan moves this host's section (case-insensitive) and keeps other
   assert.deepEqual(JSON.parse(plan.configText), { ...BASE, machines: { "other-pc": THEIRS } });
 });
 
+test("migrationPlan carries this host's browser section into the local file", () => {
+  const browser = { enabled: true, chrome: "/usr/bin/chromium" };
+  const configText = pretty({ ...BASE, machines: { "forkadam-pc": { ...MINE, browser } } });
+  const plan = migrationPlan({ configText, host: "forkadam-pc", localText: null, headText: null });
+  assert.deepEqual(JSON.parse(plan.localText), { v: 1, ...MINE, browser });
+  assert.ok(parseLocal(plan.localText).ok);
+  assert.deepEqual(JSON.parse(plan.configText), BASE);
+  // Without one, the local file has no browser key.
+  const none = migrationPlan({ configText: pretty({ ...BASE, machines: { "forkadam-pc": MINE } }), host: "forkadam-pc", localText: null });
+  assert.equal("browser" in JSON.parse(none.localText), false);
+});
+
 test("migrationPlan drops an emptied machines object", () => {
   const configText = pretty({ ...BASE, machines: { "forkadam-pc": MINE } });
   const plan = migrationPlan({ configText, host: "FORKADAM-PC", localText: null, headText: null });

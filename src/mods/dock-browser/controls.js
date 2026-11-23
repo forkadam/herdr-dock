@@ -52,7 +52,7 @@ export function handoffBar(t, state, on) {
   return v_flex().flex_none().gap(6).px(12).py(8).bg(t.raised ?? t.background).border_b(1).border_color(t.working)
     .child(div().text_size(11).font_semibold().text_color(t.working).child("The agent needs you"))
     .child(div().text_size(12.5).text_color(t.foreground).child(state.message || "The agent asked for your help in this page."))
-    .when(!!state.windowOpen, (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Finish in the window, then press Done")))
+    .when(!!state.windowOpen, (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Finish in the window — keep it open — then press Done")))
     .child(h_flex().flex_wrap().gap(4).items_center()
       .child(button(t, "browser-done", "Done", on.done, { busy, primary: true, tip: "Tell the agent you're done" }))
       .child(button(t, "browser-cancel", "Cancel", on.cancel, { busy, tip: "Tell the agent you won't do it" }))

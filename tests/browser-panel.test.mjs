@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   panelMode, inControl, controlText, changes, handoffNotices, rememberNotified, sizeCommands, newTabId,
-  restoreCommands, fitWidth, bigWindow, browserShowName, parseBrowserShow, finishOf,
+  restoreCommands, fitWidth, bigWindow, browserShowName, parseBrowserShow, finishOf, windowLeft, NO_TERMINAL,
 } from "../src/shared/browser/panel.js";
 import { parseControl, waitOutcome, personHas } from "../src/shared/browser/registry.js";
 
@@ -53,8 +53,31 @@ test("controlText: take over, hand back, a stale record starts over, no creation
   assert.equal(fresh.terminalCreated, 5);
   // Answering clears a take-over (Done hands back).
   assert.equal(parseControl(controlText(taken, 5, changes.answer("h1", "done"))).takeover, null);
-  // No creation time known: nothing stamped.
-  assert.equal("terminalCreated" in parseControl(controlText(null, null, changes.takeOver(T0))), false);
+  // No creation time known (hc get failed): nothing to write, ever.
+  assert.equal(controlText(null, null, changes.takeOver(T0)), null);
+  assert.equal(controlText(taken, undefined, changes.handBack()), null);
+  assert.equal(controlText(taken, NaN, changes.handBack()), null);
+  assert.equal(NO_TERMINAL, "Can't identify this terminal (hc get failed)");
+});
+
+test("windowLeft: a real window's take-over that outlived its handoff", () => {
+  const win = parseControl(controlText(controlText(null, 5, changes.window(T0)), 5, changes.windowOpened(T0 + 1)));
+  // The handoff still open: the person is on it.
+  assert.equal(windowLeft(session(ho), win, T0 + MIN, 15), false);
+  // Timed out (the agent's wait may not have cleared it yet), or cleared by the agent's wait: left behind.
+  assert.equal(windowLeft(session(ho), win, T0 + 16 * MIN, 15), true);
+  assert.equal(windowLeft(session(), win, T0, 15), true);
+  // Asked for but window-open never finished: the take-over is still left behind.
+  assert.equal(windowLeft(session(), parseControl(controlText(null, 5, changes.window(T0))), T0, 15), true);
+  // Any other take-over, or none, isn't a window's.
+  assert.equal(windowLeft(session(), parseControl(controlText(null, 5, changes.takeOver(T0))), T0, 15), false);
+  assert.equal(windowLeft(session(), parseControl(controlText(null, 5, changes.pick("pick", T0))), T0, 15), false);
+  assert.equal(windowLeft(session(ho), free, T0 + 16 * MIN, 15), false);
+  assert.equal(windowLeft(session(), null, T0, 15), false);
+  // What the panel then writes frees the agent.
+  const back = parseControl(controlText(JSON.stringify(win), 5, changes.handBack()));
+  assert.equal(personHas(session(), back, T0, 15), false);
+  assert.equal(back.window, null);
 });
 
 test("handoffNotices: open handoffs not yet announced", () => {

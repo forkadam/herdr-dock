@@ -1,13 +1,15 @@
 // The browse command (src/app/browse.js): a fake agent-browser stands in for the real one.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { main, appHomeOf } from "../src/app/browse.js";
 import { sessionName } from "../src/shared/browser/session.js";
 
+const SIGNED_IN = "herdr-dock/browser/profiles/signed-in.json";
+const TMP = "herdr-dock/browser/tmp";
 const FAKE = join(import.meta.dirname, "fixtures", "fake-agent-browser.mjs");
 const REPO_CONFIG = JSON.parse(readFileSync(join(import.meta.dirname, "..", "config", "dock.json"), "utf8"));
 
@@ -268,13 +270,56 @@ test("login opens a headed login session, saves state after Enter and closes", a
   const x = setup();
   try {
     assert.equal(await x.run(["login", "https://example.com"]), 0);
-    assert.match(x.out.join("\n"), /Sign in in the window, then press Enter here\./);
+    assert.match(x.out.join("\n"), /Sign in in the window — keep it open — then press Enter here\./);
     const c = x.calls();
     assert.ok(c.every((a) => a.includes("--headed") || a.includes("state") || a.includes("close") || a.includes("--session")));
     assert.ok(c.some((a) => a.includes("--headed") && a.includes("open")));
     assert.ok(c.some((a) => a.includes("state") && a.includes("save")));
     assert.ok(c[c.length - 1].includes("close"));
     assert.match(c[0][1], /^dock-login-/);
+    const saved = JSON.parse(readFileSync(join(x.home, SIGNED_IN), "utf8"));
+    assert.equal(saved.cookies.length, 1);
+    assert.deepEqual(readdirSync(join(x.home, "herdr-dock/browser/profiles")), ["signed-in.json"]); // no temp file left
+  } finally { x.done(); }
+});
+
+// The window closed by hand: state save fails, or the session comes back empty. The saved login stays as it was.
+const HOW = { fail: "failing", empty: "with no cookies", relaunched: "from a browser launched for it (window closed)" };
+for (const state of ["fail", "empty", "relaunched"]) {
+  test(`login: state save ${HOW[state]} leaves signed-in.json unchanged, exit 1`, async () => {
+    const x = setup();
+    try {
+      const file = join(x.home, SIGNED_IN);
+      mkdirSync(join(x.home, "herdr-dock/browser/profiles"), { recursive: true });
+      writeFileSync(file, '{"cookies":[{"name":"old"}]}');
+      assert.equal(await x.run(["login", "https://example.com"], { FAKE_AB_STATE: state }), 1);
+      assert.match(x.err.join("\n"), /the window was closed before its state was saved .*nothing was changed/);
+      assert.equal(readFileSync(file, "utf8"), '{"cookies":[{"name":"old"}]}');
+      assert.deepEqual(readdirSync(join(x.home, "herdr-dock/browser/profiles")), ["signed-in.json"]);
+      assert.ok(x.calls().at(-1).includes("close"));
+    } finally { x.done(); }
+  });
+}
+
+test("login: no saved login before and nothing saved now leaves no file", async () => {
+  const x = setup();
+  try {
+    assert.equal(await x.run(["login", "https://example.com"], { FAKE_AB_STATE: "empty" }), 1);
+    assert.ok(!existsSync(join(x.home, SIGNED_IN)));
+  } finally { x.done(); }
+});
+
+test("login stops without waiting when the window doesn't open", async () => {
+  const x = setup();
+  try {
+    let asked = false;
+    const io = { out: (l) => x.out.push(l), err: (l) => x.err.push(l), readLine: async () => { asked = true; return ""; } };
+    const code = await main(["login", "https://example.com"], { ...x.env, FAKE_AB_OPEN_EXIT: "5" }, io);
+    assert.equal(code, 5);
+    assert.equal(asked, false);
+    assert.match(x.err.join("\n"), /the login window didn't open; nothing was changed/);
+    assert.ok(!x.calls().some((a) => a.includes("save")));
+    assert.ok(!existsSync(join(x.home, SIGNED_IN)));
   } finally { x.done(); }
 });
 
@@ -315,5 +360,117 @@ test("wait: a handoff older than handoffMinutes times out, exit 1, handoff clear
     assert.equal(await x.run(["wait"]), 1);
     assert.match(x.out.join("\n"), /nobody answered in 15 minutes/);
     assert.equal(x.rec("t3.json").handoff, null);
+  } finally { x.done(); }
+});
+
+test("window-done: a failed save or an empty state loads nothing, leaves the window, exits 1", async () => {
+  for (const state of ["fail", "empty", "relaunched"]) {
+    const x = setup();
+    try {
+      await x.run(["open", "localhost:3000"]);
+      assert.equal(await x.run(["window-open", "--terminal", "t3"]), 0);
+      assert.ok(existsSync(join(x.home, TMP, "t3.json")));
+      const n = x.calls().length;
+      assert.equal(await x.run(["window-done", "--terminal", "t3"], { FAKE_AB_STATE: state }), 1);
+      assert.match(x.err.join("\n"), /the window was closed before its state was saved .*nothing was changed/);
+      const after = x.calls().slice(n);
+      assert.ok(!after.some((a) => a.includes("load") || a.includes("reload") || a.includes("close")));
+      assert.deepEqual(readdirSync(join(x.home, TMP)), []); // no cookie files left
+    } finally { x.done(); }
+  }
+});
+
+test("window-done: a saved state is loaded into the agent's session, the window closed, temp files gone", async () => {
+  const x = setup();
+  try {
+    await x.run(["open", "localhost:3000"]);
+    const agent = x.rec("t3.json").session;
+    await x.run(["window-open", "--terminal", "t3"]);
+    const n = x.calls().length;
+    assert.equal(await x.run(["window-done", "--terminal", "t3"]), 0);
+    const after = x.calls().slice(n);
+    assert.ok(after.some((a) => a[1] === `${agent}-real` && a.includes("close")));
+    const load = after.find((a) => a.includes("load"));
+    assert.ok(load && load[1] === agent);
+    assert.deepEqual(readdirSync(join(x.home, TMP)), []);
+  } finally { x.done(); }
+});
+
+test("open while the person has control exits 3 and changes nothing", async () => {
+  const x = setup();
+  try {
+    await x.run(["open", "localhost:3000"]);
+    x.write("t3.control.json", { v: 1, takeover: { reason: "person", since: Date.now() }, answer: null, terminalCreated: 100 });
+    const before = x.rec("t3.json"), n = x.calls().length;
+    assert.equal(await x.run(["open", "localhost:4000"]), 3);
+    assert.match(x.err.join("\n"), /the person has control; run browse wait/);
+    assert.equal(x.calls().length, n);
+    assert.deepEqual(x.rec("t3.json"), before);
+  } finally { x.done(); }
+});
+
+test("open during an open handoff exits 3; after it is answered, open keeps the handoff for wait", async () => {
+  const x = setup();
+  try {
+    await x.run(["open", "localhost:3000"]);
+    await x.run(["handoff", "log in"]);
+    const h = x.rec("t3.json").handoff;
+    assert.equal(await x.run(["open", "localhost:4000"]), 3);
+    assert.deepEqual(x.rec("t3.json").handoff, h);
+    // Answered but not yet waited for: open goes ahead and the answer still reaches wait.
+    x.write("t3.control.json", { v: 1, takeover: null, answer: { id: h.id, value: "done" }, terminalCreated: 100 });
+    assert.equal(await x.run(["open", "localhost:4000"]), 0);
+    assert.deepEqual(x.rec("t3.json").handoff, h);
+    assert.equal(await x.run(["wait"]), 0);
+    assert.equal(x.rec("t3.json").handoff, null);
+  } finally { x.done(); }
+});
+
+test("close also closes the real window's session and deletes its state files", async () => {
+  const x = setup();
+  try {
+    await x.run(["open", "localhost:3000"]);
+    const agent = x.rec("t3.json").session;
+    mkdirSync(join(x.home, TMP), { recursive: true });
+    writeFileSync(join(x.home, TMP, "t3.json"), "{}");
+    writeFileSync(join(x.home, TMP, "t3.done.json"), "{}");
+    writeFileSync(join(x.home, TMP, "t9.json"), "{}");
+    assert.equal(await x.run(["close"]), 0);
+    assert.ok(x.calls().some((a) => a[1] === `${agent}-real` && a.includes("close")));
+    assert.deepEqual(readdirSync(join(x.home, TMP)), ["t9.json"]);
+  } finally { x.done(); }
+});
+
+test("open's sweep closes a gone terminal's browser and real window and deletes its state files", { skip: process.platform === "win32" }, async () => {
+  const x = setup();
+  try {
+    const bin = join(x.home, "bin");
+    mkdirSync(bin);
+    const ls = join(x.home, "fake-ls.mjs");
+    writeFileSync(ls, `console.log(JSON.stringify({ spaces: [{ tabs: [{ terminals: [{ terminal: "t3" }] }] }] }));`);
+    shim(bin, "herdr-app", ls);
+    x.write("t7.json", { v: 1, session: "dock-x-t7", terminal: "t7", profile: "clean", handoff: null });
+    mkdirSync(join(x.home, TMP), { recursive: true });
+    writeFileSync(join(x.home, TMP, "t7.json"), "{}");
+    writeFileSync(join(x.home, TMP, "t7.done.json"), "{}");
+    assert.equal(await x.run(["open", "localhost:3000"], { DOCK_SKIP_SWEEP: "", PATH: `${bin}:${process.env.PATH}` }), 0);
+    const c = x.calls();
+    assert.ok(c.some((a) => a[1] === "dock-x-t7" && a.includes("close")));
+    assert.ok(c.some((a) => a[1] === "dock-x-t7-real" && a.includes("close")));
+    assert.deepEqual(readdirSync(join(x.home, TMP)), []);
+    assert.ok(!existsSync(join(x.home, "herdr-dock/browser/sessions/t7.json")));
+  } finally { x.done(); }
+});
+
+test("not installed: an app install is told the setup script, a clone npm run deploy", async () => {
+  const x = setup();
+  try {
+    const missing = { DOCK_AGENT_BROWSER: join(x.home, "nope") };
+    assert.equal(await x.run(["open", "localhost:3000"], missing), 2);
+    assert.match(x.err.at(-1), /set browser\.enabled and run npm run deploy$/);
+    writeFileSync(join(x.home, "mods/dock-core/source.json"), JSON.stringify({ mode: "app" }));
+    assert.equal(await x.run(["open", "localhost:3000"], missing), 2);
+    const setup = join(x.home, "mods/dock-browser/herdr-browser-setup.mjs");
+    assert.equal(x.err.at(-1), `agent-browser is not installed: set browser.enabled and run node "${setup}"`);
   } finally { x.done(); }
 });

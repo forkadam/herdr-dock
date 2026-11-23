@@ -234,6 +234,8 @@ var sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 var controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 var framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
 var bigFramesRel = (t) => `${framesRel(t)}-big`;
+var tmpRel = () => `${BROWSER_REL}/tmp`;
+var windowStateRels = (t) => [`${tmpRel()}/${t}.json`, `${tmpRel()}/${t}.done.json`];
 var picksRel = () => `${BROWSER_REL}/picks`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 
@@ -571,9 +573,10 @@ function controlOf(text, created2) {
   return text != null && Number.isFinite(created2) && isStale(c, created2) ? parseControl(null) : c;
 }
 function controlText(text, created2, change) {
-  const next = change(controlOf(text, created2));
-  return JSON.stringify(Number.isFinite(created2) ? { ...next, terminalCreated: created2 } : next, null, 2) + "\n";
+  if (!Number.isFinite(created2)) return null;
+  return JSON.stringify({ ...change(controlOf(text, created2)), terminalCreated: created2 }, null, 2) + "\n";
 }
+var NO_TERMINAL = "Can't identify this terminal (hc get failed)";
 var release = (c) => ({ ...handBack(c), window: null, sizes: null });
 var changes = {
   takeOver: (now) => (c) => c.takeover ? c : takeOver(c, "person", now),
@@ -596,6 +599,9 @@ var finishOf = (control) => ({
   window: !!control?.window,
   stopPick: control?.takeover?.reason === "pick" || control?.takeover?.reason === "notes"
 });
+function windowLeft(session, control, now, handoffMinutes) {
+  return control?.takeover?.reason === "window" && panelMode(session, control, now, handoffMinutes).kind !== "handoff";
+}
 function handoffNotices(entries, notified, now, handoffMinutes) {
   const seen = new Set(Array.isArray(notified) ? notified : []);
   const out = [];
@@ -852,7 +858,7 @@ function controlBar(t, state, on) {
 }
 function handoffBar(t, state, on) {
   const busy = !!state.busy;
-  return v_flex().flex_none().gap(6).px(12).py(8).bg(t.raised ?? t.background).border_b(1).border_color(t.working).child(div().text_size(11).font_semibold().text_color(t.working).child("The agent needs you")).child(div().text_size(12.5).text_color(t.foreground).child(state.message || "The agent asked for your help in this page.")).when(!!state.windowOpen, (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Finish in the window, then press Done"))).child(h_flex().flex_wrap().gap(4).items_center().child(button(t, "browser-done", "Done", on.done, { busy, primary: true, tip: "Tell the agent you're done" })).child(button(t, "browser-cancel", "Cancel", on.cancel, { busy, tip: "Tell the agent you won't do it" })).when(!state.windowOpen, (el) => el.child(button(
+  return v_flex().flex_none().gap(6).px(12).py(8).bg(t.raised ?? t.background).border_b(1).border_color(t.working).child(div().text_size(11).font_semibold().text_color(t.working).child("The agent needs you")).child(div().text_size(12.5).text_color(t.foreground).child(state.message || "The agent asked for your help in this page.")).when(!!state.windowOpen, (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Finish in the window \u2014 keep it open \u2014 then press Done"))).child(h_flex().flex_wrap().gap(4).items_center().child(button(t, "browser-done", "Done", on.done, { busy, primary: true, tip: "Tell the agent you're done" })).child(button(t, "browser-cancel", "Cancel", on.cancel, { busy, tip: "Tell the agent you won't do it" })).when(!state.windowOpen, (el) => el.child(button(
     t,
     "browser-window",
     "Open in a real window",
@@ -871,6 +877,7 @@ async function readControl(t, created2) {
   return controlOf(await readTextFile(`${home()}/${controlFileRel(t)}`).catch(() => null), created2);
 }
 async function writeControl(t, created2, change) {
+  if (!Number.isFinite(created2)) throw new Error(NO_TERMINAL);
   const path = `${home()}/${controlFileRel(t)}`;
   await fs2.mkdir(`${home()}/${sessionsRel()}`, { recursive: true }).catch(() => {
   });
@@ -892,6 +899,11 @@ async function run(cmd, args, timeout = 6e4) {
   return r;
 }
 var browse = (args) => run("node", [`${home()}/mods/dock-browser/browse.mjs`, ...args], 12e4);
+async function closeWindow(bin, t, session) {
+  await run(bin, ["--session", realSessionName(session), "close"]).catch(() => null);
+  for (const rel of windowStateRels(t)) await fs2.unlink(`${home()}/${rel}`).catch(() => {
+  });
+}
 async function allRecords() {
   const dir = `${home()}/${sessionsRel()}`;
   let names = [];
@@ -1281,7 +1293,8 @@ var personControls = {
   mode() {
     return this.record ? panelMode(this.record, this.control, Date.now(), this.browser.handoffMinutes) : { kind: "view" };
   },
-  // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons.
+  // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons. Nothing runs
+  // until the terminal is known (hc get): its control record can't be written without that.
   act(label2, cx, work) {
     if (this.busy || !this.terminal || !this.record) return;
     const t = this.terminal, rec = this.record;
@@ -1290,6 +1303,9 @@ var personControls = {
     cx.notify();
     cx.spawn(async (cx2) => {
       try {
+        if (this.created == null && this.terminal === t) this.created = await this.createdOf(t);
+        if (this.terminal !== t) throw new Error("The terminal changed");
+        if (this.created == null) throw new Error(NO_TERMINAL);
         await work(t, rec, cx2);
       } catch (e) {
         if (this.terminal === t) this.error = String(e?.message ?? e);
@@ -1298,8 +1314,8 @@ var personControls = {
       cx2.notify();
     });
   },
-  async setControl(t, change) {
-    const c = await writeControl(t, this.created, change);
+  async setControl(t, change, created2 = this.created) {
+    const c = await writeControl(t, created2, change);
     if (!c) throw new Error("The control record couldn't be written");
     if (this.terminal === t) {
       this.control = c;
@@ -1322,13 +1338,13 @@ var personControls = {
       await this.setControl(t, changes.handBack());
     });
   },
-  // keep: the real window's state is kept (window-done); otherwise the window is just closed.
-  async finish(t, rec, keep) {
-    const f = finishOf(await readControl(t, this.created));
-    if (f.window) {
-      if (keep) await browse(["window-done", "--terminal", t]);
-      else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
-    }
+  // keep: the real window's state is kept (window-done, which fails, and so stops Done, when nothing was saved);
+  // otherwise the window is just closed and its state files deleted (also when it was asked for but never opened).
+  async finish(t, rec, keep, created2 = this.created) {
+    const c = await readControl(t, created2);
+    const f = finishOf(c);
+    if (f.window && keep) await browse(["window-done", "--terminal", t]);
+    else if (f.window || c.takeover?.reason === "window") await closeWindow(this.bin(), t, rec.session);
     for (const args of f.restore) await this.ab(rec, args).catch(() => null);
     if (f.stopPick) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
   },
@@ -1339,6 +1355,20 @@ var personControls = {
       await this.finish(t, rec, value === "done");
       await this.setControl(t, changes.answer(h.id, value));
     });
+  },
+  // A real window whose handoff ran out (windowLeft): closed and the page handed back, for every terminal (one not
+  // shown in the panel too), so the agent isn't left waiting on it. Run from the panel's timer.
+  async releaseLeftWindows() {
+    if (this.busy) return;
+    for (const { session, control } of await allRecords()) {
+      if (!windowLeft(session, control, Date.now(), this.browser.handoffMinutes)) continue;
+      const t = session.terminal;
+      const created2 = await this.createdOf(t);
+      if (created2 == null || isStale(session, created2)) continue;
+      if (!windowLeft(session, await readControl(t, created2), Date.now(), this.browser.handoffMinutes)) continue;
+      await this.finish(t, session, false, created2);
+      await this.setControl(t, changes.handBack(), created2);
+    }
   },
   openWindow(cx) {
     if (!this.mode().handoff) return;
@@ -1733,9 +1763,13 @@ var Browser = class extends View {
         cx2.notify();
         return;
       }
-      if (this.shown()) cx2.spawn(async () => {
-        await this.sweep();
-        await this.sweepPictures();
+      cx2.spawn(async () => {
+        await announceHandoffs(this.browser.handoffMinutes).catch((e) => console.log(`${MOD}: handoffs not read: ${e?.message ?? e}`));
+        await this.releaseLeftWindows().catch((e) => console.log(`${MOD}: real windows not released: ${e?.message ?? e}`));
+        if (this.shown()) {
+          await this.sweep();
+          await this.sweepPictures();
+        }
       });
       cx2.notify();
     });
@@ -1820,14 +1854,17 @@ var Browser = class extends View {
       console.log(`${MOD}: config not read: ${e?.message ?? e}`);
     }
   }
+  // The terminal's created_ms (hc get, tried twice), or null.
   async createdOf(t) {
-    try {
-      const r = await hc2(["get", t]);
-      const c = r.code === 0 ? JSON.parse(r.stdout).created_ms : null;
-      return Number.isFinite(c) ? c : null;
-    } catch {
-      return null;
+    for (let i = 0; i < 2; i++) {
+      try {
+        const r = await hc2(["get", t]);
+        const c = r.code === 0 ? JSON.parse(r.stdout).created_ms : null;
+        if (Number.isFinite(c)) return c;
+      } catch {
+      }
     }
+    return null;
   }
   // This terminal's session record, or null (none, unreadable, or left by an older terminal with the same id).
   async sessionOf(t) {
@@ -1968,6 +2005,7 @@ var Browser = class extends View {
       });
       await clearFolder(framesRel(g.terminal));
       await clearFolder(bigFramesRel(g.terminal));
+      await closeWindow(this.bin(), g.terminal, g.session);
     }
   }
   // New handoffs, announced whether or not the panel shows (the notification is how the person finds out).

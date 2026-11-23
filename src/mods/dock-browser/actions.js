@@ -3,9 +3,9 @@
 import { appHome, exec, notify, readTextFile, setShared, shared, writeTextFile } from "herdr";
 import * as fs from "fs/promises";
 import { slashPath } from "../../shared/path.js";
-import { controlFileRel, sessionsRel } from "../../shared/browser/session.js";
+import { controlFileRel, realSessionName, sessionsRel, windowStateRels } from "../../shared/browser/session.js";
 import { parseControl, parseSession } from "../../shared/browser/registry.js";
-import { browserShowName, controlOf, controlText, handoffNotices, rememberNotified } from "../../shared/browser/panel.js";
+import { NO_TERMINAL, browserShowName, controlOf, controlText, handoffNotices, rememberNotified } from "../../shared/browser/panel.js";
 
 const NOTIFIED_KEY = "dock.browser.notified"; // handoff ids already announced, shared by every copy of the panel
 
@@ -17,8 +17,10 @@ export async function readControl(t, created) {
 }
 
 // Changes terminal t's control record (written whole and atomically, checked against what was read, so two panel
-// copies never lose each other's change). Returns the new control, or null when it couldn't be written.
+// copies never lose each other's change). Returns the new control, or null when it couldn't be written. Throws
+// NO_TERMINAL when the terminal's creation time isn't known (a record without it would read as another terminal's).
 export async function writeControl(t, created, change) {
+  if (!Number.isFinite(created)) throw new Error(NO_TERMINAL);
   const path = `${home()}/${controlFileRel(t)}`;
   await fs.mkdir(`${home()}/${sessionsRel()}`, { recursive: true }).catch(() => {});
   for (let i = 0; i < 3; i++) {
@@ -44,8 +46,14 @@ export async function run(cmd, args, timeout = 60_000) {
 // browse.mjs (the window commands), as the agent's own browse runs.
 export const browse = (args) => run("node", [`${home()}/mods/dock-browser/browse.mjs`, ...args], 120_000);
 
+// The person's real window for a session closed (failure ignored) and its state files (cookies) deleted.
+export async function closeWindow(bin, t, session) {
+  await run(bin, ["--session", realSessionName(session), "close"]).catch(() => null);
+  for (const rel of windowStateRels(t)) await fs.unlink(`${home()}/${rel}`).catch(() => {});
+}
+
 // Every terminal's session and control records.
-async function allRecords() {
+export async function allRecords() {
   const dir = `${home()}/${sessionsRel()}`;
   let names = [];
   try { names = await fs.readdir(dir); } catch { return []; }

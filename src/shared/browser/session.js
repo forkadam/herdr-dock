@@ -16,6 +16,10 @@ export const controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 export const framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
 // The Enlarge window's own frames: two copies of the panel never clear each other's.
 export const bigFramesRel = (t) => `${framesRel(t)}-big`;
+// The real window's state files (the agent's state it opens with, and what the person did there): cookies, so they go
+// whenever the window does.
+export const tmpRel = () => `${BROWSER_REL}/tmp`;
+export const windowStateRels = (t) => [`${tmpRel()}/${t}.json`, `${tmpRel()}/${t}.done.json`];
 export const picksRel = () => `${BROWSER_REL}/picks`;
 export const signedInRel = () => `${BROWSER_REL}/profiles/signed-in.json`;
 export const binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;

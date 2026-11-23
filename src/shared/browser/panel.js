@@ -30,11 +30,14 @@ export function controlOf(text, created) {
 }
 
 // The control record's next text: the current one (a stale one, left by an older terminal with the same id, starts
-// over), changed, and stamped with the terminal's creation time, without which browse reads it as stale.
+// over), changed, and stamped with the terminal's creation time, without which browse reads it as stale. null when
+// that time isn't known: such a record could be read as another terminal's, so it is never written (NO_TERMINAL).
 export function controlText(text, created, change) {
-  const next = change(controlOf(text, created));
-  return JSON.stringify(Number.isFinite(created) ? { ...next, terminalCreated: created } : next, null, 2) + "\n";
+  if (!Number.isFinite(created)) return null;
+  return JSON.stringify({ ...change(controlOf(text, created)), terminalCreated: created }, null, 2) + "\n";
 }
+
+export const NO_TERMINAL = "Can't identify this terminal (hc get failed)";
 
 // Handing back ends what the person had: the take-over, the real window and the size tabs (undone by then).
 const release = (c) => ({ ...handBack(c), window: null, sizes: null });
@@ -62,6 +65,13 @@ export const finishOf = (control) => ({
   restore: restoreCommands(control?.sizes), window: !!control?.window,
   stopPick: control?.takeover?.reason === "pick" || control?.takeover?.reason === "notes",
 });
+
+// A real window left behind: the take-over "Open in a real window" made (reason "window") outlived its handoff (timed
+// out, or cleared by the agent's wait), so nothing would ever finish it and the agent would wait on it. The panel
+// closes the window and hands the page back.
+export function windowLeft(session, control, now, handoffMinutes) {
+  return control?.takeover?.reason === "window" && panelMode(session, control, now, handoffMinutes).kind !== "handoff";
+}
 
 // Handoffs to announce: open ones (not answered, not timed out) whose id isn't in `notified`.
 // entries: [{ session, control }] for every terminal with a session record.

@@ -11,7 +11,11 @@ import { createInterface } from "node:readline";
 import { browserSettings } from "./browser-settings.js";
 import { UsageError, parseBrowse, refused } from "../shared/browser/args.js";
 import { isProduction, hostOf } from "../shared/browser/hosts.js";
-import { BROWSER_REL, bigFramesRel, binRel, controlFileRel, framesRel, normalizeUrl, realSessionName, sessionFileRel, sessionName, sessionsRel, signedInRel } from "../shared/browser/session.js";
+import {
+  bigFramesRel, binRel, controlFileRel, framesRel, normalizeUrl, realSessionName, sessionFileRel, sessionName, sessionsRel, signedInRel,
+  tmpRel, windowStateRels,
+} from "../shared/browser/session.js";
+import { installOf } from "../shared/install.js";
 import {
   clearHandoff, goneSessions, isStale, liveTerminals, newId, parseControl, parseSession, personHas, startHandoff, waitOutcome,
 } from "../shared/browser/registry.js";
@@ -27,6 +31,8 @@ const USAGE = `browse: drive a real browser from this terminal.
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+// Nothing was saved: a closed window's session comes back empty, so an empty state never replaces a good one.
+const NOT_SAVED = "the window was closed before its state was saved (or it holds no cookies); nothing was changed";
 const tailOf = (scope) => String(scope ?? "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
 
 // Runs a program; .cmd/.bat shims (Windows) need a shell.
@@ -70,7 +76,7 @@ export async function main(argv, env = process.env, io = defaultIo()) {
   const needsTerminal = !["login", "window-open", "window-done"].includes(args.cmd);
   const terminal = args.terminal || env.HC_TERMINAL_ID || "";
   if (needsTerminal && !terminal) { io.err("browse runs inside a Herdr terminal (HC_TERMINAL_ID is not set)"); return 2; }
-  if (!existsSync(bin)) { io.err("agent-browser is not installed: set browser.enabled and run npm run deploy"); return 2; }
+  if (!existsSync(bin)) { io.err(`agent-browser is not installed: set browser.enabled and ${setupHint(home)}`); return 2; }
 
   // agent-browser for one session.
   const ab = (session, rest, opts) => run(bin, ["--session", session, ...(cfg.chrome ? ["--executable-path", cfg.chrome] : []), ...rest], { env, ...opts });
@@ -86,6 +92,7 @@ export async function main(argv, env = process.env, io = defaultIo()) {
   const wipe = () => {
     rmSync(sessionFile, { force: true }); rmSync(controlFile, { force: true });
     rmSync(frames, { recursive: true, force: true }); rmSync(abs(bigFramesRel(terminal)), { recursive: true, force: true });
+    for (const rel of windowStateRels(terminal)) rmSync(abs(rel), { force: true });
   };
   const save = (rec) => writeAtomic(sessionFile, JSON.stringify(rec, null, 2) + "\n");
 
@@ -112,6 +119,7 @@ export async function main(argv, env = process.env, io = defaultIo()) {
 
   switch (args.cmd) {
     case "open": {
+      if (session && personHas(session, readControl(), Date.now(), cfg.handoffMinutes)) { io.err("the person has control; run browse wait"); return 3; }
       const url = normalizeUrl(args.url);
       if (session && session.profile !== args.profile) {
         ab(session.session, ["close"]);
@@ -125,7 +133,8 @@ export async function main(argv, env = process.env, io = defaultIo()) {
       try { port = Number(JSON.parse(query(name, ["stream", "status", "--json"])).data?.port) || 0; } catch {}
       save({
         v: 1, session: name, terminal, ...(created != null ? { terminalCreated: created } : {}), profile: args.profile, port,
-        url: query(name, ["get", "url"]) || url, title: query(name, ["get", "title"]), opened: Date.now(), handoff: null,
+        url: query(name, ["get", "url"]) || url, title: query(name, ["get", "title"]), opened: Date.now(),
+        handoff: readSession()?.handoff ?? null, // an open handoff stays the person's to answer
       });
       if (env.DOCK_SKIP_SWEEP !== "1") sweep(abs, bin, cfg, env);
       return 0;
@@ -162,7 +171,9 @@ export async function main(argv, env = process.env, io = defaultIo()) {
       return 0;
     }
     case "close": {
-      ab(session?.session ?? name, ["close"]);
+      const s = session?.session ?? name;
+      ab(s, ["close"]);
+      ab(realSessionName(s), ["close"]); // the person's real window, if one is open
       wipe();
       return 0;
     }
@@ -198,15 +209,39 @@ function saveState(ab, session, file) {
   return r;
 }
 
+// The state of `session` saved over `file` only when it is the window's: written to a temp file first, so a failed
+// save leaves `file` as it was. A window closed by hand isn't saved either: agent-browser then launches a new browser
+// for the save (its --json lifecycle says launched, not reused), one without the window's login, and a state with
+// no cookies holds no login. True when `file` was replaced.
+function saveChecked(ab, session, file) {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.saving-${process.pid}`;
+  const r = ab(session, ["state", "save", tmp, "--json"]);
+  let relaunched = false, cookies = 0;
+  try { const l = JSON.parse(String(r.stdout ?? "")).data?.lifecycle; relaunched = l?.launched === true || l?.reused === false; } catch {}
+  try { const o = JSON.parse(readFileSync(tmp, "utf8")); cookies = Array.isArray(o?.cookies) ? o.cookies.length : 0; } catch {}
+  if (r.status !== 0 || relaunched || cookies === 0) { rmSync(tmp, { force: true }); return false; }
+  try { chmodSync(tmp, 0o600); } catch {}
+  renameSync(tmp, file);
+  return true;
+}
+
 async function login(args, { io, ab, scope, abs }) {
   const session = `dock-login-${tailOf(scope)}`;
   const file = abs(signedInRel());
-  ab(session, ["--headed", ...(existsSync(file) ? ["--state", file] : []), "open", normalizeUrl(args.url)], { stdio: ["ignore", "inherit", "inherit"] });
-  io.out("Sign in in the window, then press Enter here.");
+  const o = ab(session, ["--headed", ...(existsSync(file) ? ["--state", file] : []), "open", normalizeUrl(args.url)], { stdio: ["ignore", "inherit", "inherit"] });
+  if (o.status !== 0) {
+    ab(session, ["close"]);
+    io.err("the login window didn't open; nothing was changed");
+    return o.status || 2;
+  }
+  io.out("Sign in in the window — keep it open — then press Enter here.");
   await io.readLine();
-  const r = saveState(ab, session, file);
+  const saved = saveChecked(ab, session, file);
   ab(session, ["close"]);
-  return r.status ?? 0;
+  if (!saved) { io.err(NOT_SAVED); return 1; }
+  io.out("Saved: the signed-in profile has this login.");
+  return 0;
 }
 
 function windowCmd(args, { io, ab, abs, terminal }) {
@@ -214,21 +249,32 @@ function windowCmd(args, { io, ab, abs, terminal }) {
   const text = readText(abs(sessionFileRel(t)));
   const rec = text == null ? null : parseSession(text);
   if (!rec) { io.err(`no browser session for ${t}`); return 2; }
-  const tmpDir = abs(`${BROWSER_REL}/tmp`);
-  const out = join(tmpDir, `${t}.json`), done = join(tmpDir, `${t}.done.json`);
+  const [out, done] = windowStateRels(t).map(abs);
   const real = realSessionName(rec.session);
-  mkdirSync(tmpDir, { recursive: true });
+  mkdirSync(abs(tmpRel()), { recursive: true });
   if (args.cmd === "window-open") {
     saveState(ab, rec.session, out);
     return ab(real, ["--headed", "--state", out, "open", rec.url], { stdio: ["ignore", "inherit", "inherit"] }).status ?? 0;
   }
-  saveState(ab, real, done);
-  ab(real, ["close"]);
-  ab(rec.session, ["state", "load", done]);
-  ab(rec.session, ["reload"]);
+  // window-done: what the person did in the window goes to the agent's browser only when it was saved; otherwise
+  // the window stays as it is (Done again, or Cancel closes it).
   rmSync(out, { force: true });
+  if (!saveChecked(ab, real, done)) { io.err(NOT_SAVED); return 1; }
+  ab(real, ["close"]);
+  const l = ab(rec.session, ["state", "load", done]);
+  ab(rec.session, ["reload"]);
   rmSync(done, { force: true });
+  if (l.status !== 0) { io.err("the window's state couldn't be loaded into the agent's browser"); return l.status || 1; }
   return 0;
+}
+
+// How to set the browser up: in an app install the bundled setup script, in a clone deploy.
+function setupHint(home) {
+  let mode = null;
+  try { mode = installOf(JSON.parse(readText(join(home, "mods/dock-core/source.json"))), home)?.mode ?? null; } catch {}
+  return mode === "app"
+    ? `run node "${join(home, "mods/dock-browser/herdr-browser-setup.mjs")}"`
+    : "run npm run deploy";
 }
 
 // Sessions whose terminal is gone: closed and forgotten. Skipped when herdr-app can't say who is alive.
@@ -246,6 +292,8 @@ function sweep(abs, bin, cfg, env) {
       rmSync(abs(controlFileRel(g.terminal)), { force: true });
       rmSync(abs(framesRel(g.terminal)), { recursive: true, force: true });
       rmSync(abs(bigFramesRel(g.terminal)), { recursive: true, force: true });
+      run(bin, ["--session", realSessionName(g.session), ...(cfg.chrome ? ["--executable-path", cfg.chrome] : []), "close"], { env });
+      for (const rel of windowStateRels(g.terminal)) rmSync(abs(rel), { force: true });
     }
   } catch {}
 }

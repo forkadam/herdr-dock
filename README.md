@@ -290,9 +290,10 @@ bugs, checking layout at phone, tablet and desktop sizes, and acting on your des
 `--profile` are refused there.
 
 - **Two profiles.** `clean` (the default) is a fresh browser that keeps nothing. `signed-in` starts from your saved
-  logins, shared by every session. You sign in once with `browse login <url>` (a real window; you press Done), and
-  the cookies are saved to `<app home>/herdr-dock/browser/profiles/signed-in.json`. Security checks are meant to run
-  on `clean` only.
+  logins, shared by every session. You sign in once with `browse login <url>` (a real window: sign in, keep it open,
+  then press Enter in the terminal), and the cookies are saved to
+  `<app home>/herdr-dock/browser/profiles/signed-in.json`. A window closed before Enter saves nothing and leaves your
+  saved logins as they were. Security checks are meant to run on `clean` only.
 - **Production.** List hosts in `browser.production` (`"example.com"`, or `"*.example.com"` for anything below it).
   When the agent's page is one of them, every `action` prints a `PRODUCTION (<host>)` banner: no probing,
   nothing that writes unless you asked for exactly that. This is guidance and a warning to the agent in its output
@@ -305,8 +306,10 @@ bugs, checking layout at phone, tablet and desktop sizes, and acting on your des
   3 ("the person has control") until you **Hand back**, which also restores the agent's tab and size.
 - **Handoff.** For a sign-in, a captcha or 2FA the agent runs `browse handoff "<message>"` then `browse wait`; the
   panel shows the message with **Done**, **Cancel** and **Open in a real window** (a visible browser window on the
-  same page, for captchas and passkeys). `wait` returns after at most 9 minutes per call and the handoff times out
-  after `handoffMinutes`. The agent never types credentials or solves captchas itself.
+  same page, for captchas and passkeys: finish there, keep it open, then press Done; a window closed first saves
+  nothing, and Done says so). `wait` returns after at most 9 minutes per call and the handoff times out after
+  `handoffMinutes` (a real window still open then is closed). The agent never types credentials or solves captchas
+  itself.
 - **Phone, Tablet, Desktop** open the page in a new tab at that size and take it over; Hand back restores the
   agent's tab and size. **Enlarge** shows the page in a big window; **Close** closes it. Bind `dock-browser.enlarge`,
   `dock-browser.pick` or `dock-browser.notes` in `keys.json` for keys.

@@ -50,7 +50,7 @@ Never read credential fields: no `eval` on password inputs, no `get value` on th
 
 ## Layout at several sizes
 
-Check sizes in a tab of its own so your main tab keeps its size: `{{BROWSE}} action -- tab new <url>`, then `{{BROWSE}} action -- set device "iPhone 16"` (phone), `set device "iPad"` (tablet), `set viewport 1440 900` (desktop), screenshot each, then `{{BROWSE}} action -- tab close`.
+Check sizes in a tab of its own so your main tab keeps its size: `{{BROWSE}} action -- tab new <url>`, then `{{BROWSE}} action -- set device "iPhone 16"` (phone), `set device "iPad"` (tablet), `set viewport 1440 900` (desktop), screenshot each, then `{{BROWSE}} action -- tab close`. The viewport belongs to the whole browser, not the tab: closing the size tab leaves your main tab at the last size, so set it back (`{{BROWSE}} action -- set viewport 1280 800`, or whatever it had) before you go on.
 
 ## Design Feedback
 

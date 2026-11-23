@@ -2,16 +2,17 @@
 // Open in a real window, tabs, sizes and Enlarge. Mixed into the panel's class (main.js): `this` is the panel. Each button's work runs through act(), one
 // at a time; the control record is written through writeControl (actions.js), the only writer.
 import { openOverlay } from "herdr";
-import { realSessionName } from "../../shared/browser/session.js";
 import { activeTab, pageHeading } from "../../shared/browser/frame.js";
-import { bigWindow, changes, finishOf, inControl, newTabId, panelMode, pickKind, sizeCommands } from "../../shared/browser/panel.js";
+import { NO_TERMINAL, bigWindow, changes, finishOf, inControl, newTabId, panelMode, pickKind, sizeCommands, windowLeft } from "../../shared/browser/panel.js";
+import { isStale } from "../../shared/browser/registry.js";
 import { STOP_SCRIPT } from "../../shared/browser/pick-script.js";
-import { browse, readControl, run, writeControl } from "./actions.js";
+import { allRecords, browse, closeWindow, readControl, run, writeControl } from "./actions.js";
 
 export const personControls = {
   mode() { return this.record ? panelMode(this.record, this.control, Date.now(), this.browser.handoffMinutes) : { kind: "view" }; },
 
-  // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons.
+  // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons. Nothing runs
+  // until the terminal is known (hc get): its control record can't be written without that.
   act(label, cx, work) {
     if (this.busy || !this.terminal || !this.record) return;
     const t = this.terminal, rec = this.record;
@@ -19,14 +20,19 @@ export const personControls = {
     this.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      try { await work(t, rec, cx); } catch (e) { if (this.terminal === t) this.error = String(e?.message ?? e); }
+      try {
+        if (this.created == null && this.terminal === t) this.created = await this.createdOf(t);
+        if (this.terminal !== t) throw new Error("The terminal changed");
+        if (this.created == null) throw new Error(NO_TERMINAL);
+        await work(t, rec, cx);
+      } catch (e) { if (this.terminal === t) this.error = String(e?.message ?? e); }
       this.busy = null;
       cx.notify();
     });
   },
 
-  async setControl(t, change) {
-    const c = await writeControl(t, this.created, change);
+  async setControl(t, change, created = this.created) {
+    const c = await writeControl(t, created, change);
     if (!c) throw new Error("The control record couldn't be written");
     if (this.terminal === t) { this.control = c; this.controlChanged(); }
   },
@@ -48,13 +54,13 @@ export const personControls = {
     });
   },
 
-  // keep: the real window's state is kept (window-done); otherwise the window is just closed.
-  async finish(t, rec, keep) {
-    const f = finishOf(await readControl(t, this.created));
-    if (f.window) {
-      if (keep) await browse(["window-done", "--terminal", t]);
-      else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
-    }
+  // keep: the real window's state is kept (window-done, which fails, and so stops Done, when nothing was saved);
+  // otherwise the window is just closed and its state files deleted (also when it was asked for but never opened).
+  async finish(t, rec, keep, created = this.created) {
+    const c = await readControl(t, created);
+    const f = finishOf(c);
+    if (f.window && keep) await browse(["window-done", "--terminal", t]);
+    else if (f.window || c.takeover?.reason === "window") await closeWindow(this.bin(), t, rec.session);
     for (const args of f.restore) await this.ab(rec, args).catch(() => null);
     // Pick or Notes' script out of the page, once the agent's tab is the active one again (size tabs just closed).
     if (f.stopPick) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
@@ -67,6 +73,21 @@ export const personControls = {
       await this.finish(t, rec, value === "done");
       await this.setControl(t, changes.answer(h.id, value));
     });
+  },
+
+  // A real window whose handoff ran out (windowLeft): closed and the page handed back, for every terminal (one not
+  // shown in the panel too), so the agent isn't left waiting on it. Run from the panel's timer.
+  async releaseLeftWindows() {
+    if (this.busy) return;
+    for (const { session, control } of await allRecords()) {
+      if (!windowLeft(session, control, Date.now(), this.browser.handoffMinutes)) continue;
+      const t = session.terminal;
+      const created = await this.createdOf(t);
+      if (created == null || isStale(session, created)) continue;
+      if (!windowLeft(session, await readControl(t, created), Date.now(), this.browser.handoffMinutes)) continue;
+      await this.finish(t, session, false, created);
+      await this.setControl(t, changes.handBack(), created);
+    }
   },
 
   openWindow(cx) {

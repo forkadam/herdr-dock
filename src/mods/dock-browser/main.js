@@ -4,8 +4,9 @@
 // under the new one, so a frame still loading never shows as nothing). Only the wheel reaches the page until the
 // person has it (Take over, or a handoff the agent asked for): then clicks and keys go to it too, over the stream
 // and nowhere else. Pick and Notes (pick.js) point at elements and send them to the agent as Design Feedback. It
-// announces new handoffs, and every 30 s while shown closes the browsers of terminals that are gone. Enlarge opens
-// a copy of it as a big window (props { big, terminal }) on the same terminal.
+// announces new handoffs, every 30 s closes real windows whose handoff ran out, and every 30 s while shown closes
+// the browsers of terminals that are gone. Enlarge opens a copy of it as a big window (props { big, terminal }) on
+// the same terminal.
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, appHome, checking, closeOverlay, exec, focused, hc, nextCommand, props, readTextFile, shared, theme, watchFolder, window } from "herdr";
@@ -23,7 +24,7 @@ import { afterLoss, toPage, drawnHeight, isPaste, keyEvents, mouseEvents, pasteE
 import { fitWidth, inControl, pickKind } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
-import { announceHandoffs } from "./actions.js";
+import { announceHandoffs, closeWindow } from "./actions.js";
 import { personControls } from "./person.js";
 import { pickControls } from "./pick.js";
 import { pickBar } from "./pick-view.js";
@@ -64,7 +65,12 @@ export default class Browser extends View {
     if (checking()) return;
     cx.timer.every(SWEEP_MS, (cx) => {
       if (this.big) { cx.notify(); return; } // a handoff timing out redraws
-      if (this.shown()) cx.spawn(async () => { await this.sweep(); await this.sweepPictures(); });
+      // Also announces here: a handoff written between a read and the folder watch arming isn't missed.
+      cx.spawn(async () => {
+        await announceHandoffs(this.browser.handoffMinutes).catch((e) => console.log(`${MOD}: handoffs not read: ${e?.message ?? e}`));
+        await this.releaseLeftWindows().catch((e) => console.log(`${MOD}: real windows not released: ${e?.message ?? e}`));
+        if (this.shown()) { await this.sweep(); await this.sweepPictures(); }
+      });
       cx.notify();
     });
     if (!this.big) this.watchHandoffs(cx);
@@ -140,12 +146,16 @@ export default class Browser extends View {
     }
   }
 
+  // The terminal's created_ms (hc get, tried twice), or null.
   async createdOf(t) {
-    try {
-      const r = await hc(["get", t]);
-      const c = r.code === 0 ? JSON.parse(r.stdout).created_ms : null;
-      return Number.isFinite(c) ? c : null;
-    } catch { return null; }
+    for (let i = 0; i < 2; i++) {
+      try {
+        const r = await hc(["get", t]);
+        const c = r.code === 0 ? JSON.parse(r.stdout).created_ms : null;
+        if (Number.isFinite(c)) return c;
+      } catch {}
+    }
+    return null;
   }
 
   // This terminal's session record, or null (none, unreadable, or left by an older terminal with the same id).
@@ -264,6 +274,7 @@ export default class Browser extends View {
       await fs.unlink(`${home()}/${controlFileRel(g.terminal)}`).catch(() => {});
       await clearFolder(framesRel(g.terminal));
       await clearFolder(bigFramesRel(g.terminal));
+      await closeWindow(this.bin(), g.terminal, g.session);
     }
   }
 

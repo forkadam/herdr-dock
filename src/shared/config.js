@@ -201,7 +201,7 @@ export function migrationPlan({ configText, host, localText, headText }) {
     head = undefined;
   }
   return {
-    localText: JSON.stringify({ v: 1, regions: section.regions ?? {} }, null, 2) + "\n",
+    localText: JSON.stringify({ v: 1, regions: section.regions ?? {}, ...("browser" in section ? { browser: section.browser } : {}) }, null, 2) + "\n",
     configText: isObj(head) && jsonEqual(rest, withoutEmptyMachines(head)) ? headText : JSON.stringify(rest, null, 2) + "\n",
   };
 }
