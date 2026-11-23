@@ -3,7 +3,7 @@
 // (src/shared/jira/store.js); requests go through Herdr's fetch or curl (src/shared/jira/client.js). Everything that
 // decides something is pure and tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, InputState, Input, Popover } from "gpui-base";
+import { h_flex, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
@@ -28,6 +28,9 @@ const LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 const FILTER_KEY = "dock.jira.filter";
 const TICK_MS = 30000;
 const DETAIL_W = 420;
+// Scroll handles made when the page starts: ScrollHandle.new() can't run while the page draws, and a tab's list can
+// first be drawn before its settings are read. Enough for a few tabs' lists, boards and board columns.
+const SCROLL_POOL = 64;
 const WARN = "#d29922";
 // Problems that mean "can't talk to Jira at all" (the whole page says so), versus ones about one request.
 const PAGE_PROBLEMS = ["auth", "forbidden", "offline", "tls", "timeout", "server", "nocurl", "unknown"];
@@ -74,6 +77,11 @@ export default class Jira extends View {
     this.dropNote = null; // { status, text }: why a drop on a dimmed column did nothing, in that column
     this.pendingStep = null; // { key, tr, field, url }: a move waiting for a value (Resolution), in the detail pane
 
+    // Each tab's scroll positions (its list, its board, each board column), so switching back finds them where they
+    // were: handles from the pool, given out by key as scrollers are first drawn ("<tab>/list", "<tab>/board",
+    // "<tab>/col/<status>"). Past the pool's size a scroller keeps its own position, as it did before tabs.
+    this.scrollPool = Array.from({ length: SCROLL_POOL }, () => ScrollHandle.new());
+    this.scrolls = new Map();
     this.searchInput = InputState.new({ placeholder: "Search this filter…" });
     this.searchInput.on("submit", (_e, cx) => { const s = this.shown(); s.query = this.searchInput.value().trim(); s.moved = new Map(); this.refresh(cx); });
     this.urlInput = InputState.new({ placeholder: "https://jira.example.com" });
@@ -157,6 +165,16 @@ export default class Jira extends View {
   set selected(key) { this.shown().selected = key; }
 
   layout() { const id = this.tab().id; return tabLayout(shared(LAYOUT_KEY(id)), shared(VIEW_KEY)); }
+
+  // A tab's scroller: its kept position (null once the pool is used up). No host call, so it is safe while drawing.
+  scroll(key) {
+    if (!this.scrolls.has(key)) this.scrolls.set(key, this.scrollPool.pop() ?? null);
+    return this.scrolls.get(key);
+  }
+  // A tab whose list starts over (its search changed, another site): its scrollers go back to the top.
+  scrollTop(id) {
+    for (const [key, h] of this.scrolls) if (h && key.startsWith(`${id}/`)) h.scroll_to_item(0);
+  }
 
   // What a tab searches (before its search text): All's is the filter picked in its menu.
   source(tab) { return tab.filters ? this.filter() : tab; }
@@ -409,7 +427,7 @@ export default class Jira extends View {
     const before = this.selected;
     const query = this.shown().query;
     await this.load();
-    for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) { this.states.delete(x.id); this.counts.delete(x.id); }
+    for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) { this.states.delete(x.id); this.counts.delete(x.id); this.scrollTop(x.id); }
     this.countsAt = undefined;
     if (this.selected !== before) this.followSelection(cx);
     if (this.shown().query !== query) this.searchInput.set_value(this.shown().query);
@@ -673,6 +691,7 @@ export default class Jira extends View {
   clearView() {
     const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
     Object.assign(this, view, { states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map() });
+    for (const h of this.scrolls.values()) h?.scroll_to_item(0);
     this.searchInput.set_value("");
   }
 
@@ -857,7 +876,9 @@ export default class Jira extends View {
         .child(div().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : []),
       ...sec.parts.flatMap(group),
     ];
+    const scroll = this.scroll(`${tab.id}/list`);
     return v_flex().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16)
+      .when(Boolean(scroll), (el) => el.track_scroll(scroll))
       .children(sections.flatMap(section))
       .when(Boolean(more), (el) => el.child(more));
   }
@@ -884,8 +905,12 @@ export default class Jira extends View {
     const base = boardColumns(this.shownRows(), this.statusOrder, this.boardStatuses());
     const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
+    const tabId = this.tab().id;
+    const board = this.scroll(`${tabId}/board`);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
+      // A column's cards keep their place per tab and status; a drag's temporary column has nothing to keep.
+      const cards = c.temporary ? null : this.scroll(`${tabId}/col/${c.status}`);
       const target = d && d.targets.has(c.status);
       const over = target && d.over === c.status;
       // Columns share the board's width (no gap on the right), down to 240px each; past that the board scrolls.
@@ -901,6 +926,7 @@ export default class Jira extends View {
           .child(div().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status))
           .child(div().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length))))
         .child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6)
+          .when(Boolean(cards), (el) => el.track_scroll(cards))
           .when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t)))
           .when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t)))
           .children(c.rows.map((r) => this.card(t, r))));
@@ -908,7 +934,8 @@ export default class Jira extends View {
     return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0)
       .on_mouse_move((e, cx) => this.pointerMoved(e, cx))
       .on_mouse_up("left", (_e, cx) => this.released(cx))
-      .child(div().id(`jira-board-${this.tab().id}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column)))
+      .child(div().id(`jira-board-${tabId}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12)
+        .when(Boolean(board), (el) => el.track_scroll(board)).children(cols.map(column)))
       .when(Boolean(more), (el) => el.child(more))
       .when(Boolean(d), (el) => el.child(this.dragBar(t)))
       .when(Boolean(d?.at), (el) => el.child(div().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8)

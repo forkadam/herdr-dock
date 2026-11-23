@@ -1,6 +1,6 @@
 // src/mods/dock-jira/main.js
 import { View, div as div2, svg } from "gpui-kit";
-import { h_flex as h_flex2, v_flex, InputState, Input, Popover } from "gpui-base";
+import { h_flex as h_flex2, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared as setShared2, shared as shared2, theme, window, writeTextFile } from "herdr";
 
 // src/mods/_page.js
@@ -866,6 +866,7 @@ var LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 var FILTER_KEY = "dock.jira.filter";
 var TICK_MS = 3e4;
 var DETAIL_W = 420;
+var SCROLL_POOL = 64;
 var WARN = "#d29922";
 var PAGE_PROBLEMS = ["auth", "forbidden", "offline", "tls", "timeout", "server", "nocurl", "unknown"];
 var TYPE_COLOR = (t, type) => ({ Bug: t.blocked, Story: t.done, Epic: "#8b5cf6" })[type] ?? t.accent;
@@ -905,6 +906,8 @@ var Jira = class extends View {
     this.dropChoice = null;
     this.dropNote = null;
     this.pendingStep = null;
+    this.scrollPool = Array.from({ length: SCROLL_POOL }, () => ScrollHandle.new());
+    this.scrolls = /* @__PURE__ */ new Map();
     this.searchInput = InputState.new({ placeholder: "Search this filter\u2026" });
     this.searchInput.on("submit", (_e, cx2) => {
       const s = this.shown();
@@ -1025,6 +1028,15 @@ var Jira = class extends View {
   layout() {
     const id = this.tab().id;
     return tabLayout(shared2(LAYOUT_KEY(id)), shared2(VIEW_KEY));
+  }
+  // A tab's scroller: its kept position (null once the pool is used up). No host call, so it is safe while drawing.
+  scroll(key) {
+    if (!this.scrolls.has(key)) this.scrolls.set(key, this.scrollPool.pop() ?? null);
+    return this.scrolls.get(key);
+  }
+  // A tab whose list starts over (its search changed, another site): its scrollers go back to the top.
+  scrollTop(id) {
+    for (const [key, h] of this.scrolls) if (h && key.startsWith(`${id}/`)) h.scroll_to_item(0);
   }
   // What a tab searches (before its search text): All's is the filter picked in its menu.
   source(tab) {
@@ -1279,6 +1291,7 @@ var Jira = class extends View {
     for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) {
       this.states.delete(x.id);
       this.counts.delete(x.id);
+      this.scrollTop(x.id);
     }
     this.countsAt = void 0;
     if (this.selected !== before) this.followSelection(cx);
@@ -1579,6 +1592,7 @@ var Jira = class extends View {
   clearView() {
     const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
     Object.assign(this, view, { states: /* @__PURE__ */ new Map(), counts: /* @__PURE__ */ new Map(), countsAt: void 0, projectStatuses: /* @__PURE__ */ new Map() });
+    for (const h of this.scrolls.values()) h?.scroll_to_item(0);
     this.searchInput.set_value("");
   }
   useCurl(cx) {
@@ -1701,7 +1715,8 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
       ...sec.title ? [h_flex2().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div2().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div2().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],
       ...sec.parts.flatMap(group)
     ];
-    return v_flex().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
+    const scroll = this.scroll(`${tab.id}/list`);
+    return v_flex().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
   }
   card(t, r) {
     const on = this.selected === r.key;
@@ -1717,8 +1732,11 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
     const base = boardColumns(this.shownRows(), this.statusOrder, this.boardStatuses());
     const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
+    const tabId = this.tab().id;
+    const board = this.scroll(`${tabId}/board`);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
+      const cards = c.temporary ? null : this.scroll(`${tabId}/col/${c.status}`);
       const target = d && d.targets.has(c.status);
       const over = target && d.over === c.status;
       return v_flex().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
@@ -1728,9 +1746,9 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
           this.drag.over = target ? c.status : null;
           cx.notify();
         }
-      }).child(h_flex2().h(36).px(12).gap(6).flex_none().items_center().child(div2().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div2().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r))));
+      }).child(h_flex2().h(36).px(12).gap(6).flex_none().items_center().child(div2().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div2().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(Boolean(cards), (el) => el.track_scroll(cards)).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r))));
     };
-    return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div2().id(`jira-board-${this.tab().id}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div2().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div2().text_size(11).text_color(t.dim).child(d.row.key)).child(div2().truncate().child(d.row.summary))));
+    return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div2().id(`jira-board-${tabId}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).when(Boolean(board), (el) => el.track_scroll(board)).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div2().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div2().text_size(11).text_color(t.dim).child(d.row.key)).child(div2().truncate().child(d.row.summary))));
   }
   // In the column dropped on, when several moves lead there: which one (Resolve or Close into Done, say).
   choiceBox(t) {
