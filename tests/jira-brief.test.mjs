@@ -7,8 +7,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CHECK_TASK } from "../src/shared/jira/settings.js";
 import {
-  briefBadge, bugsSearch, changedItem, changedSearches, checkMessage, descriptionEdits, isUnread, newInSprintItem,
-  pruneBugs, sinceMinutes, withRead,
+  briefBadge, briefLists, bugsSearch, changeDiff, changedItem, changedSearches, checkMessage, checkWork, descriptionEdits, editsText,
+  isUnread, newInSprintItem, pruneBugs, readAll, readOnOpen, recentEdits, sinceMinutes, subtasksByParent, withRead,
 } from "../src/shared/jira/brief.js";
 
 const me = "me";
@@ -247,4 +247,97 @@ test("checkMessage: unknown placeholders stay, and a value's braces are not fill
   assert.equal(checkMessage("{key} {who} {when}", { key: "WEB-40", summary: "s", edits, mine: [] }), "WEB-40 {who} Nov 19 15:46");
   assert.equal(checkMessage("{summary} / {key}", { key: "WEB-40", summary: "see {key}", edits, mine: [] }), "see {key} / WEB-40");
   assert.equal(checkMessage("{key} {key}", { key: "WEB-40", summary: "s", edits, mine: [] }), "WEB-40 WEB-40");
+});
+
+// ---- the page's lists and what a click marks read ----
+
+const brief = {
+  changed: [{ key: "WEB-40", at: 5, edits: [] }, { key: "WEB-41", at: 9, edits: [] }],
+  sprint: [{ key: "WEB-43", why: "added", at: 3, sprintId: 42 }, { key: "WEB-46", why: "created", at: 7, sprintId: 42 }],
+  bugs: [{ key: "WEB-47", at: 1 }, { key: "WEB-48", at: 2 }, { key: "WEB-46", at: 4 }],
+};
+
+test("briefLists: Changed and New in sprint unread only, newest first; every bug, unread ones first", () => {
+  const marks = { "WEB-41": { changed: 9 }, "WEB-43": { sprint: 42 }, "WEB-47": { bug: true } };
+  const l = briefLists(brief, marks);
+  assert.deepEqual(l.changed.map((x) => x.key), ["WEB-40"]);
+  assert.deepEqual(l.sprint.map((x) => x.key), ["WEB-46"]);
+  assert.deepEqual(l.bugs.map((x) => [x.key, x.unread]), [["WEB-48", true], ["WEB-46", true], ["WEB-47", false]]);
+  assert.deepEqual(briefLists(brief, {}).changed.map((x) => x.key), ["WEB-41", "WEB-40"]);
+  assert.deepEqual(brief.changed.map((x) => x.key), ["WEB-40", "WEB-41"]); // the brief itself isn't sorted in place
+  assert.deepEqual(briefLists(undefined, {}), { changed: [], sprint: [], bugs: [] });
+});
+
+test("readOnOpen: the issue's New-in-sprint and bug items are read, its Changed item is not", () => {
+  const marks = readOnOpen({}, brief, "WEB-46");
+  assert.deepEqual(marks, { "WEB-46": { sprint: 42, bug: true } });
+  assert.deepEqual(readOnOpen({ "WEB-40": { sprint: 41 } }, brief, "WEB-40"), { "WEB-40": { sprint: 41 } }); // only a Changed item: nothing
+  const before = { "WEB-46": { sprint: 42, bug: true } };
+  assert.equal(readOnOpen(before, brief, "WEB-46"), before); // already read: the same object, nothing to save
+  assert.equal(readOnOpen(before, brief, "WEB-99"), before);
+});
+
+test("readAll: every unread item of the three lists; nothing unread is the same object", () => {
+  const marks = readAll({ "WEB-40": { sprint: 41 } }, brief);
+  assert.deepEqual(marks, {
+    "WEB-40": { sprint: 41, changed: 5 }, "WEB-41": { changed: 9 }, "WEB-43": { sprint: 42 },
+    "WEB-46": { sprint: 42, bug: true }, "WEB-47": { bug: true }, "WEB-48": { bug: true },
+  });
+  assert.equal(briefBadge(brief, marks), null);
+  assert.equal(readAll(marks, brief), marks);
+  // a mark that already covers a later edit is never moved back
+  assert.deepEqual(readAll({ "WEB-40": { changed: 99 } }, { changed: [{ key: "WEB-40", at: 5 }] }), { "WEB-40": { changed: 99 } });
+});
+
+// ---- reading a change ----
+
+test("changeDiff: Jira markup as text on both sides; a trailing line break is not a removed line", () => {
+  assert.deepEqual(changeDiff("h1. Goal\nShip *it*", "h1. Goal\nShip *it* now"),
+    [{ op: "same", text: "Goal" }, { op: "del", text: "Ship it" }, { op: "add", text: "Ship it now" }]);
+  assert.deepEqual(changeDiff("a\nb\n", "a\nb"), [{ op: "same", text: "a" }, { op: "same", text: "b" }]);
+  assert.deepEqual(changeDiff("", "new"), [{ op: "add", text: "new" }]);
+  assert.deepEqual(changeDiff(null, null), []);
+});
+
+test("editsText: how many edits, by whom, and when", () => {
+  const e = (author, s) => ({ at: Date.parse(s), author, from: "", to: "" });
+  assert.equal(editsText([e("Ana", "2026-11-19T15:46:00Z"), e("Ana", "2026-11-19T15:54:00Z")]), "2 edits by Ana, Nov 19 15:46–15:54");
+  assert.equal(editsText([e("Ana", "2026-11-12T10:00:00Z"), e("Bo", "2026-11-19T15:54:00Z"), e("Cy", "2026-11-19T16:00:00Z")]), "3 edits by Ana, Bo and Cy, Nov 12 – Nov 19");
+  assert.equal(editsText([e("", "2026-11-19T15:46:00Z")]), "1 edit, Nov 19 15:46");
+  assert.equal(editsText([e("Ana", "2026-11-19T15:46:00Z")], { when: false }), "1 edit by Ana");
+  assert.equal(editsText([]), "0 edits");
+});
+
+test("recentEdits: others' description edits since the window's start, newest first", () => {
+  const histories = issue.changelog.histories;
+  const r = recentEdits(histories, { me, sinceMs: Date.parse("2026-11-13T00:00:00Z") });
+  assert.deepEqual(r.map((x) => [x.to, x.author]), [["v5", "ana"], ["v4", "ana"]]);
+  assert.equal(recentEdits(histories, { me, sinceMs: 0 }).length, 3);
+  assert.deepEqual(recentEdits(undefined, { me, sinceMs: 0 }), []);
+});
+
+// ---- Check against my work ----
+
+test("subtasksByParent: your sub-tasks' keys by parent, each once, in key order; issues without a parent are left out", () => {
+  const issues = [
+    { key: "WEB-42", fields: { parent: { key: "WEB-40" } } }, { key: "WEB-41", fields: { parent: { key: "WEB-40" } } },
+    { key: "WEB-41", fields: { parent: { key: "WEB-40" } } }, { key: "API-3", fields: { parent: { key: "API-1" } } },
+    { key: "WEB-43", fields: {} }, { key: "WEB-44" }, null, { fields: { parent: { key: "WEB-40" } } },
+  ];
+  assert.deepEqual([...subtasksByParent(issues)], [["WEB-40", ["WEB-41", "WEB-42"]], ["API-1", ["API-3"]]]);
+  const many = ["WEB-10", "WEB-9", "WEB-100"].map((key) => ({ key, fields: { parent: { key: "WEB-1" } } }));
+  assert.deepEqual(subtasksByParent(many).get("WEB-1"), ["WEB-9", "WEB-10", "WEB-100"]);
+  assert.equal(subtasksByParent(undefined).size, 0);
+});
+
+test("checkWork: a Claude tab '<key> check' with checkMessage's text; {mine} your sub-tasks under it, else the key", () => {
+  const item = changedItem(issue, { me, sinceMs: 0, marks: {} });
+  const subtasks = new Map([["WEB-40", ["WEB-41", "WEB-42"]]]);
+  const c = checkWork(item, { template: "{key} ({summary}) changed {when}: check {mine}", subtasks });
+  assert.deepEqual(c, { command: "tab.new", args: { name: "WEB-40 check", argv: ["claude"], task: "WEB-40 (Story) changed Nov 12 – Nov 19: check WEB-41, WEB-42" } });
+  assert.equal(checkWork(item, { template: "{mine}", subtasks: new Map() }).args.task, "WEB-40");
+  assert.equal(checkWork(item, { template: "{mine}", subtasks: new Map([["WEB-40", []]]) }).args.task, "WEB-40");
+  const full = checkWork(item, { template: DEFAULT_CHECK_TASK, subtasks }).args.task;
+  for (const v of ["v2", "v4", "v5"]) assert.ok(!full.includes(v), v); // never the description's text
+  assert.equal(checkWork(null, { template: "{key}" }), null);
 });

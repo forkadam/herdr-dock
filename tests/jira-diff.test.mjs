@@ -1,7 +1,7 @@
 // The line diff (src/shared/jira/diff.js): what changed in an issue's description, as same/add/del lines.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diffStats, lineDiff } from "../src/shared/jira/diff.js";
+import { diffStats, foldDiff, lineDiff } from "../src/shared/jira/diff.js";
 
 const same = (text) => ({ op: "same", text });
 const add = (text) => ({ op: "add", text });
@@ -131,4 +131,23 @@ test("diffStats: counts the added and removed lines", () => {
   assert.deepEqual(diffStats([same("a"), del("b"), add("x"), add("y"), same("c")]), { added: 2, removed: 1 });
   assert.deepEqual(diffStats([]), { added: 0, removed: 0 });
   assert.deepEqual(diffStats(lineDiff("a\nb", "a\nb")), { added: 0, removed: 0 });
+});
+
+test("foldDiff: long runs of unchanged lines fold to a skip, with context kept beside each change", () => {
+  const ops = [...lines("a", 5).map(same), add("x"), ...lines("b", 5).map(same)];
+  assert.deepEqual(foldDiff(ops, 2), [{ op: "skip", count: 3 }, same("a3"), same("a4"), add("x"), same("b0"), same("b1"), { op: "skip", count: 3 }]);
+  // two changes close together share their context; a gap of one line is shown, not folded
+  const near = [same("a"), del("b"), same("c"), same("d"), same("e"), same("f"), same("g"), add("h"), same("i")];
+  assert.deepEqual(foldDiff(near, 2), near);
+  const gapOfOne = [del("b"), same("c"), same("d"), same("e"), same("f"), same("g"), add("h")];
+  assert.deepEqual(foldDiff(gapOfOne, 2), gapOfOne);
+});
+
+test("foldDiff: nothing changed folds to one skip; no ops is none; context 0 keeps only changes", () => {
+  assert.deepEqual(foldDiff(lines("a", 4).map(same), 2), [{ op: "skip", count: 4 }]);
+  assert.deepEqual(foldDiff([], 2), []);
+  assert.deepEqual(foldDiff(null, 2), []);
+  assert.deepEqual(foldDiff([same("a"), same("b"), del("c"), same("d"), same("e")], 0), [{ op: "skip", count: 2 }, del("c"), { op: "skip", count: 2 }]);
+  // the default context is 2
+  assert.deepEqual(foldDiff([...lines("a", 4).map(same), add("x")]), [{ op: "skip", count: 2 }, same("a2"), same("a3"), add("x")]);
 });

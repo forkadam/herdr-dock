@@ -173,7 +173,8 @@ time, for the whole window (not per space or tab), so a page is never open twice
 ## Jira page
 
 `dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues in tabs, each a list or a
-board, your team's sprint board on **Today**, an issue's detail beside them, quick actions, and **Start work**.
+board, a daily brief and your team's sprint board on **Today**, an issue's detail beside them, quick actions, and
+**Start work**.
 
 - **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
 - **Connect**: the page asks for Jira's address and a **personal access token** (Jira → Profile → Personal Access
@@ -181,7 +182,8 @@ board, your team's sprint board on **Today**, an issue's detail beside them, qui
   two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
 - **Where things live** (per PC, never in git or the shared config):
   - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
-    own tabs (`views`), the Scrum board (`board`, its id).
+    own tabs (`views`), the Scrum board (`board`, its id), and the brief's `highPriorities`, `briefBugs` and
+    `checkTask` (below).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -191,21 +193,63 @@ board, your team's sprint board on **Today**, an issue's detail beside them, qui
   so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
   **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
   reaches curl only through the private `-K` file, never on its command line.
-- **Tabs** under the header, each with its count: **Today** (when a Scrum board is set, below), your own tabs
-  (`views` in the settings file, in their order), then **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
+- **Tabs** under the header, each with its count: **Today** (the brief, and your sprint board when a Scrum board is
+  set; its count is the brief's unread items), your own tabs (`views` in the settings file, in their order), then
+  **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
   old ticket). Each tab keeps its own search text, rows and open issue while Herdr runs, so switching back finds it
   as you left it; the shown tab, and each tab's List / Board choice, are remembered per PC. The shown tab refreshes as
   below; the others' counts every 10 minutes (one count-only search each). A tab whose search Jira rejects shows `!`
   and says why, while the other tabs carry on.
-- **Today** is your Scrum board's current sprint, laid out like the board in Jira Software: the board's own columns
-  (each holding the statuses the board maps to it) sharing the width, and one lane per parent story (its key, status
-  and summary; click it to fold the lane), then **Other issues**. It lists the sprint's issues assigned to you, done
-  ones too, as Jira's board does (an issue in a status the board has no column for isn't shown, as there either). The
-  current sprint is the board's active sprint holding most of your issues (a tie: the one that started first); its
-  name, dates and days left head the board. Today has no search box and no List / Board switch.
+- **The brief**, at the top of Today: what's new or changed for you since the current sprint started (the last 14
+  days without a Scrum board). Each row is the issue's key, summary, why it's there and when; a click opens the issue
+  beside the brief.
+  - **Changed**: description edits by someone other than you on your unresolved issues and on the parents of your
+    sub-tasks (a story whose spec moved under your FE/BE sub-tasks).
+  - **New in sprint** (with a Scrum board): your issues in the current sprint that became yours in it after it
+    started: added to the sprint (a carry-over from the sprint before doesn't count), created in it, or assigned to
+    you.
+  - **High-priority bugs**: every bug `briefBugs` finds at a priority in `highPriorities`, unread ones first and
+    marked **new**. A bug that leaves the list (fixed, reprioritised, reassigned) is new again if it comes back.
+  - **Read marks** are kept per PC. Opening a New-in-sprint or bug item reads it. A Changed item is read only by
+    **Mark read** (in its detail) or **Mark all read** (on the brief): opening it doesn't, so it doesn't vanish
+    between reading the change and checking it against your work. Read Changed and New-in-sprint items drop off; a
+    newer edit makes a Changed item unread again.
+  - **What changed**: a Changed item's detail opens with the description's line diff (added and removed lines
+    marked, long unchanged stretches folded: click to show all), from before the first unread edit to after the
+    last, so 8 edits read as one change; who edited and when; **Mark read**, **Open in browser** and **Check against
+    my work**. The diff stays as it was while the issue is open, whatever a refresh brings.
+  - **Check against my work** opens a Claude tab named `<key> check`, as Start work does, with a first message from
+    `checkTask`. Placeholders: `{key} {summary} {when}` (the span of the edits) and `{mine}` (your sub-tasks under
+    that issue when it is their parent, else the issue itself). The message never carries the description's text:
+    Claude reads the change itself with your Jira tools. The default:
+    `The description of {key} ({summary}) changed {when}. Read the change with your Jira tools and check it against my work on {mine} in this repo.`
+  - **Recent changes**, on any issue's detail: the description edits by others since the brief's start, each as a
+    diff, read or not (asked when you open it).
+  - **Settings**: `highPriorities` (Settings → High priorities, or the file: your Jira's names for urgent
+    priorities; default `["Highest", "High"]`), `briefBugs` (the bugs JQL, narrowed with
+    `AND priority in (<highPriorities>)`; default
+    `issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved`) and `checkTask`, in
+    `jira-work.json`. For example:
+
+    ```json
+    "highPriorities": ["P0", "P1"],
+    "briefBugs": "issuetype = Bug AND status in (Open, \"In Progress\") AND assignee = currentUser()",
+    "checkTask": "/review-spec-change {key}: changed {when}; my work is {mine}"
+    ```
+
+  - **Requests**: each refresh of Today asks one search for your changed issues, one per 50 parents, and one for the
+    bugs (the sprint's search, already made for the board, also brings what New in sprint reads); your sub-tasks'
+    parents once an hour with the board's columns, or when you press refresh.
+- **Today**'s board, under the brief, is your Scrum board's current sprint, laid out like the board in Jira
+  Software: the board's own columns (each holding the statuses the board maps to it) sharing the width, and one lane
+  per parent story (its key, status and summary; click it to fold the lane), then **Other issues**. It lists the
+  sprint's issues assigned to you, done ones too, as Jira's board does (an issue in a status the board has no column
+  for isn't shown, as there either). The current sprint is the board's active sprint holding most of your issues (a
+  tie: the one that started first); its name, dates and days left head the board. Today has no search box and no
+  List / Board switch.
   - **Scrum board** (Settings): type part of the board's name and pick it from Jira's scrum boards; the page keeps its
-    id as `board` in `jira-work.json` (you can also write `"board": <id>` there). **No board** removes it, and the
-    Today tab with it.
+    id as `board` in `jira-work.json` (you can also write `"board": <id>` there). **No board** removes it: Today is
+    then the brief alone.
   - **The sprint menu** (the sprint's name): its series, the sprints whose name differs only by its number
     (`Sprint 41`, `Sprint 42`, …), newest first: the next one, the active one and the last 5 closed. A sprint named
     without a number lists the sprints holding your issues instead. Picking one shows it until Herdr restarts. With no
@@ -214,7 +258,7 @@ board, your team's sprint board on **Today**, an issue's detail beside them, qui
     drop there runs that move, asks which when several lead there (and for a Resolution when the step needs one), and
     on a dimmed column says, in that column, where the issue can go. A drop on the card's own column does nothing.
   - **Requests**: each refresh asks for the shown sprint's issues; the board's columns, statuses and sprints (and how
-    many of yours each active sprint holds) once an hour, or when you press refresh. Today's tab has no count.
+    many of yours each active sprint holds) once an hour, or when you press refresh.
 - **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"? }`. The id is lower-case
   letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type first,
   then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
@@ -255,10 +299,12 @@ board, your team's sprint board on **Today**, an issue's detail beside them, qui
   anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
   description could try to steer the agent. Use it only for issues from people you trust, or leave it out and let
   your skill fetch the issue.
-- **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your
-  open issues), and no sooner than 5 minutes after a failure. A rejected token stops the polling (and clears the
-  badge) until you press **Connect again** or **Try again**. The refresh button reconnects at once. A new address
-  forgets the old site's issues.
+- **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden, and no sooner than 5
+  minutes after a failure; Today's brief also every 10 minutes while another tab shows. A rejected token stops the
+  polling (and clears the badge) until you press **Connect again** or **Try again**. The refresh button reconnects at
+  once. A new address forgets the old site's issues.
+- **The Pages badge** is the number of the brief's unread items (Today's count): warning-coloured while a
+  high-priority bug is unread, and no badge when nothing is.
 - **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
   `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
   `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.

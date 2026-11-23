@@ -1,17 +1,21 @@
 // The Jira page: the company's self-hosted Jira (Server / Data Center) as a dock page. Your issues and filters as a
-// list or a board, the team's sprint board on Today (sprint-view.js), an issue's detail beside them. Connects with a
-// personal access token kept in a private file (src/shared/jira/store.js); requests go through Herdr's fetch or curl
-// (src/shared/jira/client.js). Everything that decides something is pure and tested under src/shared/jira/; this file
-// draws and keeps state.
+// list or a board; on Today the brief (brief-view.js) above the team's sprint board (sprint-view.js); an issue's
+// detail beside them. Connects with a personal access token kept in a private file (src/shared/jira/store.js);
+// requests go through Herdr's fetch or curl (src/shared/jira/client.js). Everything that decides something is pure and
+// tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
 import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
-import { withSearch } from "../../shared/jira/jql.js";
+import {
+  briefBadge, bugsSearch, changeDiff, changedItem, changedSearches, checkWork, isUnread, newInSprintItem, pruneBugs, readAll, readOnOpen,
+  recentEdits, sinceMinutes, subtasksByParent, withRead,
+} from "../../shared/jira/brief.js";
+import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
-  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countFailure, countText, filterList, needsDetail,
+  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, needsDetail,
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
@@ -20,6 +24,7 @@ import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from ".
 import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
+import { briefView, changeView } from "./brief-view.js";
 import { sprintBoard } from "./sprint-view.js";
 import { tabBar } from "./tabs.js";
 
@@ -29,6 +34,9 @@ const VIEW_KEY = "dock.jira.view"; // the List / Board choice before tabs: a tab
 const TAB_KEY = "dock.jira.tab";
 const LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 const FILTER_KEY = "dock.jira.filter";
+const READ_KEY = "dock.jira.read"; // the brief's read marks (brief.js): { [key]: { changed?, sprint?, bug? } }
+// Your unresolved issues, for the parents of your sub-tasks (the brief's Changed, and {mine} in Check against my work).
+const SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 const TICK_MS = 30000;
 const DETAIL_W = 420;
 // Scroll handles made when the page starts: ScrollHandle.new() can't run while the page draws, and a tab's list can
@@ -46,6 +54,12 @@ const blankSprint = (board) => ({
   board: board == null ? null : { id: board, name: null }, columns: [], active: [], all: [], mine: new Map(), current: null,
   shown: null, picked: null, rows: [], total: undefined, problem: null, at: null, cachedAt: null,
 });
+// Today's brief with nothing read yet: its Changed, New in sprint and High-priority bugs items (brief.js), when it was
+// last built (`at`), the time it looks back to (`sinceMs`) and its failed search (`problem`, with the `part`: "changed"
+// or "bugs").
+const blankBrief = () => ({ changed: [], sprint: [], bugs: [], at: null, sinceMs: null, problem: null });
+// Your sub-tasks by parent key (subtasksByParent), read with the board's cache (hourly, or on ⟳).
+const blankSubtasks = () => ({ byParent: new Map(), cachedAt: null });
 
 export default class Jira extends View {
   init(_props, cx) {
@@ -74,6 +88,15 @@ export default class Jira extends View {
     this.sprintOpen = false;
     this.collapsed = new Set();
     this.dropColumn = null;
+    // Today's brief (refreshToday), when Today last refreshed (shown or not: another tab shown, it refreshes every
+    // HIDDEN_EVERY_MS for the badge), and your sub-tasks by parent.
+    this.brief = blankBrief();
+    this.briefTried = undefined;
+    this.subtasks = blankSubtasks();
+    // The open issue's What changed (openChange: its unread Changed item and diff, kept while it stays open, so a poll
+    // never changes what's being read; `full`: no folding) and Recent changes (toggleRecent: asked each time it opens).
+    this.change = null; // { key, item, ops, full }
+    this.recent = null; // { key, sinceMs, edits: "loading" | [{ at, author, from, to, ops }] | { problem }, full: Set }
     this.countsAt = undefined; // when the hidden tabs were last counted
     this.lastPollAt = undefined;
     this.pollFailed = false;
@@ -177,8 +200,9 @@ export default class Jira extends View {
 
   // ---- tabs ----
 
-  // The tabs, left to right: Today (when the settings name a board), the user's views (settings), Mine, All.
-  tabs() { return tabList(this.options.views, { today: this.options.board != null }); }
+  // The tabs, left to right: Today (the brief, and the sprint board when the settings name a board), the user's views
+  // (settings), Mine, All.
+  tabs() { return tabList(this.options.views, { today: true }); }
   // The shown tab: the one picked, else the remembered one, else the first (a view may have left the settings).
   tab() { return pickTab(this.tabs(), this.tabId ?? shared(TAB_KEY)); }
 
@@ -242,6 +266,7 @@ export default class Jira extends View {
     this.commentInput.set_value("");
     this.detail = null;
     this.detailProblem = null;
+    this.openChange(this.selected);
     const key = this.selected;
     if (key) cx.spawn(async (cx) => this.loadDetail(cx, key));
   }
@@ -260,6 +285,9 @@ export default class Jira extends View {
       this.sprint = blankSprint(this.options.board);
       this.states.delete("today");
       this.scrollTop("today");
+      // The brief's New in sprint was the old board's sprint; the brief is due again (its window moved with it).
+      this.brief = { ...this.brief, sprint: [] };
+      this.briefTried = undefined;
     }
     const s = this.jira.settings;
     this.urlInput.set_value(s.baseUrl);
@@ -312,6 +340,7 @@ export default class Jira extends View {
     this.statusOrder = statuses.ok ? statuses.data.map((x) => x.name) : [];
     await this.refresh(cx);
     await this.refreshCounts(cx);
+    await this.refreshBriefHidden(cx);
   }
 
   // Refresh by hand: connect again when not connected (or after a problem), else the list (on Today, the board's
@@ -323,9 +352,9 @@ export default class Jira extends View {
     if (this.selected) await this.loadDetail(cx, this.selected);
   }
 
-  // The shown tab's list (its search, and its search text) and its count, and the badge. The tab's newest search
-  // wins; the answer goes to the tab it was asked for, even if another is shown by then. Today is its sprint board
-  // (refreshToday; `fresh`: its board's columns and sprints read again too).
+  // The shown tab's list (its search, and its search text) and its count. The tab's newest search wins; the answer
+  // goes to the tab it was asked for, even if another is shown by then. Today is its brief and sprint board
+  // (refreshToday; `fresh`: its board's columns and sprints, and your sub-tasks' parents, read again too).
   async refresh(cx, { more = false, fresh = false } = {}) {
     if (!this.connected || !this.jira) return;
     const tab = this.tab();
@@ -359,7 +388,6 @@ export default class Jira extends View {
     this.problem = null;
     cx.notify();
     await this.loadProjectStatuses(cx);
-    await this.updateBadge(cx, f, s);
   }
 
   // A failed search that means Jira can't be reached at all takes the whole page (true); any other (a view's bad
@@ -374,49 +402,218 @@ export default class Jira extends View {
     return true;
   }
 
-  // ---- Today: the sprint board ----
+  // ---- Today: the brief and the sprint board ----
 
-  // Today's board: its columns, statuses and sprints, and how many of yours each active sprint holds (which picks
-  // the current sprint), read when due (hourly) or `fresh`; then, every time, the shown sprint's issues assigned to
-  // you, in the board's order. Only for the shown tab (refresh() sends it here). Its newest call wins; an answer for
-  // a board or a site the page has left since is dropped. Problems: as refresh's (pageProblem, else Today's own).
+  // Today: the sprint board (when the settings name one) and the brief. The board's columns, statuses and sprints (and
+  // how many of yours each active sprint holds, which picks the current sprint) are read when due (hourly) or `fresh`;
+  // then, every time, the shown sprint's issues assigned to you in the board's order, with their history (New in
+  // sprint), and the brief's own searches (readBrief). Today shown, this is the page's poll (refresh() sends it here);
+  // another tab shown, the badge's refresh every HIDDEN_EVERY_MS (refreshBriefHidden), which leaves the poll's timing
+  // alone. Its newest call wins; an answer for a board or a site the page has left since is dropped. A failure that
+  // means Jira can't be reached takes the page (pageProblem; with Today not shown, only a rejected token: countFailure);
+  // any other is said where it belongs, on the board or in the brief, and the rest carries on.
   async refreshToday(cx, { fresh = false } = {}) {
+    if (!this.connected || !this.jira) return;
     const board = this.options.board;
-    if (!this.connected || !this.jira || board == null) return;
     const s = this.state("today");
     const seq = s.seq.next();
     const live = () => s.seq.accept(seq) && this.states.get("today") === s && this.options.board === board;
+    const polled = this.tab().kind === "today";
+    let failed = false;
+    // A failed request: true when it took the page (stop there), else `here` keeps it and Today carries on.
+    const fail = (problem, here) => {
+      failed = true;
+      if (polled ? this.pageProblem(problem) : countFailure(problem.kind) === "page" && this.pageProblem(problem)) return true;
+      here(problem);
+      return false;
+    };
+    const done = () => {
+      s.loading = false;
+      this.briefTried = Date.now();
+      if (polled) { this.lastPollAt = Date.now(); this.pollFailed = failed; }
+      cx.notify();
+    };
     s.loading = true;
     cx.notify();
     const c = this.client(cx);
-    if (fresh || sprintCacheDue(this.sprint.cachedAt, Date.now())) {
-      const got = await this.readSprints(c, board);
-      if (!live()) return;
-      if (!got.ok) { this.todayFailed(s, got.problem, cx); return; }
-      this.sprint = { ...this.sprint, ...got.data };
+    const onBoard = (problem) => { this.sprint = { ...this.sprint, problem }; };
+    let current = null; // the current sprint's issues with their history (New in sprint); null: not read this time
+    if (board != null) {
+      let cached = true;
+      if (fresh || sprintCacheDue(this.sprint.cachedAt, Date.now())) {
+        const got = await this.readSprints(c, board);
+        if (!live()) return;
+        if (got.ok) this.sprint = { ...this.sprint, ...got.data };
+        else if (fail(got.problem, onBoard)) { done(); return; } else cached = false;
+      }
+      if (cached) {
+        const sp = this.sprint;
+        // The sprint picked in the menu while it's still on the board, else the current one (none: no active sprint).
+        const shown = (sp.picked != null && sp.all.find((x) => x.id === sp.picked)) || sp.current;
+        let found = { ok: true, data: { issues: [], total: 0 } };
+        if (shown) {
+          // As many as a refresh ever asks for, from the first load: Today has no Load more, so the board is never partial.
+          found = await c.search(sprintJql(shown.id), { maxResults: REFRESH_CAP, fields: [...ROW_FIELDS, "created"], expand: "changelog" });
+          if (!live()) return;
+        }
+        if (found.ok) {
+          const issues = found.data?.issues ?? [];
+          const base = this.jira.settings.baseUrl;
+          this.sprint = {
+            ...this.sprint, shown: shown ?? null, picked: shown && shown.id !== sp.current?.id ? shown.id : null,
+            rows: issues.map((i) => issueRow(i, base)), total: found.data?.total, problem: null, at: Date.now(),
+          };
+          // A sprint picked in the menu isn't the current one: New in sprint keeps what it had.
+          if (!sp.current || shown?.id === sp.current.id) current = sp.current ? issues : [];
+        } else if (fail(found.problem, onBoard)) { done(); return; }
+      }
     }
-    const sp = this.sprint;
-    // The sprint picked in the menu while it's still on the board, else the current one (none: no active sprint).
-    const shown = (sp.picked != null && sp.all.find((x) => x.id === sp.picked)) || sp.current;
-    let found = { ok: true, data: { issues: [], total: 0 } };
-    if (shown) {
-      // As many as a refresh ever asks for, from the first load: Today has no Load more, so the board is never partial.
-      found = await c.search(sprintJql(shown.id), { maxResults: REFRESH_CAP });
-      if (!live()) return;
-      if (!found.ok) { this.todayFailed(s, found.problem, cx); return; }
+    // The brief, only once Jira has said who you are (your own edits would otherwise read as someone else's).
+    if (this.me?.name) {
+      const stop = await this.readBrief(c, { fresh, live, fail, current });
+      if (stop === "gone") return;
+      if (stop === "page") { done(); return; }
     }
-    const base = this.jira.settings.baseUrl;
-    this.sprint = {
-      ...this.sprint, shown: shown ?? null, picked: shown && shown.id !== sp.current?.id ? shown.id : null,
-      rows: (found.data?.issues ?? []).map((i) => issueRow(i, base)), total: found.data?.total, problem: null, at: Date.now(),
+    s.fetchedAt = Date.now();
+    if (polled) this.problem = null;
+    done();
+  }
+
+  // The brief's searches (refreshToday's): your sub-tasks' parents when due (with the board's cache: hourly, or
+  // `fresh`); your unresolved issues and those parents updated since the current sprint started (14 days without
+  // one), with their history (Changed); the high-priority bugs. Then the lists (New in sprint from `current`, the
+  // current sprint's issues, when they were read), the marks without the bugs that left the list, and the badge. The
+  // first failure ends the searches and is the brief's `problem`; what was read before it is used, and a list not read
+  // keeps what it had. "gone": the answer is for a Today the page has left; "page": a failure took the page.
+  async readBrief(c, { fresh, live, fail, current }) {
+    const me = this.me.name;
+    const now = Date.now();
+    const since = sinceMinutes(this.sprint.current, now);
+    const sinceMs = now - since * 60e3;
+    let problem = null;
+    const said = (part) => (p) => { problem = { ...p, part }; };
+    if (fresh || sprintCacheDue(this.subtasks.cachedAt, now)) {
+      const r = await c.search(SUBTASKS_JQL, { maxResults: REFRESH_CAP, fields: ["parent"] });
+      if (!live()) return "gone";
+      if (r.ok) this.subtasks = { byParent: subtasksByParent(r.data?.issues), cachedAt: Date.now() };
+      else if (fail(r.problem, said("changed"))) return "page";
+    }
+    let changed = null;
+    if (!problem) {
+      const issues = new Map(); // one item per issue: a parent of yours can also be yours
+      for (const jql of changedSearches({ since, parentKeys: [...this.subtasks.byParent.keys()] })) {
+        const r = await c.search(jql, { maxResults: REFRESH_CAP, fields: ROW_FIELDS, expand: "changelog" });
+        if (!live()) return "gone";
+        if (!r.ok) { if (fail(r.problem, said("changed"))) return "page"; break; }
+        for (const issue of r.data?.issues ?? []) if (issue?.key && !issues.has(issue.key)) issues.set(issue.key, issue);
+      }
+      const marks = this.marks();
+      if (!problem) changed = [...issues.values()].map((i) => changedItem(i, { me, sinceMs, marks })).filter(Boolean);
+    }
+    let bugs = null;
+    if (!problem) {
+      const r = await c.search(bugsSearch(this.options), { maxResults: REFRESH_CAP });
+      if (!live()) return "gone";
+      const base = this.jira.settings.baseUrl;
+      if (r.ok) bugs = (r.data?.issues ?? []).map((i) => issueRow(i, base)).map((x) => ({ key: x.key, summary: x.summary, priority: x.priority, status: x.status, at: x.updatedMs }));
+      else if (fail(r.problem, said("bugs"))) return "page";
+    }
+    const sprint = this.sprint.current;
+    this.brief = {
+      changed: changed ?? this.brief.changed,
+      sprint: current ? current.map((i) => newInSprintItem(i, { sprint, me })).filter(Boolean) : this.brief.sprint.filter((x) => x.sprintId === sprint?.id),
+      bugs: bugs ?? this.brief.bugs, at: Date.now(), sinceMs, problem,
     };
-    s.loading = false;
-    s.fetchedAt = this.sprint.at;
-    this.lastPollAt = Date.now();
-    this.pollFailed = false;
-    this.problem = null;
+    // Only after the bugs were read: a failed search must not forget which bugs you have seen.
+    if (bugs) this.updateMarks((marks) => { const pruned = pruneBugs(marks, bugs.map((b) => b.key)); return JSON.stringify(pruned) === JSON.stringify(marks) ? marks : pruned; });
+    this.updateBadge();
+    return null;
+  }
+
+  // Today's brief while another tab is shown: refreshed every HIDDEN_EVERY_MS (as a hidden page polls), so the Pages
+  // badge and Today's count keep up. With Today shown, it is the page's own poll.
+  async refreshBriefHidden(cx) {
+    if (!this.connected || this.problem || !this.jira || this.tab().kind === "today" || this.state("today").loading) return;
+    if (!pollDue({ shown: false, lastAt: this.briefTried, failed: false, now: Date.now() })) return;
+    await this.refreshToday(cx);
+  }
+
+  // The brief's read marks, per PC: { [key]: { changed?, sprint?, bug? } } (brief.js).
+  marks() {
+    const m = shared(READ_KEY);
+    return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+  }
+
+  // The marks after `change` (marks -> marks; the same object for no change): saved, with the badge, when they changed.
+  updateMarks(change) {
+    const before = this.marks();
+    const after = change(before);
+    if (after === before) return;
+    setShared(READ_KEY, after);
+    this.updateBadge();
+  }
+
+  // The Pages badge and Today's count: the brief's unread items (briefBadge; none: no badge and no count). Nothing
+  // until the brief was first built.
+  updateBadge() {
+    if (!this.brief.at) return;
+    const badge = briefBadge(this.brief, this.marks());
+    setShared(BADGE_KEY, badge);
+    this.counts.set("today", { total: badge?.count });
+  }
+
+  // A brief row: the issue opens beside the brief, and its New-in-sprint and bug items are read (readOnOpen).
+  openBriefItem(key, cx) {
+    this.updateMarks((marks) => readOnOpen(marks, this.brief, key));
+    this.select(key, cx);
+  }
+
+  markAllRead(cx) {
+    this.updateMarks((marks) => readAll(marks, this.brief));
     cx.notify();
-    await this.updateBadge(cx, { id: "today" }, s);
+  }
+
+  // What changed's Mark read: the edits it shows are read (a later one is unread again).
+  markRead(cx) {
+    const item = this.change?.item;
+    if (!item) return;
+    this.updateMarks((marks) => (isUnread("changed", item, marks) ? withRead(marks, "changed", item) : marks));
+    cx.notify();
+  }
+
+  // The issue opening in the detail: What changed is its unread Changed item, taken now and kept while the issue stays
+  // open; Recent changes starts closed.
+  openChange(key) {
+    const marks = this.marks();
+    const item = key ? this.brief.changed.find((x) => x.key === key && isUnread("changed", x, marks)) : null;
+    this.change = item ? { key, item, ops: changeDiff(item.before, item.after), full: false } : null;
+    this.recent = null;
+  }
+
+  // Recent changes on the open issue: opened, its description edits by others within the brief's window, as diffs,
+  // asked each time it opens (GET the issue's history); closed, forgotten.
+  toggleRecent(key, cx) {
+    if (this.recent?.key === key) { this.recent = null; cx.notify(); return; }
+    const now = Date.now();
+    const sinceMs = this.brief.sinceMs ?? now - sinceMinutes(this.sprint.current, now) * 60e3;
+    const asked = { key, sinceMs, edits: "loading", full: new Set() };
+    this.recent = asked;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await this.client(cx).issueHistory(key);
+      if (this.recent !== asked) return;
+      this.recent = { ...asked, edits: r.ok ? recentEdits(r.data.histories, { me: this.me?.name, sinceMs }).map((e) => ({ ...e, ops: changeDiff(e.from, e.to) })) : { problem: r.problem } };
+      cx.notify();
+    });
+  }
+
+  // Check against my work: a Claude tab with checkTask's message (checkWork: the issue, when it changed and your work
+  // under it, never its text), then the terminal, as Start work does.
+  checkMyWork(item, cx) {
+    const c = checkWork(item, { template: this.options.checkTask, subtasks: this.subtasks.byParent });
+    if (!c) return;
+    try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; cx.notify(); return; }
+    showTerminal();
   }
 
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
@@ -439,16 +636,6 @@ export default class Jira extends View {
       board: { id: board, name: conf.data.name ?? null }, columns: sprintColumns(conf.data.columns, statuses.data),
       active, all: sprints.data, mine, current: pickSprint(active, mine), cachedAt: Date.now(),
     } };
-  }
-
-  // A Today request that failed: the whole page when Jira can't be reached (pageProblem), else said on Today (over
-  // the board it last had, if any). Retried on the poll, as the lists are.
-  todayFailed(s, problem, cx) {
-    s.loading = false;
-    this.lastPollAt = Date.now();
-    this.pollFailed = true;
-    if (!this.pageProblem(problem)) this.sprint = { ...this.sprint, problem };
-    cx.notify();
   }
 
   // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
@@ -513,20 +700,13 @@ export default class Jira extends View {
     return workflowStatuses(this.shown().rows, this.projectStatuses);
   }
 
-  // How many issues are assigned to me and unresolved: free when that's the search just made (`s`: its tab's list),
-  // else one count query.
-  async updateBadge(cx, f, s) {
-    if (f.id === "mine" && !s.query) { setShared(BADGE_KEY, badgeFor(s.total)); return; }
-    const r = await this.client(cx).search(pickFilter(this.filters(), "mine").jql, { maxResults: 0 });
-    if (r.ok) setShared(BADGE_KEY, badgeFor(r.data?.total));
-  }
-
   tick(cx) {
     if (!this.jira || this.editing) return;
-    // The settings file edited by hand (its views, say) shows within a tick; then the hidden tabs' counts, when due.
+    // The settings file edited by hand (its views, say) shows within a tick; then the hidden tabs' counts and, with
+    // another tab shown, Today's brief (for the badge), when due.
     cx.spawn(async (cx) => {
       await this.reloadSettings(cx);
-      if (!this.editing && !this.checkingNow && !this.paused) await this.refreshCounts(cx);
+      if (!this.editing && !this.checkingNow && !this.paused) { await this.refreshCounts(cx); await this.refreshBriefHidden(cx); }
     });
     if (this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
@@ -587,6 +767,7 @@ export default class Jira extends View {
       this.transitions = null;
       this.transOpen = false;
       this.commentInput.set_value("");
+      this.openChange(key);
     }
     this.selected = key;
     this.detail = null;
@@ -878,11 +1059,14 @@ export default class Jira extends View {
     });
   }
 
-  // A new Jira address, or Disconnect: the old site's issues (every tab's list and count, Today's board), open issue
-  // and filters are forgotten. CLEARED_VIEW's list fields live in the tabs' states now, so they go with those.
+  // A new Jira address, or Disconnect: the old site's issues (every tab's list and count, Today's board and brief),
+  // open issue and filters are forgotten. CLEARED_VIEW's list fields live in the tabs' states now, so they go with those.
   clearView() {
     const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
-    Object.assign(this, view, { states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map(), sprint: blankSprint(this.options.board) });
+    Object.assign(this, view, {
+      states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map(), sprint: blankSprint(this.options.board),
+      brief: blankBrief(), briefTried: undefined, subtasks: blankSubtasks(), change: null, recent: null,
+    });
     for (const h of this.scrolls.values()) h?.scroll_to_item(0);
     this.searchInput.set_value("");
   }
@@ -939,7 +1123,7 @@ export default class Jira extends View {
         .child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}"))
         .child(this.preview(t))
         .when(!first, (el) => el.child(this.boardField(t))
-          .child(this.field(t, "High priorities", this.prioInput, `Your Jira's names for urgent priorities, comma-separated (e.g. P0, P1). Empty: ${DEFAULT_HIGH_PRIORITIES.join(", ")}.`)))
+          .child(this.field(t, "High priorities", this.prioInput, `Your Jira's names for urgent priorities, comma-separated (e.g. P0, P1), for the brief's High-priority bugs. Empty: ${DEFAULT_HIGH_PRIORITIES.join(", ")}.`)))
         .child(this.fileNote(t))
         .when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError)))
         .child(h_flex().gap(8).pt(4)
@@ -967,7 +1151,7 @@ export default class Jira extends View {
       .when(found.length > 0, (el) => el.child(v_flex().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8)
         .border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found)))
       .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns. Type part of its name, then pick it."))
+        .child(div().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it."))
         .when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => { this.boardChoice = null; cx.notify(); }))));
   }
 
@@ -1005,7 +1189,7 @@ export default class Jira extends View {
 
   header(t) {
     const tab = this.tab();
-    // Today is its sprint board only: no search box, no List / Board.
+    // Today is its brief and sprint board: no search box, no List / Board.
     const today = tab.kind === "today";
     const list = this.state(tab.id);
     const [shownCount, total] = today ? [this.sprint.rows.length, this.sprint.total] : [list.rows.length, list.total];
@@ -1041,7 +1225,7 @@ export default class Jira extends View {
       .when(!today, (el) => el.child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
         .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground))))
       .child(div().flex_1())
-      .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? `${countText(shownCount, total)} · updated ${ago(list.fetchedAt, Date.now())}` : ""))
+      .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? [countText(shownCount, total), `updated ${ago(list.fetchedAt, Date.now())}`].filter(Boolean).join(" · ") : ""))
       .when(!today, (el) => el.child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board"))))
       .child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx) => this.reload(cx))))
       .child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
@@ -1230,6 +1414,8 @@ export default class Jira extends View {
         .child(v_flex().gap(4).text_size(12.5)
           .child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned"))
           .child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null)))
+        // What changed (an unread Changed item of the brief) and Recent changes, above the description.
+        .child(changeView(this, t))
         .child(v_flex().gap(4).text_size(12.8).text_color(t.foreground)
           .child(div().text_size(11.5).font_medium().text_color(t.muted).child("Description"))
           .children(d.description ? lines(d.description) : [div().text_color(t.dim).child("No description.")]))
@@ -1312,7 +1498,9 @@ export default class Jira extends View {
     }
     const s = this.shown();
     const message = (text) => v_flex().flex_1().items_center().justify_center().text_color(t.dim).child(text);
-    const body = this.tab().kind === "today" ? sprintBoard(this, t)
+    // Today: the brief, above the sprint board when the settings name a board.
+    const body = this.tab().kind === "today"
+      ? v_flex().flex_1().min_w(0).min_h(0).child(briefView(this, t)).when(this.options.board != null, (el) => el.child(sprintBoard(this, t)))
       : s.listProblem
         ? v_flex().flex_1().p(24).gap(6).child(div().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div().text_size(12).text_color(t.dim).child(s.listProblem.hint))
         : !s.fetchedAt ? message("Loading…") // a tab shown for the first time

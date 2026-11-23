@@ -1,8 +1,11 @@
 // Today's brief, as a pure model (no host imports): what it asks Jira (your changed issues, the parents of your
-// sub-tasks, your high-priority bugs), which description edits and sprint arrivals count as new, the read marks, the
-// badge and the "check against my work" message. The page does the fetching and drawing.
+// sub-tasks, your high-priority bugs), which description edits and sprint arrivals count as new, the read marks (and
+// which a click reads), the lists it shows, the badge, a change's diff and the "check against my work" tab. The page
+// does the fetching and drawing.
 // Issues are Jira's REST ones with expand=changelog; Sprint = { id, name, state, startMs, endMs } (client.js sprints()).
 // Marks = { [key]: { changed?: <time of the latest edit covered>, sprint?: <sprint id>, bug?: true } }.
+import { lineDiff } from "./diff.js";
+import { wikiToText } from "./model.js";
 
 const MINUTE_MS = 60e3;
 const DEFAULT_SINCE_MINUTES = 14 * 24 * 60;
@@ -156,6 +159,91 @@ export function briefBadge({ changed, sprint, bugs } = {}, marks) {
   const bugCount = unread("bug", bugs);
   const count = unread("changed", changed) + unread("sprint", sprint) + bugCount;
   return count ? { count, tone: bugCount ? "warn" : "info" } : null;
+}
+
+// ---- the page's lists, and what a click marks read ----
+
+// What the brief shows: Changed and New in sprint, unread items only, newest first; every high-priority bug, each with
+// `unread`, the unread ones first (otherwise in the search's order).
+export function briefLists({ changed, sprint, bugs } = {}, marks) {
+  const unread = (kind) => (item) => isUnread(kind, item, marks);
+  const newest = (a, b) => (b.at ?? 0) - (a.at ?? 0);
+  const all = list(bugs).map((item) => ({ ...item, unread: isUnread("bug", item, marks) }));
+  return {
+    changed: list(changed).filter(unread("changed")).sort(newest),
+    sprint: list(sprint).filter(unread("sprint")).sort(newest),
+    bugs: [...all.filter((b) => b.unread), ...all.filter((b) => !b.unread)],
+  };
+}
+
+// The marks with every unread item of `kinds` that `pick` keeps read; the same object when there was none.
+function readEach(marks, brief, pick) {
+  let out = marks ?? {};
+  for (const [kind, items] of [["changed", brief?.changed], ["sprint", brief?.sprint], ["bug", brief?.bugs]]) {
+    for (const item of list(items)) if (pick(kind, item) && isUnread(kind, item, out)) out = withRead(out, kind, item);
+  }
+  return out;
+}
+
+// An issue opened from the brief: its New-in-sprint and bug items have nothing more to read, so they are read. Its
+// Changed item stays unread until Mark read (the diff is read, then checked against your work). The same object when
+// nothing changed.
+export const readOnOpen = (marks, brief, key) => readEach(marks, brief, (kind, item) => kind !== "changed" && item.key === key);
+
+// Mark all read: every unread item of the three lists (the same object when nothing was unread).
+export const readAll = (marks, brief) => readEach(marks, brief, () => true);
+
+// ---- reading a change ----
+
+// The description's line diff as the detail shows it: Jira markup as text on both sides, and a trailing empty line
+// dropped from each (a final line break would otherwise read as a removed empty line).
+export function changeDiff(before, after) {
+  const text = (markup) => wikiToText(markup).replace(/\n$/, "");
+  return lineDiff(text(before), text(after));
+}
+
+// The description edits of an issue's history (client.js issueHistory's histories) by someone other than you, after
+// `sinceMs`, newest first: the detail's Recent changes, read or not.
+export function recentEdits(histories, { me, sinceMs } = {}) {
+  const from = Number.isFinite(sinceMs) ? sinceMs : 0;
+  return descriptionEdits({ changelog: { histories } }, { me }).filter((e) => e.at > from).reverse();
+}
+
+// "2 edits by Ana, Nov 19 15:46–15:54": how many edits, by whom (each name once, as they first edited) and, unless
+// `when` is false, when (local time).
+export function editsText(edits, { when = true } = {}) {
+  const all = list(edits);
+  const names = [...new Set(all.map((e) => e?.author).filter(Boolean))];
+  const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  const span = when ? whenText(all) : "";
+  return `${all.length} edit${all.length === 1 ? "" : "s"}${who ? ` by ${who}` : ""}${span ? `, ${span}` : ""}`;
+}
+
+// ---- Check against my work ----
+
+// Your sub-tasks by parent key, from a search's issues (with the `parent` field): Map parent key -> [sub-task keys],
+// each list in key order (WEB-9 before WEB-10), whatever order the search had.
+export function subtasksByParent(issues) {
+  const out = new Map();
+  for (const issue of list(issues)) {
+    const parent = issue?.fields?.parent?.key;
+    if (typeof parent !== "string" || !parent || typeof issue.key !== "string") continue;
+    if (!out.has(parent)) out.set(parent, []);
+    if (!out.get(parent).includes(issue.key)) out.get(parent).push(issue.key);
+  }
+  for (const keys of out.values()) keys.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  return out;
+}
+
+// The Herdr command "Check against my work" runs (Start work's way): a tab "<key> check" running Claude, whose first
+// message is checkMessage's, with {mine} your sub-tasks under the issue (`subtasks`, subtasksByParent's) when it is
+// their parent, else the issue itself. Null without an item.
+export function checkWork(item, { template, subtasks } = {}) {
+  if (!item?.key) return null;
+  const own = subtasks?.get?.(item.key);
+  const mine = Array.isArray(own) && own.length ? own : [item.key];
+  const task = checkMessage(template, { key: item.key, summary: item.summary, edits: item.edits, mine });
+  return { command: "tab.new", args: { name: `${item.key} check`, argv: ["claude"], task } };
 }
 
 // ---- the check message ----

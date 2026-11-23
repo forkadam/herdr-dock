@@ -35,6 +35,28 @@ export function diffStats(ops) {
   return { added, removed };
 }
 
+// lineDiff's result for reading: the `context` unchanged lines on each side of a change are kept, and every other run
+// of unchanged lines becomes one { op: "skip", count } (a run of one line is shown, as its fold would take as much
+// room). Nothing changed: one skip over the whole text.
+export function foldDiff(ops, context = 2) {
+  const all = Array.isArray(ops) ? ops : [];
+  const keep = all.map((o) => o?.op === "add" || o?.op === "del");
+  all.forEach((o, i) => {
+    if (o?.op !== "add" && o?.op !== "del") return;
+    for (let j = Math.max(0, i - context); j <= Math.min(all.length - 1, i + context); j++) keep[j] = true;
+  });
+  const out = [];
+  for (let i = 0; i < all.length;) {
+    if (keep[i]) { out.push(all[i++]); continue; }
+    let j = i;
+    while (j < all.length && !keep[j]) j++;
+    if (j - i === 1) out.push(all[i]);
+    else out.push({ op: "skip", count: j - i });
+    i = j;
+  }
+  return out;
+}
+
 // ---- The middle ----
 
 const dels = (lines) => lines.map((text) => ({ op: "del", text }));
