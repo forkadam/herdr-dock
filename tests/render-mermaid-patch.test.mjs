@@ -244,3 +244,15 @@ test("the built Render helper: .- and -.-> close only a dotted text link, so a l
     assert.match(e[0], new RegExp(`data-label="${label}"`));
   }
 });
+
+test("the built Render helper: a linkStyle-coloured edge keeps its coloured arrowhead", () => {
+  const [svg] = drawAll(["flowchart LR\n  A --> B\n  linkStyle 0 stroke:#ff0000"]);
+  assert.match(edgeTags(svg)[0], /marker-end="url\(#arrowhead-23ff0000\)"/);
+});
+
+test("the built Render helper: an invisible link really lays its nodes out together (unlinked nodes stack)", () => {
+  const rowOf = (svg, id) => Number(new RegExp(`<g class="node" data-id="${id}"[^>]*>\\s*<rect[^>]*\\by="([\\d.]+)"`).exec(svg)[1]);
+  const [linked, unlinked] = drawAll(["flowchart LR\n  A ~~~ B", "flowchart LR\n  A\n  B"]);
+  assert.equal(rowOf(linked, "B"), rowOf(linked, "A"), "B beside A");
+  assert.notEqual(rowOf(unlinked, "B"), rowOf(unlinked, "A"), "without the link B stacks below A");
+});

@@ -383,9 +383,9 @@ terminal, so you keep Claude Code's own terminal UI:
   variables, `color-mix()` or web fonts) is ported from [herdr-chat](https://github.com/ChmaraX/herdr-chat) (MIT).
   It is patched as it is bundled (each patched line checked, so an upgrade that moves one fails the build): arrows
   written without spaces (`A-->B`, the id rule [prismantis](https://github.com/NahumLitvin/prismantis) uses, MIT) and
-  long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) and invisible
-  links (`~~~`) are drawn; class names may hold hyphens (`classDef my-cls`). A long link is drawn at the usual
-  length.
+  long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
+  invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
+  drawn at the usual length.
 - **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
 
 ### Where Render keeps its diagrams
