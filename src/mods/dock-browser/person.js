@@ -4,8 +4,8 @@
 import { openOverlay } from "herdr";
 import { realSessionName } from "../../shared/browser/session.js";
 import { activeTab, pageHeading } from "../../shared/browser/frame.js";
-import { bigWindow, changes, inControl, newTabId, panelMode, restoreCommands, sizeCommands } from "../../shared/browser/panel.js";
-import { browse, run, writeControl } from "./actions.js";
+import { bigWindow, changes, finishOf, inControl, newTabId, panelMode, sizeCommands } from "../../shared/browser/panel.js";
+import { browse, readControl, run, writeControl } from "./actions.js";
 
 export const personControls = {
   mode() { return this.record ? panelMode(this.record, this.control, Date.now(), this.browser.handoffMinutes) : { kind: "view" }; },
@@ -27,7 +27,7 @@ export const personControls = {
   async setControl(t, change) {
     const c = await writeControl(t, this.created, change);
     if (!c) throw new Error("The control record couldn't be written");
-    if (this.terminal === t) this.control = c;
+    if (this.terminal === t) { this.control = c; this.controlChanged(); }
   },
 
   ab(rec, args) {
@@ -37,46 +37,40 @@ export const personControls = {
 
   takeOver(cx) { this.act("Taking over…", cx, (t) => this.setControl(t, changes.takeOver(Date.now()))); },
 
-  // Size tabs closed and the agent's tab and viewport back, then the page is the agent's again.
+  // Size tabs closed and the agent's tab and viewport back, the real window finished, then the page is the agent's
+  // again. What to finish comes from the control record, so it doesn't matter which copy opened it.
   handBack(cx) {
     this.act("Handing back…", cx, async (t, rec) => {
-      await this.undoSizes(t, rec);
-      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, true);
+      await this.finish(t, rec, true);
       await this.setControl(t, changes.handBack());
     });
   },
 
-  async undoSizes(t, rec) {
-    const s = this.sizes;
-    if (!s || s.terminal !== t) return;
-    this.sizes = null;
-    for (const args of restoreCommands(s)) await this.ab(rec, args).catch(() => null);
-  },
-
-  // The real window: keep what the person did there (window-done) or just close it.
-  async closeWindow(t, rec, keep) {
-    this.windowOpen = null;
-    if (keep) await browse(["window-done", "--terminal", t]);
-    else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
+  // keep: the real window's state is kept (window-done); otherwise the window is just closed.
+  async finish(t, rec, keep) {
+    const f = finishOf(await readControl(t, this.created));
+    if (f.window) {
+      if (keep) await browse(["window-done", "--terminal", t]);
+      else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
+    }
+    for (const args of f.restore) await this.ab(rec, args).catch(() => null);
   },
 
   answer(value, cx) {
     const h = this.mode().handoff;
     if (!h) return;
     this.act(value === "done" ? "Done…" : "Cancelling…", cx, async (t, rec) => {
-      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, value === "done");
-      await this.undoSizes(t, rec);
+      await this.finish(t, rec, value === "done");
       await this.setControl(t, changes.answer(h.id, value));
     });
   },
 
   openWindow(cx) {
-    const h = this.mode().handoff;
-    if (!h) return;
+    if (!this.mode().handoff) return;
     this.act("Opening a window…", cx, async (t) => {
       await this.setControl(t, changes.window(Date.now()));
       await browse(["window-open", "--terminal", t]);
-      if (this.terminal === t) this.windowOpen = { terminal: t, id: h.id };
+      await this.setControl(t, changes.windowOpened(Date.now()));
     });
   },
 
@@ -98,10 +92,9 @@ export const personControls = {
     const agentTab = activeTab(st.tabs)?.tabId ?? null, viewport = this.stream?.size ?? null;
     this.act("Opening the size…", cx, async (t, rec) => {
       if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
-      if (!this.sizes || this.sizes.terminal !== t) this.sizes = { terminal: t, tabs: [], agentTab, viewport };
       const opened = await this.ab(rec, cmds[0]);
       const id = newTabId(opened.stdout);
-      if (id) this.sizes.tabs.push(id);
+      if (id) await this.setControl(t, changes.sizeTab(id, agentTab, viewport ? { w: viewport.w, h: viewport.h } : null));
       await this.ab(rec, cmds[1]);
     });
   },

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { jpegSize, toPage, drawnHeight, keyEvents, wheelEvent, mouseEvents, FrameRing, streamStep, afterLoss } from "../src/shared/browser/frame.js";
+import { jpegSize, toPage, drawnHeight, keyEvents, isPaste, textEvents, wheelEvent, mouseEvents, FrameRing, streamStep, afterLoss } from "../src/shared/browser/frame.js";
 
 function jpeg(w, h) {
   return new Uint8Array([
@@ -143,4 +143,39 @@ test("streamStep: a console error sent twice counts once", () => {
   s = streamStep(s, { ...m, timestamp: 6 });
   assert.equal(s.errors, 2);
   assert.deepEqual(s.errorTexts, ["boom", "boom"]);
+});
+
+test("keyEvents: Ctrl/Cmd letters carry their code (select all, copy), with or without key_char", () => {
+  const m = { control: false, alt: false, shift: false, platform: false, function: false };
+  const [down, up] = keyEvents({ key: "a", key_char: "a", modifiers: { ...m, control: true } });
+  assert.equal(down.code, "KeyA"); assert.equal(down.windowsVirtualKeyCode, 65); assert.equal(down.modifiers, 2);
+  assert.equal("text" in down, false); assert.equal(up.windowsVirtualKeyCode, 65);
+  const cmd = keyEvents({ key: "c", modifiers: { ...m, platform: true } })[0];
+  assert.equal(cmd.key, "c"); assert.equal(cmd.code, "KeyC"); assert.equal(cmd.windowsVirtualKeyCode, 67); assert.equal(cmd.modifiers, 4);
+  // No Ctrl/Cmd: a plain character carries text only; Ctrl with a non-letter without key_char sends nothing.
+  assert.equal("code" in keyEvents({ key: "a", key_char: "a", modifiers: m })[0], false);
+  assert.equal(keyEvents({ key: "f5", modifiers: { ...m, control: true } }).length, 0);
+});
+test("isPaste: Ctrl+V off macOS, Cmd+V on macOS", () => {
+  const m = { control: false, alt: false, shift: false, platform: false, function: false };
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, control: true } }, "linux"), true);
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, control: true, shift: true } }, "windows"), true);
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, platform: true } }, "linux"), false);
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, platform: true } }, "macos"), true);
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, control: true } }, "macos"), false);
+  assert.equal(isPaste({ key: "v", modifiers: { ...m, control: true, alt: true } }, "linux"), false);
+  assert.equal(isPaste({ key: "c", modifiers: { ...m, control: true } }, "linux"), false);
+  assert.equal(isPaste({ key: "v", modifiers: m }, "linux"), false);
+});
+test("textEvents: one key per character, line breaks as Enter", () => {
+  const ev = textEvents("aZ!");
+  assert.equal(ev.length, 6);
+  assert.deepEqual(ev[0], { type: "input_keyboard", eventType: "keyDown", key: "a", text: "a", modifiers: 0 });
+  assert.deepEqual(ev[1], { type: "input_keyboard", eventType: "keyUp", key: "a", modifiers: 0 });
+  assert.equal(ev[2].text, "Z"); assert.equal(ev[4].text, "!");
+  const lines = textEvents("a\r\nb\rc\n").filter((x) => x.eventType === "keyDown").map((x) => x.key);
+  assert.deepEqual(lines, ["a", "Enter", "b", "Enter", "c", "Enter"]);
+  assert.equal(textEvents("é😀").filter((x) => x.eventType === "keyDown").length, 2);
+  assert.deepEqual(textEvents(""), []);
+  assert.deepEqual(textEvents(undefined), []);
 });

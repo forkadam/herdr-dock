@@ -327,7 +327,7 @@ function normalizeUrl(input) {
 }
 
 // src/shared/browser/registry.js
-var DEFAULT_CONTROL = { v: 1, takeover: null, answer: null };
+var DEFAULT_CONTROL = { v: 1, takeover: null, answer: null, window: null, sizes: null };
 var REASONS2 = ["person", "pick", "notes", "window"];
 var VALUES = ["done", "cancel"];
 var isObj3 = (x) => x && typeof x === "object" && !Array.isArray(x);
@@ -361,12 +361,24 @@ function parseSession(text) {
 function parseControl(text) {
   const o = json(text);
   if (!isObj3(o)) return { ...DEFAULT_CONTROL };
-  const t = o.takeover, a = o.answer;
+  const t = o.takeover, a = o.answer, w = o.window;
   return {
     v: 1,
     takeover: isObj3(t) && REASONS2.includes(t.reason) && Number.isFinite(t.since) ? { reason: t.reason, since: t.since } : null,
     answer: isObj3(a) && isStr(a.id) && VALUES.includes(a.value) ? { id: a.id, value: a.value } : null,
+    window: isObj3(w) && Number.isFinite(w.since) ? { since: w.since } : null,
+    sizes: sizesOf(o.sizes),
     ...created(o)
+  };
+}
+var isPos = (n) => Number.isFinite(n) && n > 0;
+function sizesOf(x) {
+  if (!isObj3(x) || !Array.isArray(x.tabs)) return null;
+  const v = x.viewport;
+  return {
+    tabs: x.tabs.filter(isStr),
+    agentTab: isStr(x.agentTab) ? x.agentTab : null,
+    viewport: isObj3(v) && isPos(v.w) && isPos(v.h) ? { w: v.w, h: v.h } : null
   };
 }
 var startHandoff = (session, message, now, id) => ({ ...session, handoff: { id, message, since: now } });

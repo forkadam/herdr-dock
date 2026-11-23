@@ -44,13 +44,36 @@ export function keyEvents(e) {
   if (NAMED[name]) { named = NAMED[name]; key = named[0]; if (name === "enter") text = "\r"; }
   else if (name === "space") { key = " "; text = " "; named = ["Space", 32]; }
   else if (e.key_char) { key = e.key_char; text = e.key_char; }
+  else if ((modifiers & 6) && /^[a-z]$/.test(name)) key = name; // Ctrl/Cmd+letter may come without a key_char
   else return [];
   if (modifiers & 6) text = undefined;
-  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] } : {};
+  // A letter with Ctrl/Cmd (select all, copy, cut, undo) needs its code before Chrome acts on it.
+  const letter = !named && (modifiers & 6) && /^[a-z]$/i.test(key) ? key.toUpperCase() : null;
+  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] }
+    : letter ? { code: `Key${letter}`, windowsVirtualKeyCode: letter.charCodeAt(0) } : {};
   const down = { type: "input_keyboard", eventType: "keyDown", key, ...codes };
   if (text !== undefined) down.text = text;
   down.modifiers = modifiers;
   return [down, { type: "input_keyboard", eventType: "keyUp", key, ...codes, modifiers }];
+}
+
+// Paste: Ctrl+V (Linux, Windows) or Cmd+V (macOS; `platform` in GPUI's modifiers), Shift allowed, not Alt.
+export function isPaste(e, os) {
+  const m = e?.modifiers ?? {};
+  if (String(e?.key ?? "").toLowerCase() !== "v" || m.alt) return false;
+  return os === "macos" ? !!m.platform && !m.control : !!m.control && !m.platform;
+}
+
+// Text typed into the page as key events, one character at a time (the stream has no insert-text message).
+// A line break (\n, \r\n or \r) is one Enter.
+export function textEvents(text) {
+  const out = [];
+  for (const ch of String(text ?? "").replace(/\r\n?/g, "\n")) {
+    if (ch === "\n") { out.push(...keyEvents({ key: "enter", modifiers: {} })); continue; }
+    out.push({ type: "input_keyboard", eventType: "keyDown", key: ch, text: ch, modifiers: 0 },
+      { type: "input_keyboard", eventType: "keyUp", key: ch, modifiers: 0 });
+  }
+  return out;
 }
 
 export function wheelEvent(e, frameW, drawnW) {

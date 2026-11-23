@@ -1,7 +1,10 @@
 // Session and control records for dock-browser (pure; no Node built-ins, Herdr mods import this).
 // The session record is written only by the browse wrapper, the control record only by the panel.
 
-const DEFAULT_CONTROL = { v: 1, takeover: null, answer: null };
+// window: the person's real window ("Open in a real window") is open, { since }. sizes: the size tabs the panel opened
+// and what to put back on Hand back, { tabs, agentTab, viewport: { w, h } }. Both kept here, not in one panel copy, so
+// any copy (the right panel, the big window, or one reloaded) finishes them.
+const DEFAULT_CONTROL = { v: 1, takeover: null, answer: null, window: null, sizes: null };
 const REASONS = ["person", "pick", "notes", "window"];
 const VALUES = ["done", "cancel"];
 const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
@@ -32,12 +35,25 @@ export function parseSession(text) {
 export function parseControl(text) {
   const o = json(text);
   if (!isObj(o)) return { ...DEFAULT_CONTROL };
-  const t = o.takeover, a = o.answer;
+  const t = o.takeover, a = o.answer, w = o.window;
   return {
     v: 1,
     takeover: isObj(t) && REASONS.includes(t.reason) && Number.isFinite(t.since) ? { reason: t.reason, since: t.since } : null,
     answer: isObj(a) && isStr(a.id) && VALUES.includes(a.value) ? { id: a.id, value: a.value } : null,
+    window: isObj(w) && Number.isFinite(w.since) ? { since: w.since } : null,
+    sizes: sizesOf(o.sizes),
     ...created(o),
+  };
+}
+
+const isPos = (n) => Number.isFinite(n) && n > 0;
+function sizesOf(x) {
+  if (!isObj(x) || !Array.isArray(x.tabs)) return null;
+  const v = x.viewport;
+  return {
+    tabs: x.tabs.filter(isStr),
+    agentTab: isStr(x.agentTab) ? x.agentTab : null,
+    viewport: isObj(v) && isPos(v.w) && isPos(v.h) ? { w: v.w, h: v.h } : null,
   };
 }
 

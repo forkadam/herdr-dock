@@ -16,22 +16,40 @@ export function panelMode(session, control, now, handoffMinutes) {
 // The person drives the page (clicks and keys go to it) in a handoff or a take-over.
 export const inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
 
+// The control record as it stands for this terminal: one left by an older terminal with the same id is the default.
+export function controlOf(text, created) {
+  const c = parseControl(text);
+  return text != null && Number.isFinite(created) && isStale(c, created) ? parseControl(null) : c;
+}
+
 // The control record's next text: the current one (a stale one, left by an older terminal with the same id, starts
 // over), changed, and stamped with the terminal's creation time, without which browse reads it as stale.
 export function controlText(text, created, change) {
-  let c = parseControl(text);
-  if (text != null && Number.isFinite(created) && isStale(c, created)) c = parseControl(null);
-  const next = change(c);
+  const next = change(controlOf(text, created));
   return JSON.stringify(Number.isFinite(created) ? { ...next, terminalCreated: created } : next, null, 2) + "\n";
 }
 
-// The changes the panel's buttons make.
+// Handing back ends what the person had: the take-over, the real window and the size tabs (undone by then).
+const release = (c) => ({ ...handBack(c), window: null, sizes: null });
+
+// The changes the panel's buttons make. Everything a later button must finish (the real window, the size tabs) is
+// in the record, so any panel copy, or one reloaded, finishes it.
 export const changes = {
   takeOver: (now) => (c) => (c.takeover ? c : takeOver(c, "person", now)),
-  window: (now) => (c) => takeOver(c, "window", now),
-  handBack: () => (c) => handBack(c),
-  answer: (id, value) => (c) => handBack(answer(c, id, value)),
+  window: (now) => (c) => takeOver(c, "window", now), // before window-open runs: the agent waits
+  windowOpened: (now) => (c) => ({ ...c, window: { since: now } }), // window-open succeeded: Done runs window-done
+  // A size tab opened: remembered with the agent's tab and viewport (the first size's, kept for later ones).
+  sizeTab: (id, agentTab, viewport) => (c) => {
+    const s = c.sizes ?? { tabs: [], agentTab: agentTab ?? null, viewport: viewport ?? null };
+    return { ...c, sizes: { ...s, tabs: [...s.tabs.filter((x) => x !== id), id] } };
+  },
+  handBack: () => release,
+  answer: (id, value) => (c) => release(answer(c, id, value)),
 };
+
+// What finishing the person's turn takes, from the control record: the commands that put the agent's tab and size
+// back, and whether the real window is open (Done keeps what was done there; Cancel just closes it).
+export const finishOf = (control) => ({ restore: restoreCommands(control?.sizes), window: !!control?.window });
 
 // Handoffs to announce: open ones (not answered, not timed out) whose id isn't in `notified`.
 // entries: [{ session, control }] for every terminal with a session record.

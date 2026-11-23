@@ -7,7 +7,7 @@ import {
 
 const MIN = 60_000;
 const base = { v: 1, session: "dock-x-t1", terminal: "t1", profile: "p", port: 1, url: "u", title: "T", opened: 0, handoff: null };
-const free = { v: 1, takeover: null, answer: null };
+const free = { v: 1, takeover: null, answer: null, window: null, sizes: null };
 const T0 = 1_000_000;
 
 test("personHas: fresh handoff, answered, expired", () => {
@@ -110,4 +110,18 @@ test("liveTerminals: herdr-app ls ids, null when unreadable", async () => {
   assert.deepEqual([...liveTerminals('{"spaces":[]}')], []);
   assert.equal(liveTerminals("not json"), null);
   assert.equal(liveTerminals("{}"), null);
+});
+
+test("parseControl keeps the real window and the size-restore info", () => {
+  const c = parseControl(JSON.stringify({
+    v: 1, takeover: { reason: "window", since: 3 }, window: { since: 4 },
+    sizes: { tabs: ["t4", 7, "t5"], agentTab: "t1", viewport: { w: 1280, h: 633 } },
+  }));
+  assert.deepEqual(c.window, { since: 4 });
+  assert.deepEqual(c.sizes, { tabs: ["t4", "t5"], agentTab: "t1", viewport: { w: 1280, h: 633 } });
+  const bad = parseControl(JSON.stringify({ v: 1, window: { since: "x" }, sizes: { tabs: "t4", agentTab: 1 } }));
+  assert.equal(bad.window, null);
+  assert.equal(bad.sizes, null);
+  const odd = parseControl(JSON.stringify({ v: 1, sizes: { tabs: [], agentTab: 3, viewport: { w: 0, h: 5 } } }));
+  assert.deepEqual(odd.sizes, { tabs: [], agentTab: null, viewport: null });
 });

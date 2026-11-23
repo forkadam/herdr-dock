@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   panelMode, inControl, controlText, changes, handoffNotices, rememberNotified, sizeCommands, newTabId,
-  restoreCommands, fitWidth, bigWindow, browserShowName, parseBrowserShow,
+  restoreCommands, fitWidth, bigWindow, browserShowName, parseBrowserShow, finishOf,
 } from "../src/shared/browser/panel.js";
 import { parseControl, waitOutcome, personHas } from "../src/shared/browser/registry.js";
 
@@ -115,4 +115,31 @@ test("bigWindow and browser.show", () => {
   assert.equal(parseBrowserShow("browser.show"), null);
   assert.equal(parseBrowserShow("notify.show"), null);
   assert.equal(parseBrowserShow(null), null);
+});
+
+test("the record keeps the size tabs and the real window; any copy finishes them from it", () => {
+  let text = controlText(null, 5, changes.takeOver(T0));
+  text = controlText(text, 5, changes.sizeTab("t4", "t1", { w: 1280, h: 633 }));
+  text = controlText(text, 5, changes.sizeTab("t5", "t4", { w: 393, h: 852 })); // a later size keeps the agent's
+  const c = parseControl(text);
+  assert.deepEqual(c.sizes, { tabs: ["t4", "t5"], agentTab: "t1", viewport: { w: 1280, h: 633 } });
+  assert.deepEqual(finishOf(c), {
+    restore: [["tab", "close", "t4"], ["tab", "close", "t5"], ["tab", "t1"], ["set", "viewport", "1280", "633"]],
+    window: false,
+  });
+  // Hand back clears them, so a second Hand back (another copy) undoes nothing twice.
+  const back = parseControl(controlText(text, 5, changes.handBack()));
+  assert.equal(back.sizes, null);
+  assert.deepEqual(finishOf(back), { restore: [], window: false });
+  // The real window: open only once window-open succeeded; Done or Cancel (answer) ends it.
+  let w = controlText(null, 5, changes.window(T0));
+  assert.equal(finishOf(parseControl(w)).window, false);
+  w = controlText(w, 5, changes.windowOpened(T0 + 1));
+  assert.equal(finishOf(parseControl(w)).window, true);
+  assert.equal(parseControl(w).takeover.reason, "window");
+  const done = parseControl(controlText(w, 5, changes.answer("h1", "done")));
+  assert.equal(done.window, null);
+  assert.equal(done.takeover, null);
+  assert.deepEqual(done.answer, { id: "h1", value: "done" });
+  assert.deepEqual(finishOf(null), { restore: [], window: false });
 });

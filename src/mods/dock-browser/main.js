@@ -18,7 +18,7 @@ import { browserOf } from "../../shared/browser/config.js";
 import { isProduction } from "../../shared/browser/hosts.js";
 import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
-import { afterLoss, drawnHeight, keyEvents, mouseEvents, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
+import { afterLoss, drawnHeight, isPaste, keyEvents, mouseEvents, textEvents, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
 import { fitWidth, inControl } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
@@ -44,8 +44,6 @@ export default class Browser extends View {
     this.bodyH = 0; // the room under the header (the big window fits the picture in it)
     this.busy = null; // what a button started and is still running, shown beside the buttons
     this.error = null; // the last button's failure
-    this.windowOpen = null; // { terminal, id }: "Open in a real window" is open for this handoff
-    this.sizes = null; // { terminal, tabs, agentTab, viewport }: size tabs the panel opened, undone on Hand back
     this.pressed = false; // the left button is down on the picture (moves are a drag)
     this.lastMove = 0;
     this.key = null; // "hidden" | "shown|<terminal or none>": what follow() last acted on
@@ -102,7 +100,7 @@ export default class Browser extends View {
     const wasShown = this.key !== null && this.key !== "hidden";
     this.key = key;
     this.stopStream();
-    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null });
+    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null, pressed: false });
     if (!shown) { this.watch?.cancel?.(); this.watch = null; return; }
     if (!wasShown) {
       this.watchSessions(cx);
@@ -157,6 +155,7 @@ export default class Browser extends View {
     if (this.terminal !== t) return;
     const control = parseControl(text);
     this.control = text != null && this.created != null && isStale(control, this.created) ? parseControl(null) : control;
+    this.controlChanged();
     // `browse close` deletes the record: the page shown goes away with a word, not silently.
     if (!rec && this.stream && !this.closed) this.closed = this.closedNow(cx, this.record?.opened ?? null);
     this.record = rec;
@@ -277,6 +276,12 @@ export default class Browser extends View {
     });
   }
 
+  // The control record changed (read, or written by this copy): a drag in progress ends when the person no longer
+  // has the page.
+  controlChanged() {
+    if (!this.record || !inControl(this.mode())) this.pressed = false;
+  }
+
   // ---- drawing ----
 
   note(t, text) {
@@ -358,6 +363,13 @@ export default class Browser extends View {
           send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
         })
         .on_key_down((e, cx) => {
+          // Paste (a password from a password manager): the clipboard typed into the page, over the stream only.
+          if (isPaste(e, window()?.platform)) {
+            const text = cx.read_from_clipboard();
+            if (text) send(textEvents(text));
+            cx.stop_propagation();
+            return;
+          }
           const msgs = keyEvents(e);
           if (!msgs.length) return;
           send(msgs);
@@ -378,9 +390,8 @@ export default class Browser extends View {
     }
     if (!this.record) return root.child(this.note(t, EMPTY));
     const mode = this.mode();
-    if (mode.kind === "view") { this.windowOpen = null; this.pressed = false; }
     const handoff = mode.kind === "handoff";
-    const windowOpen = handoff && this.windowOpen?.terminal === this.terminal && this.windowOpen.id === mode.handoff.id;
+    const windowOpen = handoff && !!this.control.window;
     return root.child(this.header(t, cx))
       .when(handoff, (el) => el.child(handoffBar(t, { message: mode.handoff.message, windowOpen, busy: this.busy }, {
         done: (cx) => this.answer("done", cx), cancel: (cx) => this.answer("cancel", cx), openWindow: (cx) => this.openWindow(cx),

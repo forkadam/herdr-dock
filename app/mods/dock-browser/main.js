@@ -237,7 +237,7 @@ var bigFramesRel = (t) => `${framesRel(t)}-big`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 
 // src/shared/browser/registry.js
-var DEFAULT_CONTROL = { v: 1, takeover: null, answer: null };
+var DEFAULT_CONTROL = { v: 1, takeover: null, answer: null, window: null, sizes: null };
 var REASONS = ["person", "pick", "notes", "window"];
 var VALUES = ["done", "cancel"];
 var isObj3 = (x) => x && typeof x === "object" && !Array.isArray(x);
@@ -271,12 +271,24 @@ function parseSession(text) {
 function parseControl(text) {
   const o = json(text);
   if (!isObj3(o)) return { ...DEFAULT_CONTROL };
-  const t = o.takeover, a = o.answer;
+  const t = o.takeover, a = o.answer, w = o.window;
   return {
     v: 1,
     takeover: isObj3(t) && REASONS.includes(t.reason) && Number.isFinite(t.since) ? { reason: t.reason, since: t.since } : null,
     answer: isObj3(a) && isStr(a.id) && VALUES.includes(a.value) ? { id: a.id, value: a.value } : null,
+    window: isObj3(w) && Number.isFinite(w.since) ? { since: w.since } : null,
+    sizes: sizesOf(o.sizes),
     ...created(o)
+  };
+}
+var isPos = (n) => Number.isFinite(n) && n > 0;
+function sizesOf(x) {
+  if (!isObj3(x) || !Array.isArray(x.tabs)) return null;
+  const v = x.viewport;
+  return {
+    tabs: x.tabs.filter(isStr),
+    agentTab: isStr(x.agentTab) ? x.agentTab : null,
+    viewport: isObj3(v) && isPos(v.w) && isPos(v.h) ? { w: v.w, h: v.h } : null
   };
 }
 var limit = (m) => Number.isFinite(m) && m > 0 ? m : 15;
@@ -375,13 +387,34 @@ function keyEvents(e) {
   } else if (e.key_char) {
     key = e.key_char;
     text = e.key_char;
-  } else return [];
+  } else if (modifiers & 6 && /^[a-z]$/.test(name)) key = name;
+  else return [];
   if (modifiers & 6) text = void 0;
-  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] } : {};
+  const letter = !named && modifiers & 6 && /^[a-z]$/i.test(key) ? key.toUpperCase() : null;
+  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] } : letter ? { code: `Key${letter}`, windowsVirtualKeyCode: letter.charCodeAt(0) } : {};
   const down = { type: "input_keyboard", eventType: "keyDown", key, ...codes };
   if (text !== void 0) down.text = text;
   down.modifiers = modifiers;
   return [down, { type: "input_keyboard", eventType: "keyUp", key, ...codes, modifiers }];
+}
+function isPaste(e, os) {
+  const m = e?.modifiers ?? {};
+  if (String(e?.key ?? "").toLowerCase() !== "v" || m.alt) return false;
+  return os === "macos" ? !!m.platform && !m.control : !!m.control && !m.platform;
+}
+function textEvents(text) {
+  const out = [];
+  for (const ch of String(text ?? "").replace(/\r\n?/g, "\n")) {
+    if (ch === "\n") {
+      out.push(...keyEvents({ key: "enter", modifiers: {} }));
+      continue;
+    }
+    out.push(
+      { type: "input_keyboard", eventType: "keyDown", key: ch, text: ch, modifiers: 0 },
+      { type: "input_keyboard", eventType: "keyUp", key: ch, modifiers: 0 }
+    );
+  }
+  return out;
 }
 function wheelEvent(e, frameW, drawnW) {
   const { x, y } = toPage(e.local_position, frameW, drawnW);
@@ -524,18 +557,30 @@ function panelMode(session, control, now, handoffMinutes) {
   return { kind: c.takeover ? "takeover" : "view" };
 }
 var inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
+function controlOf(text, created2) {
+  const c = parseControl(text);
+  return text != null && Number.isFinite(created2) && isStale(c, created2) ? parseControl(null) : c;
+}
 function controlText(text, created2, change) {
-  let c = parseControl(text);
-  if (text != null && Number.isFinite(created2) && isStale(c, created2)) c = parseControl(null);
-  const next = change(c);
+  const next = change(controlOf(text, created2));
   return JSON.stringify(Number.isFinite(created2) ? { ...next, terminalCreated: created2 } : next, null, 2) + "\n";
 }
+var release = (c) => ({ ...handBack(c), window: null, sizes: null });
 var changes = {
   takeOver: (now) => (c) => c.takeover ? c : takeOver(c, "person", now),
   window: (now) => (c) => takeOver(c, "window", now),
-  handBack: () => (c) => handBack(c),
-  answer: (id, value) => (c) => handBack(answer(c, id, value))
+  // before window-open runs: the agent waits
+  windowOpened: (now) => (c) => ({ ...c, window: { since: now } }),
+  // window-open succeeded: Done runs window-done
+  // A size tab opened: remembered with the agent's tab and viewport (the first size's, kept for later ones).
+  sizeTab: (id, agentTab, viewport) => (c) => {
+    const s = c.sizes ?? { tabs: [], agentTab: agentTab ?? null, viewport: viewport ?? null };
+    return { ...c, sizes: { ...s, tabs: [...s.tabs.filter((x) => x !== id), id] } };
+  },
+  handBack: () => release,
+  answer: (id, value) => (c) => release(answer(c, id, value))
 };
+var finishOf = (control) => ({ restore: restoreCommands(control?.sizes), window: !!control?.window });
 function handoffNotices(entries, notified, now, handoffMinutes) {
   const seen = new Set(Array.isArray(notified) ? notified : []);
   const out = [];
@@ -802,6 +847,9 @@ import { appHome as appHome2, exec, notify, readTextFile, setShared, shared, wri
 import * as fs2 from "fs/promises";
 var NOTIFIED_KEY = "dock.browser.notified";
 var home = () => slashPath(appHome2());
+async function readControl(t, created2) {
+  return controlOf(await readTextFile(`${home()}/${controlFileRel(t)}`).catch(() => null), created2);
+}
 async function writeControl(t, created2, change) {
   const path = `${home()}/${controlFileRel(t)}`;
   await fs2.mkdir(`${home()}/${sessionsRel()}`, { recursive: true }).catch(() => {
@@ -883,7 +931,10 @@ var personControls = {
   async setControl(t, change) {
     const c = await writeControl(t, this.created, change);
     if (!c) throw new Error("The control record couldn't be written");
-    if (this.terminal === t) this.control = c;
+    if (this.terminal === t) {
+      this.control = c;
+      this.controlChanged();
+    }
   },
   ab(rec, args) {
     const chrome = this.browser.chrome ? ["--executable-path", this.browser.chrome] : [];
@@ -892,42 +943,37 @@ var personControls = {
   takeOver(cx) {
     this.act("Taking over\u2026", cx, (t) => this.setControl(t, changes.takeOver(Date.now())));
   },
-  // Size tabs closed and the agent's tab and viewport back, then the page is the agent's again.
+  // Size tabs closed and the agent's tab and viewport back, the real window finished, then the page is the agent's
+  // again. What to finish comes from the control record, so it doesn't matter which copy opened it.
   handBack(cx) {
     this.act("Handing back\u2026", cx, async (t, rec) => {
-      await this.undoSizes(t, rec);
-      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, true);
+      await this.finish(t, rec, true);
       await this.setControl(t, changes.handBack());
     });
   },
-  async undoSizes(t, rec) {
-    const s = this.sizes;
-    if (!s || s.terminal !== t) return;
-    this.sizes = null;
-    for (const args of restoreCommands(s)) await this.ab(rec, args).catch(() => null);
-  },
-  // The real window: keep what the person did there (window-done) or just close it.
-  async closeWindow(t, rec, keep) {
-    this.windowOpen = null;
-    if (keep) await browse(["window-done", "--terminal", t]);
-    else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
+  // keep: the real window's state is kept (window-done); otherwise the window is just closed.
+  async finish(t, rec, keep) {
+    const f = finishOf(await readControl(t, this.created));
+    if (f.window) {
+      if (keep) await browse(["window-done", "--terminal", t]);
+      else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
+    }
+    for (const args of f.restore) await this.ab(rec, args).catch(() => null);
   },
   answer(value, cx) {
     const h = this.mode().handoff;
     if (!h) return;
     this.act(value === "done" ? "Done\u2026" : "Cancelling\u2026", cx, async (t, rec) => {
-      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, value === "done");
-      await this.undoSizes(t, rec);
+      await this.finish(t, rec, value === "done");
       await this.setControl(t, changes.answer(h.id, value));
     });
   },
   openWindow(cx) {
-    const h = this.mode().handoff;
-    if (!h) return;
+    if (!this.mode().handoff) return;
     this.act("Opening a window\u2026", cx, async (t) => {
       await this.setControl(t, changes.window(Date.now()));
       await browse(["window-open", "--terminal", t]);
-      if (this.terminal === t) this.windowOpen = { terminal: t, id: h.id };
+      await this.setControl(t, changes.windowOpened(Date.now()));
     });
   },
   // Another tab: the person takes the page first, so the agent never drives it at the same time.
@@ -947,10 +993,9 @@ var personControls = {
     const agentTab = activeTab(st.tabs)?.tabId ?? null, viewport = this.stream?.size ?? null;
     this.act("Opening the size\u2026", cx, async (t, rec) => {
       if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
-      if (!this.sizes || this.sizes.terminal !== t) this.sizes = { terminal: t, tabs: [], agentTab, viewport };
       const opened = await this.ab(rec, cmds[0]);
       const id = newTabId(opened.stdout);
-      if (id) this.sizes.tabs.push(id);
+      if (id) await this.setControl(t, changes.sizeTab(id, agentTab, viewport ? { w: viewport.w, h: viewport.h } : null));
       await this.ab(rec, cmds[1]);
     });
   },
@@ -981,8 +1026,6 @@ var Browser = class extends View {
     this.bodyH = 0;
     this.busy = null;
     this.error = null;
-    this.windowOpen = null;
-    this.sizes = null;
     this.pressed = false;
     this.lastMove = 0;
     this.key = null;
@@ -1045,7 +1088,7 @@ var Browser = class extends View {
     const wasShown = this.key !== null && this.key !== "hidden";
     this.key = key;
     this.stopStream();
-    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null });
+    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null, pressed: false });
     if (!shown) {
       this.watch?.cancel?.();
       this.watch = null;
@@ -1106,6 +1149,7 @@ var Browser = class extends View {
     if (this.terminal !== t) return;
     const control = parseControl(text);
     this.control = text != null && this.created != null && isStale(control, this.created) ? parseControl(null) : control;
+    this.controlChanged();
     if (!rec && this.stream && !this.closed) this.closed = this.closedNow(cx, this.record?.opened ?? null);
     this.record = rec;
     if (this.closed && rec && rec.opened !== this.closed.opened) this.closed = null;
@@ -1251,6 +1295,11 @@ var Browser = class extends View {
       }
     });
   }
+  // The control record changed (read, or written by this copy): a drag in progress ends when the person no longer
+  // has the page.
+  controlChanged() {
+    if (!this.record || !inControl(this.mode())) this.pressed = false;
+  }
   // ---- drawing ----
   note(t, text) {
     return div2().p(PAD + 2).text_size(12.5).text_color(t.dim).child(text);
@@ -1302,6 +1351,12 @@ var Browser = class extends View {
       this.lastMove = now;
       send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
     }).on_key_down((e, cx) => {
+      if (isPaste(e, window()?.platform)) {
+        const text = cx.read_from_clipboard();
+        if (text) send(textEvents(text));
+        cx.stop_propagation();
+        return;
+      }
       const msgs = keyEvents(e);
       if (!msgs.length) return;
       send(msgs);
@@ -1323,12 +1378,8 @@ var Browser = class extends View {
     }
     if (!this.record) return root.child(this.note(t, EMPTY));
     const mode = this.mode();
-    if (mode.kind === "view") {
-      this.windowOpen = null;
-      this.pressed = false;
-    }
     const handoff = mode.kind === "handoff";
-    const windowOpen = handoff && this.windowOpen?.terminal === this.terminal && this.windowOpen.id === mode.handoff.id;
+    const windowOpen = handoff && !!this.control.window;
     return root.child(this.header(t, cx)).when(handoff, (el) => el.child(handoffBar(t, { message: mode.handoff.message, windowOpen, busy: this.busy }, {
       done: (cx2) => this.answer("done", cx2),
       cancel: (cx2) => this.answer("cancel", cx2),

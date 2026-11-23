@@ -5,11 +5,16 @@ import * as fs from "fs/promises";
 import { slashPath } from "../../shared/path.js";
 import { controlFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { parseControl, parseSession } from "../../shared/browser/registry.js";
-import { browserShowName, controlText, handoffNotices, rememberNotified } from "../../shared/browser/panel.js";
+import { browserShowName, controlOf, controlText, handoffNotices, rememberNotified } from "../../shared/browser/panel.js";
 
 const NOTIFIED_KEY = "dock.browser.notified"; // handoff ids already announced, shared by every copy of the panel
 
 const home = () => slashPath(appHome());
+
+// Terminal t's control record as it is on disk now (what another panel copy may have written since).
+export async function readControl(t, created) {
+  return controlOf(await readTextFile(`${home()}/${controlFileRel(t)}`).catch(() => null), created);
+}
 
 // Changes terminal t's control record (written whole and atomically, checked against what was read, so two panel
 // copies never lose each other's change). Returns the new control, or null when it couldn't be written.
