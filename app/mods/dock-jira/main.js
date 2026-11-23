@@ -1088,6 +1088,13 @@ function pickSprint(active, mineBySprint) {
   const sorted = [...list2(active)].sort((a, b) => mine(b) - mine(a) || earliest(a, b));
   return sorted[0] ?? null;
 }
+function shownSprint({ picked, shown, all, closed, current }) {
+  if (picked == null) return current ?? null;
+  const found = [...list2(all), ...list2(closed)].find((s) => s?.id === picked);
+  if (found) return found;
+  if (closed == null && shown?.id === picked && shown.state === "closed") return shown;
+  return current ?? null;
+}
 function seriesKey(name) {
   const text = String(name ?? "");
   return /\d/.test(text) ? text.replace(/\d+(?!.*\d)/, "#").trim() : null;
@@ -1155,6 +1162,9 @@ var sprintJql = (id) => `sprint = ${id} AND assignee = currentUser() ORDER BY Ra
 var sprintMineJql = (id) => `sprint = ${id} AND assignee = currentUser()`;
 var SPRINT_CACHE_MS = 60 * 6e4;
 var sprintCacheDue = (at, now) => !Number.isFinite(at) || now - at >= SPRINT_CACHE_MS;
+function closedNeeded({ active, menuOpen, closedAt }) {
+  return closedAt == null && (Boolean(menuOpen) || !list2(active).length);
+}
 function litColumns(columns, targets, current) {
   const out = /* @__PURE__ */ new Set();
   for (const c of list2(columns)) {
@@ -1444,12 +1454,11 @@ import { h_flex as h_flex2, v_flex as v_flex2, Popover } from "gpui-base";
 var laneKey = (lane) => lane.parent?.key ?? "";
 function sprintMenu(page, t) {
   const sp = page.sprint;
-  const items = sprintSeries(menuSprint(sp.current, sp.all), sp.all, sp.mine);
+  const sprints = [...sp.all, ...sp.closed ?? []];
+  const items = sprintSeries(menuSprint(sp.current, sprints), sprints, sp.mine);
+  const older = sp.closedAt != null ? null : sp.closedProblem ? "Couldn't load older sprints" : "Loading older sprints\u2026";
   const item = (s) => h_flex2().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().bg(s.id === sp.shown?.id ? t.selected : t.popover).hover((st) => st.bg(t.hover)).on_click((_e, cx) => page.showSprint(s.id, cx)).child(div2().flex_1().min_w(0).truncate().child(s.name)).child(div2().flex_none().text_size(11).text_color(t.dim).child(s.id === sp.current?.id ? "current" : s.state));
-  return Popover.new("jira-sprint-menu").open(page.sprintOpen).on_open_change((open, cx) => {
-    page.sprintOpen = open;
-    cx.notify();
-  }).trigger(h_flex2().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div2().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints")).child(svg2("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex2().id("jira-sprint-list").w(280).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(items.length ? items.map(item) : [div2().p(8).text_color(t.dim).child("No sprints on this board.")]));
+  return Popover.new("jira-sprint-menu").open(page.sprintOpen).on_open_change((open, cx) => page.openSprintMenu(open, cx)).trigger(h_flex2().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div2().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints")).child(svg2("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex2().id("jira-sprint-list").w(280).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(items.map(item)).when(Boolean(older), (el) => el.child(div2().px(8).py(6).text_size(12).text_color(t.dim).child(older))).when(!items.length && !older, (el) => el.child(div2().p(8).text_color(t.dim).child("No sprints on this board."))));
 }
 function sprintBoard(page, t) {
   const sp = page.sprint;
@@ -1532,7 +1541,11 @@ var blankSprint = (board) => ({
   total: void 0,
   problem: null,
   at: null,
-  cachedAt: null
+  cachedAt: null,
+  closed: null,
+  closedAt: null,
+  closedLoading: false,
+  closedProblem: null
 });
 var blankBrief = () => ({ changed: [], sprint: [], bugs: [], at: null, sinceMs: null, problem: null });
 var blankSubtasks = () => ({ byParent: /* @__PURE__ */ new Map(), cachedAt: null });
@@ -1556,6 +1569,8 @@ var Jira = class extends View {
     this.counts = /* @__PURE__ */ new Map();
     this.sprint = blankSprint(null);
     this.sprintOpen = false;
+    this.closedSeq = latestOnly();
+    this.closedRead = null;
     this.collapsed = /* @__PURE__ */ new Set();
     this.dropColumn = null;
     this.brief = blankBrief();
@@ -1941,9 +1956,20 @@ var Jira = class extends View {
     };
     s.loading = true;
     cx.notify();
+    if (this.closedRead) {
+      await this.closedRead;
+      if (!live()) return;
+    }
     const c = this.client(cx);
     const onBoard = (problem) => {
       this.sprint = { ...this.sprint, problem };
+    };
+    let closedTried = false;
+    const closedInTurn = async () => {
+      const sp = this.sprint;
+      if (closedTried || sp.closedLoading || !closedNeeded({ active: sp.active, menuOpen: this.sprintOpen, closedAt: sp.closedAt })) return;
+      closedTried = true;
+      await this.readClosed(c, cx);
     };
     let current = null;
     if (board != null) {
@@ -1959,7 +1985,7 @@ var Jira = class extends View {
       }
       if (cached) {
         const sp = this.sprint;
-        const shown = sp.picked != null && sp.all.find((x) => x.id === sp.picked) || sp.current;
+        const shown = shownSprint({ picked: sp.picked, shown: sp.shown, all: sp.all, closed: sp.closed, current: sp.current });
         let found = { ok: true, data: { issues: [], total: 0 } };
         if (shown) {
           found = await c.search(sprintJql(shown.id), { maxResults: REFRESH_CAP, fields: [...ROW_FIELDS, "created"], expand: "changelog" });
@@ -1983,6 +2009,8 @@ var Jira = class extends View {
           done();
           return;
         }
+        await closedInTurn();
+        if (!live()) return;
       }
     }
     if (this.me?.key || this.me?.name) {
@@ -1992,6 +2020,10 @@ var Jira = class extends View {
         done();
         return;
       }
+    }
+    if (board != null && this.sprint.cachedAt) {
+      await closedInTurn();
+      if (!live()) return;
     }
     s.fetchedAt = Date.now();
     if (polled) this.problem = null;
@@ -2140,10 +2172,11 @@ var Jira = class extends View {
     showTerminal();
   }
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
-  // mine, current, cachedAt } }, or the first failure (with `agile: true` when it came from Jira Software's agile
-  // API: the board's configuration, its sprints). One request at a time; one count per active sprint. Once
-  // `live()` is false (a newer refresh of Today started, or the page left this board) it stops before the next
-  // request, with null.
+  // mine, current, cachedAt, closed, closedAt, closedProblem } }, or the first failure (with `agile: true` when it
+  // came from Jira Software's agile API: the board's configuration, its sprints). Only the active and future sprints
+  // (`all`; one page, where every sprint the board ever had is several): the closed ones are dropped, read again when
+  // needed (readClosed). One request at a time; one count per active sprint. Once `live()` is false (a newer refresh
+  // of Today started, or the page left this board) it stops before the next request, with null.
   async readSprints(c, board, live) {
     const conf = await c.boardConfiguration(board);
     if (!live()) return null;
@@ -2151,7 +2184,7 @@ var Jira = class extends View {
     const statuses = await c.statuses();
     if (!live()) return null;
     if (!statuses.ok) return statuses;
-    const sprints = await c.sprints(board, ["active", "future", "closed"]);
+    const sprints = await c.sprints(board, ["active", "future"]);
     if (!live()) return null;
     if (!sprints.ok) return { ...sprints, agile: true };
     const active = sprints.data.filter((x) => x.state === "active");
@@ -2169,15 +2202,49 @@ var Jira = class extends View {
       all: sprints.data,
       mine,
       current: pickSprint(active, mine),
-      cachedAt: Date.now()
+      cachedAt: Date.now(),
+      closed: null,
+      closedAt: null,
+      closedProblem: null
     } };
+  }
+  // The board's closed sprints (the sprint menu's older ones; the series it offers with no active sprint), when
+  // closedNeeded says so: this.sprint's `closed` and `closedAt`, or `closedProblem`, said in the menu (never the page's
+  // problem, nor the board's). `closedLoading` while it runs (one read at a time); its newest read wins, and an answer
+  // for a board or a site the page has left since is dropped. Drawn when it ends (the menu fills in while open).
+  async readClosed(c, cx) {
+    const board = this.options.board;
+    const s = this.state("today");
+    const seq = this.closedSeq.next();
+    const live = () => this.closedSeq.accept(seq) && this.states.get("today") === s && this.options.board === board;
+    this.sprint = { ...this.sprint, closedLoading: true, closedProblem: null };
+    cx.notify();
+    const r = await c.sprints(board, ["closed"]);
+    if (!live()) return;
+    this.sprint = r.ok ? { ...this.sprint, closed: r.data, closedAt: Date.now(), closedLoading: false } : { ...this.sprint, closedLoading: false, closedProblem: r.problem };
+    cx.notify();
+  }
+  // The sprint menu opened or closed. Opened, its older sprints are read when closedNeeded says so: now, or, while
+  // Today refreshes, by that refresh once it's done with the board (refreshToday), so requests go one at a time.
+  openSprintMenu(open, cx) {
+    this.sprintOpen = open;
+    cx.notify();
+    const sp = this.sprint;
+    if (!open || !sp.cachedAt || sp.closedLoading || this.state("today").loading) return;
+    if (!closedNeeded({ active: sp.active, menuOpen: open, closedAt: sp.closedAt })) return;
+    cx.spawn(async (cx2) => {
+      const read = this.readClosed(this.client(cx2), cx2);
+      this.closedRead = read;
+      await read;
+      if (this.closedRead === read) this.closedRead = null;
+    });
   }
   // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
   // on the current sprint when Herdr starts).
   showSprint(id, cx) {
     this.sprintOpen = false;
     const sp = this.sprint;
-    const pick = sp.all.find((x) => x.id === id);
+    const pick = [...sp.all, ...sp.closed ?? []].find((x) => x.id === id);
     if (!pick || pick.id === sp.shown?.id) {
       cx.notify();
       return;

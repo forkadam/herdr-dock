@@ -19,7 +19,7 @@ import {
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, todayFailure, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
-import { columnDrop, laneCells, pickSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
+import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList, todayCount } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
@@ -52,10 +52,13 @@ const TYPE_COLOR = (t, type) => ({ Bug: t.blocked, Story: t.done, Epic: "#8b5cf6
 // Today's sprint board with nothing read yet, for `board` (the settings' board id; null: none). `board` becomes
 // { id, name } with the name once its configuration is read; `mine`: active sprint id -> how many of yours it holds;
 // `picked`: the sprint picked in the menu (null: the current one); `cachedAt`: when the board's columns, statuses and
-// sprints were read (refreshToday); `at`: when the shown sprint's issues were.
+// sprints were read (refreshToday); `at`: when the shown sprint's issues were. `all` is the active and future sprints;
+// `closed` the closed ones, null until read (readClosed: with the menu, or with no active sprint), with `closedAt`,
+// `closedLoading` while they're read, and `closedProblem` when they couldn't be (the menu says it).
 const blankSprint = (board) => ({
   board: board == null ? null : { id: board, name: null }, columns: [], active: [], all: [], mine: new Map(), current: null,
   shown: null, picked: null, rows: [], total: undefined, problem: null, at: null, cachedAt: null,
+  closed: null, closedAt: null, closedLoading: false, closedProblem: null,
 });
 // Today's brief with nothing read yet: its Changed, New in sprint and High-priority bugs items (brief.js), when it was
 // last built (`at`), the time it looks back to (`sinceMs`) and its failed search (`problem`, with the `part`: "changed"
@@ -89,6 +92,10 @@ export default class Jira extends View {
     // was last dropped on there (its choice box or note shows in that column, in the card's lane).
     this.sprint = blankSprint(null);
     this.sprintOpen = false;
+    // The board's closed sprints (readClosed): its newest read wins, and the read the menu started (a promise; a
+    // refresh of Today waits for it).
+    this.closedSeq = latestOnly();
+    this.closedRead = null;
     this.collapsed = new Set();
     this.dropColumn = null;
     // Today's brief (refreshToday), when Today last refreshed (shown or not: another tab shown, it refreshes every
@@ -442,8 +449,19 @@ export default class Jira extends View {
     };
     s.loading = true;
     cx.notify();
+    // A read of the closed sprints the menu started ends first: requests go one at a time.
+    if (this.closedRead) { await this.closedRead; if (!live()) return; }
     const c = this.client(cx);
     const onBoard = (problem) => { this.sprint = { ...this.sprint, problem }; };
+    // The board's closed sprints, in this refresh's turn, once at most: when closedNeeded says so (no active sprint, or
+    // the menu opened while this refresh ran: openSprintMenu leaves them to it) and none are being read.
+    let closedTried = false;
+    const closedInTurn = async () => {
+      const sp = this.sprint;
+      if (closedTried || sp.closedLoading || !closedNeeded({ active: sp.active, menuOpen: this.sprintOpen, closedAt: sp.closedAt })) return;
+      closedTried = true;
+      await this.readClosed(c, cx);
+    };
     let current = null; // the current sprint's issues with their history (New in sprint); null: not read this time
     if (board != null) {
       let cached = true;
@@ -456,7 +474,7 @@ export default class Jira extends View {
       if (cached) {
         const sp = this.sprint;
         // The sprint picked in the menu while it's still on the board, else the current one (none: no active sprint).
-        const shown = (sp.picked != null && sp.all.find((x) => x.id === sp.picked)) || sp.current;
+        const shown = shownSprint({ picked: sp.picked, shown: sp.shown, all: sp.all, closed: sp.closed, current: sp.current });
         let found = { ok: true, data: { issues: [], total: 0 } };
         if (shown) {
           // As many as a refresh ever asks for, from the first load: Today has no Load more, so the board is never partial.
@@ -476,6 +494,10 @@ export default class Jira extends View {
           // A sprint picked in the menu isn't the current one: New in sprint keeps what it had.
           if (!sp.current || shown?.id === sp.current.id) current = sp.current ? issues : [];
         } else if (fail(found.problem, onBoard)) { done(); return; }
+        // Right after the board: with no active sprint (its menu takes the series of the one that ended last:
+        // menuSprint), or with the menu open.
+        await closedInTurn();
+        if (!live()) return;
       }
     }
     // The brief, only once Jira has said who you are (your own edits would otherwise read as someone else's).
@@ -484,6 +506,9 @@ export default class Jira extends View {
       if (stop === "gone") return;
       if (stop === "page") { done(); return; }
     }
+    // The menu opened while the brief was read (or while the board's sprints failed to be read again: it shows what
+    // was read before).
+    if (board != null && this.sprint.cachedAt) { await closedInTurn(); if (!live()) return; }
     s.fetchedAt = Date.now();
     if (polled) this.problem = null;
     done();
@@ -622,10 +647,11 @@ export default class Jira extends View {
   }
 
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
-  // mine, current, cachedAt } }, or the first failure (with `agile: true` when it came from Jira Software's agile
-  // API: the board's configuration, its sprints). One request at a time; one count per active sprint. Once
-  // `live()` is false (a newer refresh of Today started, or the page left this board) it stops before the next
-  // request, with null.
+  // mine, current, cachedAt, closed, closedAt, closedProblem } }, or the first failure (with `agile: true` when it
+  // came from Jira Software's agile API: the board's configuration, its sprints). Only the active and future sprints
+  // (`all`; one page, where every sprint the board ever had is several): the closed ones are dropped, read again when
+  // needed (readClosed). One request at a time; one count per active sprint. Once `live()` is false (a newer refresh
+  // of Today started, or the page left this board) it stops before the next request, with null.
   async readSprints(c, board, live) {
     const conf = await c.boardConfiguration(board);
     if (!live()) return null;
@@ -633,7 +659,7 @@ export default class Jira extends View {
     const statuses = await c.statuses();
     if (!live()) return null;
     if (!statuses.ok) return statuses;
-    const sprints = await c.sprints(board, ["active", "future", "closed"]);
+    const sprints = await c.sprints(board, ["active", "future"]);
     if (!live()) return null;
     if (!sprints.ok) return { ...sprints, agile: true };
     const active = sprints.data.filter((x) => x.state === "active");
@@ -647,7 +673,43 @@ export default class Jira extends View {
     return { ok: true, data: {
       board: { id: board, name: conf.data.name ?? null }, columns: sprintColumns(conf.data.columns, statuses.data),
       active, all: sprints.data, mine, current: pickSprint(active, mine), cachedAt: Date.now(),
+      closed: null, closedAt: null, closedProblem: null,
     } };
+  }
+
+  // The board's closed sprints (the sprint menu's older ones; the series it offers with no active sprint), when
+  // closedNeeded says so: this.sprint's `closed` and `closedAt`, or `closedProblem`, said in the menu (never the page's
+  // problem, nor the board's). `closedLoading` while it runs (one read at a time); its newest read wins, and an answer
+  // for a board or a site the page has left since is dropped. Drawn when it ends (the menu fills in while open).
+  async readClosed(c, cx) {
+    const board = this.options.board;
+    const s = this.state("today");
+    const seq = this.closedSeq.next();
+    const live = () => this.closedSeq.accept(seq) && this.states.get("today") === s && this.options.board === board;
+    this.sprint = { ...this.sprint, closedLoading: true, closedProblem: null };
+    cx.notify();
+    const r = await c.sprints(board, ["closed"]);
+    if (!live()) return;
+    this.sprint = r.ok
+      ? { ...this.sprint, closed: r.data, closedAt: Date.now(), closedLoading: false }
+      : { ...this.sprint, closedLoading: false, closedProblem: r.problem };
+    cx.notify();
+  }
+
+  // The sprint menu opened or closed. Opened, its older sprints are read when closedNeeded says so: now, or, while
+  // Today refreshes, by that refresh once it's done with the board (refreshToday), so requests go one at a time.
+  openSprintMenu(open, cx) {
+    this.sprintOpen = open;
+    cx.notify();
+    const sp = this.sprint;
+    if (!open || !sp.cachedAt || sp.closedLoading || this.state("today").loading) return;
+    if (!closedNeeded({ active: sp.active, menuOpen: open, closedAt: sp.closedAt })) return;
+    cx.spawn(async (cx) => {
+      const read = this.readClosed(this.client(cx), cx);
+      this.closedRead = read;
+      await read;
+      if (this.closedRead === read) this.closedRead = null;
+    });
   }
 
   // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
@@ -655,7 +717,7 @@ export default class Jira extends View {
   showSprint(id, cx) {
     this.sprintOpen = false;
     const sp = this.sprint;
-    const pick = sp.all.find((x) => x.id === id);
+    const pick = [...sp.all, ...(sp.closed ?? [])].find((x) => x.id === id);
     if (!pick || pick.id === sp.shown?.id) { cx.notify(); return; }
     this.sprint = { ...sp, shown: pick, picked: pick.id === sp.current?.id ? null : pick.id, rows: [], total: undefined, problem: null, at: null };
     this.state("today").fetchedAt = null;
