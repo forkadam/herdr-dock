@@ -82,6 +82,23 @@ for (const transport of ["fetch", "curl"]) {
     assert.equal((await c.issue(key)).data.fields.status.name, "Done");
   });
 
+  test(`${transport}: boards, configuration, sprints`, { skip }, async () => {
+    const c = client(transport);
+    assert.deepEqual((await c.boards("WEB")).data.map((b) => b.id), [1]);
+    assert.deepEqual((await c.boardConfiguration(1)).data.columns[1], { name: "In Progress", statusIds: ["3", "10001"] });
+    const s = (await c.sprints(1, ["active"])).data;
+    assert.deepEqual(s.map((x) => x.name), ["Sprint 42", "Otter Sprint 7"]);
+    assert.ok(Number.isFinite(s[0].startMs) && typeof s[0].id === "number");
+  });
+
+  test(`${transport}: an issue's history call returns its description and a list of histories`, { skip }, async () => {
+    const r = await client(transport).issueHistory("WEB-1");
+    assert.equal(r.ok, true);
+    assert.equal(typeof r.data.description, "string");
+    assert.ok(Array.isArray(r.data.histories));
+    assert.equal((await client(transport).issueHistory("WEB-999")).problem.kind, "notfound");
+  });
+
   test(`${transport}: wrong token, bad JQL, unknown issue`, { skip }, async () => {
     const wrong = await client(transport, { token: "nope" }).myself();
     assert.equal(wrong.ok, false);
@@ -108,6 +125,48 @@ for (const transport of ["fetch", "curl"]) {
     } finally { await slow.close(); }
   });
 }
+
+// A Jira whose sprint list the test scripts: each request's URL is kept, and `page(url)` answers with { status, body }.
+function sprintClient(page) {
+  const seen = [];
+  const fetch = async (url) => {
+    seen.push(new URL(url));
+    const { status = 200, body } = page(new URL(url));
+    return { status, text: async () => JSON.stringify(body) };
+  };
+  return { seen, c: createClient({ base: "https://j", transport: "fetch", token: "t", io: { fetch } }) };
+}
+const sprintValues = (from, n) => Array.from({ length: n }, (_, i) => ({ id: from + i, name: `S${from + i}`, state: "closed", startDate: "2026-01-05T09:00:00.000Z", endDate: "garbage" }));
+
+test("sprints: follows isLast through pages of 50, mapping ids and dates", async () => {
+  const { seen, c } = sprintClient((u) => {
+    const at = Number(u.searchParams.get("startAt"));
+    return { body: { startAt: at, maxResults: 50, isLast: at >= 100, values: sprintValues(at + 1, at >= 100 ? 7 : 50) } };
+  });
+  const r = await c.sprints(7, ["closed", "active"]);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.length, 107);
+  assert.deepEqual(seen.map((u) => u.searchParams.get("startAt")), ["0", "50", "100"]);
+  assert.ok(seen.every((u) => u.pathname === "/rest/agile/1.0/board/7/sprint" && u.searchParams.get("maxResults") === "50" && u.searchParams.get("state") === "closed,active"));
+  assert.deepEqual(r.data[0], { id: 1, name: "S1", state: "closed", startMs: Date.parse("2026-01-05T09:00:00.000Z"), endMs: null });
+});
+
+test("sprints: stops at 20 pages however long Jira says it goes on", async () => {
+  const { seen, c } = sprintClient((u) => ({ body: { isLast: false, values: sprintValues(Number(u.searchParams.get("startAt")) + 1, 50) } }));
+  const r = await c.sprints(1, ["closed"]);
+  assert.equal(r.ok, true);
+  assert.equal(seen.length, 20);
+  assert.equal(r.data.length, 1000);
+});
+
+test("sprints: a page that fails fails the call", async () => {
+  const { c } = sprintClient((u) => (u.searchParams.get("startAt") === "0"
+    ? { body: { isLast: false, values: sprintValues(1, 50) } }
+    : { status: 500, body: { errorMessages: ["boom"] } }));
+  const r = await c.sprints(1, ["closed"]);
+  assert.equal(r.ok, false);
+  assert.equal(r.problem.kind, "server");
+});
 
 test("curl not installed: a clear problem, no throw", async () => {
   const c = createClient({ base: mock.url, transport: "curl", token: "t", curlConfigPath: "/x", io: { ...io, exec: async () => { throw new Error("No such file or directory"); } } });

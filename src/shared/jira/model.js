@@ -16,12 +16,16 @@ const trimBase = (base) => String(base ?? "").replace(/\/+$/, "");
 export const browseUrl = (base, key) => `${trimBase(base)}/browse/${key}`;
 
 // One issue from a search (only ROW_FIELDS asked for) -> what a row or card shows. Missing fields are null; a
-// status category Jira doesn't name (or "undefined") counts as To do.
+// status category Jira doesn't name (or "undefined") counts as To do. `project` is the key's prefix (WEB for WEB-41);
+// `parent` is the sub-task's parent story or task (Jira sends none on any other issue).
 export function issueRow(issue, base) {
   const f = issue?.fields ?? {};
   const cat = f.status?.statusCategory?.key;
+  const dash = String(issue.key ?? "").lastIndexOf("-");
+  const p = f.parent;
   return {
     key: issue.key,
+    project: dash > 0 ? issue.key.slice(0, dash) : null,
     summary: f.summary ?? "",
     type: f.issuetype?.name ?? null,
     typeIcon: f.issuetype?.iconUrl ?? null,
@@ -32,6 +36,8 @@ export function issueRow(issue, base) {
     assignee: f.assignee?.displayName ?? null,
     assigneeName: f.assignee?.name ?? null,
     updatedMs: time(f.updated),
+    subtask: Boolean(f.issuetype?.subtask),
+    parent: p?.key ? { key: p.key, summary: p.fields?.summary ?? "", status: p.fields?.status?.name ?? null, type: p.fields?.issuetype?.name ?? null } : null,
     url: browseUrl(base, issue.key),
   };
 }

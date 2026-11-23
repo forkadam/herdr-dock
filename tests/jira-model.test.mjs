@@ -40,6 +40,22 @@ test("searchUrl asks for the row fields, paged", () => {
   assert.equal(new URL(searchUrl(BASE, "x")).searchParams.get("maxResults"), "50");
 });
 
+test("searchUrl: expand only when given", () => {
+  assert.ok(searchUrl("https://j", "a = 1", { expand: "changelog" }).includes("expand=changelog"));
+  assert.ok(!searchUrl("https://j", "a = 1").includes("expand"));
+});
+
+test("issueRow: project, subtask, parent", () => {
+  const row = issueRow({ key: "WEB-41", fields: { issuetype: { name: "Sub-task", subtask: true },
+    parent: { key: "WEB-40", fields: { summary: "Story", status: { name: "Spec design" }, issuetype: { name: "Story" } } } } }, "https://j");
+  assert.equal(row.project, "WEB");
+  assert.equal(row.subtask, true);
+  assert.deepEqual(row.parent, { key: "WEB-40", summary: "Story", status: "Spec design", type: "Story" });
+  assert.equal(issueRow({ key: "WEB-1", fields: {} }, "https://j").parent, null);
+  assert.equal(issueRow({ key: "WEB-1", fields: {} }, "https://j").subtask, false);
+  assert.equal(issueRow({ key: "MY-APP-12", fields: {} }, "https://j").project, "MY-APP");
+});
+
 test("issueRow: the list's fields, a browse link and the status category", () => {
   const i = byKey("WEB-2");
   const r = issueRow(i, BASE);
@@ -206,11 +222,16 @@ test("the built-in filters, with and without a search, run on the mock Jira", as
         const r = await fetch(searchUrl(mock.url, jql), { headers: { Authorization: "Bearer mock-token" } });
         assert.equal(r.status, 200, jql);
         const data = await r.json();
-        for (const i of data.issues) assert.deepEqual(Object.keys(i.fields).sort(), [...ROW_FIELDS].sort());
+        // `parent` is Jira's alone to send, and only on a sub-task: every other field is always there.
+        for (const i of data.issues) assert.deepEqual(Object.keys(i.fields).filter((k) => k !== "parent").sort(), ROW_FIELDS.filter((k) => k !== "parent").sort());
       }
     }
     const mine = await (await fetch(searchUrl(mock.url, BUILTIN_FILTERS[0].jql), { headers: { Authorization: "Bearer mock-token" } })).json();
     assert.equal(mine.total, 12);
-    assert.equal(groupByCategory(mine.issues.map((i) => issueRow(i, mock.url))).some((g) => g.category === "done"), false);
+    const mineRows = mine.issues.map((i) => issueRow(i, mock.url));
+    assert.equal(groupByCategory(mineRows).some((g) => g.category === "done"), false);
+    // Jira sends `parent` on sub-tasks only (the mock's WEB-41 and WEB-42 sit under story WEB-40).
+    assert.deepEqual(mineRows.filter((r) => r.subtask).map((r) => [r.key, r.parent?.key]), [["WEB-41", "WEB-40"], ["WEB-42", "WEB-40"]]);
+    assert.ok(mineRows.filter((r) => !r.subtask).every((r) => r.parent === null && r.project === r.key.split("-")[0]));
   } finally { await mock.close(); }
 });

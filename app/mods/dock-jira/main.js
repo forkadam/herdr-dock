@@ -21,7 +21,7 @@ var BUILTIN_FILTERS = [
   { id: "reported", name: "Reported by me", jql: "reporter = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
   { id: "recent", name: "Recently viewed", jql: "issuekey in issueHistory() ORDER BY lastViewed DESC" }
 ];
-var ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated"];
+var ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated", "parent"];
 var quote = (text) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 function withSearch(jql, text) {
   const q = String(text ?? "").trim();
@@ -33,8 +33,9 @@ function withSearch(jql, text) {
   const scoped = /\bor\b/i.test(where.replace(/"(?:[^"\\]|\\.)*"/g, "")) ? `(${where})` : where;
   return `${scoped ? `${scoped} AND ` : ""}text ~ ${quote(q)}${order}`;
 }
-function searchUrl(base, jql, { startAt = 0, maxResults = 50, fields = ROW_FIELDS } = {}) {
+function searchUrl(base, jql, { startAt = 0, maxResults = 50, fields = ROW_FIELDS, expand } = {}) {
   const params = new URLSearchParams({ jql, startAt: String(startAt), maxResults: String(maxResults), fields: fields.join(",") });
+  if (expand) params.set("expand", expand);
   return `${String(base).replace(/\/+$/, "")}/rest/api/2/search?${params}`;
 }
 
@@ -54,8 +55,11 @@ var browseUrl = (base, key) => `${trimBase(base)}/browse/${key}`;
 function issueRow(issue, base) {
   const f = issue?.fields ?? {};
   const cat = f.status?.statusCategory?.key;
+  const dash = String(issue.key ?? "").lastIndexOf("-");
+  const p = f.parent;
   return {
     key: issue.key,
+    project: dash > 0 ? issue.key.slice(0, dash) : null,
     summary: f.summary ?? "",
     type: f.issuetype?.name ?? null,
     typeIcon: f.issuetype?.iconUrl ?? null,
@@ -66,6 +70,8 @@ function issueRow(issue, base) {
     assignee: f.assignee?.displayName ?? null,
     assigneeName: f.assignee?.name ?? null,
     updatedMs: time(f.updated),
+    subtask: Boolean(f.issuetype?.subtask),
+    parent: p?.key ? { key: p.key, summary: p.fields?.summary ?? "", status: p.fields?.status?.name ?? null, type: p.fields?.issuetype?.name ?? null } : null,
     url: browseUrl(base, issue.key)
   };
 }
@@ -267,6 +273,7 @@ function errorText(e) {
 function createClient({ base, transport = "fetch", token, curlConfigPath, curlBodyPath, caFile, io, timeoutMs = 2e4 }) {
   const root = String(base ?? "").replace(/\/+$/, "");
   const api = (path) => `${root}/rest/api/2${path}`;
+  const agile = (path) => `${root}/rest/agile/1.0${path}`;
   const issuePath = (key) => `/issue/${encodeURIComponent(key)}`;
   async function viaFetch(method, url, body) {
     const { options } = fetchRequest({ method, url, token, body });
@@ -325,6 +332,11 @@ function createClient({ base, transport = "fetch", token, curlConfigPath, curlBo
     }
   }
   const map = (r, f) => r.ok ? { ...r, data: f(r.data) } : r;
+  const list = (d) => Array.isArray(d) ? d : [];
+  const ms = (s) => {
+    const t = Date.parse(s ?? "");
+    return Number.isFinite(t) ? t : null;
+  };
   return {
     serverInfo: () => request("GET", api("/serverInfo")),
     myself: () => request("GET", api("/myself")),
@@ -338,6 +350,27 @@ function createClient({ base, transport = "fetch", token, curlConfigPath, curlBo
       }
       return [...seen.values()];
     })),
+    // The scrum boards (whose name has `name` in it, when given): [{ id, name, type }].
+    boards: (name) => request("GET", agile(`/board?${new URLSearchParams({ type: "scrum", ...name ? { name } : {} })}`)).then((r) => map(r, (d) => list(d?.values).map((b) => ({ id: b.id, name: b.name, type: b.type })))),
+    // A board's columns, each with the ids (strings) of the statuses it holds: { columns: [{ name, statusIds }] }.
+    boardConfiguration: (id) => request("GET", agile(`/board/${encodeURIComponent(id)}/configuration`)).then((r) => map(r, (d) => ({ columns: list(d?.columnConfig?.columns).map((c) => ({ name: c.name, statusIds: list(c.statuses).map((st) => String(st.id)) })) }))),
+    // A board's sprints in the given states ("active", "future", "closed"), in Jira's order, following its pages of 50
+    // (isLast; at most 20 pages): [{ id, name, state, startMs, endMs }]. A page that fails fails the call.
+    async sprints(boardId2, states = []) {
+      const out = [];
+      for (let page = 0, startAt = 0; page < 20; page++) {
+        const params = new URLSearchParams({ ...states.length ? { state: states.join(",") } : {}, startAt: String(startAt), maxResults: "50" });
+        const r = await request("GET", agile(`/board/${encodeURIComponent(boardId2)}/sprint?${params}`));
+        if (!r.ok) return r;
+        const values = list(r.data?.values);
+        out.push(...values.map((s) => ({ id: Number(s.id), name: s.name, state: s.state, startMs: ms(s.startDate), endMs: ms(s.endDate) })));
+        if (r.data?.isLast !== false || !values.length) break;
+        startAt += values.length;
+      }
+      return { ok: true, data: out };
+    },
+    // An issue's description and its changelog's histories (what changed, when, by whom), newest last as Jira sends them.
+    issueHistory: (key) => request("GET", `${api(issuePath(key))}?fields=description&expand=changelog`).then((r) => map(r, (d) => ({ description: d?.fields?.description ?? null, histories: list(d?.changelog?.histories) }))),
     statuses: () => request("GET", api("/status")).then((r) => map(r, (d) => Array.isArray(d) ? d : [])),
     favouriteFilters: () => request("GET", api("/filter/favourite")).then((r) => map(r, (d) => Array.isArray(d) ? d : [])),
     // With each step's screen fields (required ones and their allowed values), so the page can ask for them.
