@@ -7,7 +7,7 @@ import { curlArgs, fetchRequest, parseCurl, parseJson } from "./transport.js";
 
 // What the detail pane shows.
 export const DETAIL_FIELDS = ["summary", "description", "status", "issuetype", "priority", "assignee", "reporter", "project",
-  "created", "updated", "resolution", "comment", "issuelinks"];
+  "created", "updated", "resolution", "comment", "issuelinks", "parent"];
 const TIMEOUT = Symbol("timeout");
 
 // A fetch failure's text, with its cause (Node and some hosts say "fetch failed" and put ECONNREFUSED, a DNS or a

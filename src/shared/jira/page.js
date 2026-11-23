@@ -1,4 +1,5 @@
 // The Jira page's decisions (pure; no host imports): which filters it offers, when it polls, what it shows.
+import { matchAction } from "./actions.js";
 import { BUILTIN_FILTERS } from "./jql.js";
 import { DEFAULT_START_TASK, startTask, wikiToText } from "./model.js";
 
@@ -92,6 +93,18 @@ export function withComment(detail, comment) {
 export function startWork(issue, template) {
   if (!issue?.key) return null;
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
+}
+
+// The template Start work sends for this issue: the `start` of the first action rule that matches it, else the
+// fallback (the settings' own Start-work message, which may be empty: startTask then uses its default).
+export const startTemplate = (rules, issue, fallback) => matchAction(rules, issue).start ?? fallback;
+
+// The Herdr command Finish runs: as Start work, a Claude tab (named "<key> finish") whose first message is the
+// matched rule's `finish`. Null when no rule gives one (the page then shows no Finish). Changes nothing in Jira.
+export function finishWork(issue, rules) {
+  const finish = matchAction(rules, issue).finish;
+  if (!issue?.key || !finish) return null;
+  return { command: "tab.new", args: { name: `${issue.key} finish`, argv: ["claude"], task: startTask(finish, issue) } };
 }
 
 // Whether Start work needs the full issue first: a list row has no description, so a template that uses it would

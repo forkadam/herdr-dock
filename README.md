@@ -173,8 +173,8 @@ time, for the whole window (not per space or tab), so a page is never open twice
 ## Jira page
 
 `dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues in tabs, each a list or a
-board, a daily brief and your team's sprint board on **Today**, an issue's detail beside them, quick actions, and
-**Start work**.
+board, a daily brief and your team's sprint board on **Today**, an issue's detail beside them, quick actions,
+**Start work** and **Finish** (each with the message of the issue's flow).
 
 - **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
 - **Connect**: the page asks for Jira's address and a **personal access token** (Jira → Profile → Personal Access
@@ -182,8 +182,8 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
 - **Where things live** (per PC, never in git or the shared config):
   - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
-    own tabs (`views`), the Scrum board (`board`, its id), and the brief's `highPriorities`, `briefBugs` and
-    `checkTask` (below).
+    own tabs (`views`), the Scrum board (`board`, its id), the brief's `highPriorities`, `briefBugs` and
+    `checkTask` (below), and the `actions` rules for Start work and Finish (below).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -293,19 +293,50 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   status pill lists the moves the workflow allows (a step that needs a Resolution asks for it; one that needs more
   names what's missing and links to Jira), Assign to me, and a one-line comment box (Enter or Send).
 - **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
-  from your template, then shows the terminal. Placeholders: `{key} {summary} {url} {type} {status} {priority}
-  {assignee} {description}`; type `\n` for a line break. For example `/init-ticket {key}` hands it to your own skill.
-  Settings previews the message for the selected issue, and so does the ▶'s tooltip. **Mind `{description}`:**
-  anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
+  from your template (or the message of the issue's flow: **Action rules**, below), then shows the terminal.
+  Placeholders: `{key} {summary} {url} {type} {status} {priority} {assignee} {description}`; type `\n` for a line
+  break. For example `/init-ticket {key}` hands it to your own skill. Settings previews the message for the selected
+  issue, and so does the ▶'s tooltip. **Mind `{description}`:** anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
   description could try to steer the agent. Use it only for issues from people you trust, or leave it out and let
   your skill fetch the issue.
+- **Action rules** (`actions` in `jira-work.json`): a different Start work message, and a **Finish** button, for each
+  flow of issues. `actions` is a list of rules, and **the first rule whose keys all match the issue wins**, so put
+  the narrow rules first. A rule with no match keys matches every issue. The match keys, all optional:
+  - `project`: the issue's project key (`SEC` for SEC-12);
+  - `type`: the issue type's name (`Bug`);
+  - `subtask`: `true` or `false`;
+  - `parentType`: the issue type of the issue's parent (a sub-task's story or task), or a list of them: any one
+    matches. An issue without a parent never matches a rule that has it.
+
+  Names are Jira's own, matched exactly. A rule gives `start`, `finish` or both, with Start work's placeholders (and
+  its `{description}` warning). **Start work** sends the matched rule's `start`; with no matching rule, or one
+  without a `start`, it sends the Start-work message of Settings, as before. **Finish** is a button in the issue's
+  detail, there only when the matched rule has a `finish`: it opens a tab named `<key> finish` running Claude, with
+  that message, then shows the terminal (the command `finish`, below). The page changes nothing in Jira itself: the
+  skill or prompt the message names does, and can ask you before each step. The matched rule is the first one even
+  when it lacks a `finish`: a later rule is not looked at. For example:
+
+  ```json
+  "actions": [
+    { "project": "SEC", "type": "Bug", "start": "/triage {key}", "finish": "/close-bug {key}" },
+    { "project": "SEC", "start": "/triage {key}" },
+    { "subtask": true, "parentType": ["Story", "Task"], "finish": "/write-report {key}" },
+    { "type": "Bug", "finish": "/close-bug {key}" }
+  ]
+  ```
+
+  Here a SEC bug starts with `/triage` and finishes with `/close-bug`; any other SEC issue starts with `/triage` and
+  has no Finish; a sub-task of another project, under a story or task, keeps your Start-work message and finishes
+  with `/write-report`; a bug of another project starts as usual and finishes with `/close-bug`. A rule that isn't
+  an object, names a key with the wrong kind of value, or gives neither `start` nor `finish` is skipped, and
+  Settings says which.
 - **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden, and no sooner than 5
   minutes after a failure; Today's brief also every 10 minutes while another tab shows. A rejected token stops the
   polling (and clears the badge) until you press **Connect again** or **Try again**. The refresh button reconnects at
   once. A new address forgets the old site's issues.
 - **The Pages badge** is the number of the brief's unread items (Today's count): warning-coloured while a
   high-priority bug is unread, and no badge when nothing is.
-- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
+- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start|finish` can be bound in
   `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
   `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token

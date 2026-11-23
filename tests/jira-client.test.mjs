@@ -6,7 +6,8 @@ import { execFile, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createClient } from "../src/shared/jira/client.js";
+import { DETAIL_FIELDS, createClient } from "../src/shared/jira/client.js";
+import { issueDetail } from "../src/shared/jira/model.js";
 import { curlConfig } from "../src/shared/jira/transport.js";
 import { startMock } from "../scripts/mock-jira.mjs";
 
@@ -32,6 +33,16 @@ function client(transport, { token = "mock-token", base = mock.url, timeoutMs } 
   writeFileSync(curlConfigPath, curlConfig(token));
   return createClient({ base, transport, token, curlConfigPath, io, timeoutMs });
 }
+
+test("issue: asks for the parent, so a sub-task's detail carries what an action rule matches on", async () => {
+  assert.ok(DETAIL_FIELDS.includes("parent"));
+  const r = await client("fetch").issue("WEB-41");
+  assert.equal(r.ok, true);
+  const d = issueDetail(r.data, mock.url);
+  assert.deepEqual([d.project, d.subtask, d.parent?.key, d.parent?.type], ["WEB", true, "WEB-40", "Story"]);
+  const story = issueDetail((await client("fetch").issue("WEB-40")).data, mock.url);
+  assert.deepEqual([story.project, story.subtask, story.parent], ["WEB", false, null]);
+});
 
 for (const transport of ["fetch", "curl"]) {
   const skip = transport === "curl" && !hasCurl ? "curl not installed" : false;

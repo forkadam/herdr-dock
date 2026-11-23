@@ -127,6 +127,22 @@ test("issueDetail: description as text, the last 5 comments, links", () => {
   assert.equal(issueDetail(issues.find((i) => !i.fields.description), BASE).description, "");
 });
 
+test("issueDetail: project, subtask and parent as issueRow derives them, so an action rule matches a detail opened from anywhere", () => {
+  const sub = { key: "WEB-41", fields: { summary: "Bar", issuetype: { name: "Sub-task", subtask: true },
+    parent: { key: "WEB-40", fields: { summary: "Story", status: { name: "Spec design" }, issuetype: { name: "Story" } } } } };
+  const d = issueDetail(sub, BASE);
+  assert.equal(d.project, "WEB"); // the key's prefix, though the response names no project
+  assert.equal(d.subtask, true);
+  assert.deepEqual(d.parent, { key: "WEB-40", summary: "Story", status: "Spec design", type: "Story" });
+  const plain = issueDetail({ key: "MY-APP-12", fields: { issuetype: { name: "Bug", subtask: false } } }, BASE);
+  assert.deepEqual([plain.project, plain.subtask, plain.parent], ["MY-APP", false, null]);
+  // Each equals what the issue's row says (a row and a detail of one issue agree).
+  for (const i of issues) {
+    const row = issueRow(i, BASE), det = issueDetail(i, BASE);
+    assert.deepEqual([det.project, det.subtask, det.parent], [row.project, row.subtask, row.parent], i.key);
+  }
+});
+
 test("wikiToText: Jira markup as readable text", () => {
   assert.equal(wikiToText(null), "");
   assert.equal(wikiToText("h3. Context\n*Steps* and _why_"), "Context\nSteps and why");

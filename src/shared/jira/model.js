@@ -67,7 +67,8 @@ export function boardColumns(rows, order = [], statuses = []) {
     .map(({ seen, ...c }) => c);
 }
 
-// GET /issue/{key} -> the detail pane: the row, the description as text, the last 5 comments, links.
+// GET /issue/{key} -> the detail pane: the row (its project, subtask and parent too, so an action rule matches a
+// detail opened from anywhere), the description as text, the last 5 comments, links.
 export function issueDetail(issue, base) {
   const f = issue?.fields ?? {};
   const all = f.comment?.comments ?? [];
@@ -78,7 +79,6 @@ export function issueDetail(issue, base) {
   }).filter(Boolean);
   return {
     ...issueRow(issue, base),
-    project: f.project?.key ?? null,
     reporter: f.reporter?.displayName ?? null,
     createdMs: time(f.created),
     resolution: f.resolution?.name ?? null,

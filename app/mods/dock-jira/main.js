@@ -105,7 +105,6 @@ function issueDetail(issue, base) {
   }).filter(Boolean);
   return {
     ...issueRow(issue, base),
-    project: f.project?.key ?? null,
     reporter: f.reporter?.displayName ?? null,
     createdMs: time(f.created),
     resolution: f.resolution?.name ?? null,
@@ -262,7 +261,8 @@ var DETAIL_FIELDS = [
   "updated",
   "resolution",
   "comment",
-  "issuelinks"
+  "issuelinks",
+  "parent"
 ];
 var TIMEOUT2 = Symbol("timeout");
 function errorText(e) {
@@ -670,6 +670,25 @@ function checkMessage(template, { key, summary, edits, mine }) {
   return String(template ?? "").replace(/\{(\w+)\}/g, (whole, name) => Object.hasOwn(values, name) ? String(values[name] ?? "") : whole);
 }
 
+// src/shared/jira/actions.js
+function projectOf(issue) {
+  if (issue?.project != null) return issue.project;
+  const key = String(issue?.key ?? "");
+  const dash = key.lastIndexOf("-");
+  return dash > 0 ? key.slice(0, dash) : null;
+}
+function matches(rule, issue) {
+  if (rule.project != null && rule.project !== projectOf(issue)) return false;
+  if (rule.type != null && rule.type !== issue?.type) return false;
+  if (rule.subtask != null && rule.subtask !== Boolean(issue?.subtask)) return false;
+  if (rule.parentType != null && !(Array.isArray(rule.parentType) && rule.parentType.includes(issue?.parent?.type))) return false;
+  return true;
+}
+function matchAction(rules, issue) {
+  const rule = (Array.isArray(rules) ? rules : []).find((r) => r && typeof r === "object" && matches(r, issue));
+  return { start: rule?.start ?? null, finish: rule?.finish ?? null };
+}
+
 // src/shared/jira/page.js
 var SHOWN_EVERY_MS = 2 * 6e4;
 var HIDDEN_EVERY_MS = 10 * 6e4;
@@ -726,6 +745,12 @@ function withComment(detail, comment) {
 function startWork(issue, template) {
   if (!issue?.key) return null;
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
+}
+var startTemplate = (rules, issue, fallback) => matchAction(rules, issue).start ?? fallback;
+function finishWork(issue, rules) {
+  const finish = matchAction(rules, issue).finish;
+  if (!issue?.key || !finish) return null;
+  return { command: "tab.new", args: { name: `${issue.key} finish`, argv: ["claude"], task: startTask(finish, issue) } };
 }
 function needsDetail(template) {
   const t = typeof template === "string" && template.trim() ? template : DEFAULT_START_TASK;
@@ -1574,7 +1599,7 @@ var Jira = class extends View {
   }
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, the tabs
   // (tab-next, tab-prev, tab-<id>), and on the open issue: status (its status menu), assign (to me), comment (the
-  // cursor into the comment box), start (Start work).
+  // cursor into the comment box), start (Start work), finish (Finish, when an action rule gives one).
   command(c, cx) {
     if (c === "status") {
       if (this.detail) this.openTransitions(!this.transOpen, cx);
@@ -1590,6 +1615,10 @@ var Jira = class extends View {
     }
     if (c === "start") {
       if (this.detail) this.startWork(this.detail, cx);
+      return;
+    }
+    if (c === "finish") {
+      if (this.detail) this.finishWork(this.detail, cx);
       return;
     }
     if (c === "tab-next" || c === "tab-prev") {
@@ -2430,10 +2459,11 @@ var Jira = class extends View {
     if (this.selected !== row.key) this.select(row.key, cx);
     this.doTransition(tr, cx, row.url, fields);
   }
-  // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
-  // From a list row, a template that uses {description} first fetches the full issue (rows don't carry it).
+  // Start work: a Claude tab named after the issue, with the message of its flow (the `start` of the first action rule
+  // that matches it, else the settings' Start-work message); then the terminal comes to the front. From a list row, a
+  // template that uses {description} first fetches the full issue (rows don't carry it).
   startWork(issue, cx) {
-    const template = this.jira?.settings.startTask;
+    const template = startTemplate(this.options.actions, issue, this.jira?.settings.startTask);
     if (issue && !("description" in issue) && needsDetail(template)) {
       if (this.detail?.key === issue.key) {
         this.startWork(this.detail, cx);
@@ -2455,6 +2485,20 @@ var Jira = class extends View {
       run(c.command, c.args);
     } catch (e) {
       this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` };
+      return;
+    }
+    showTerminal();
+  }
+  // Finish: a Claude tab named "<key> finish" with the `finish` message of the issue's flow (the detail has the
+  // description already); then the terminal. Nothing in Jira changes: the skill it names does that, step by step.
+  finishWork(issue, cx) {
+    const c = finishWork(issue, this.options.actions);
+    if (!c) return;
+    try {
+      run(c.command, c.args);
+    } catch (e) {
+      this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` };
+      cx.notify();
       return;
     }
     showTerminal();
@@ -2650,12 +2694,14 @@ var Jira = class extends View {
     const path = this.jira?.paths.settingsPath;
     return v_flex3().gap(3).when(Boolean(path), (el) => el.child(div4().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`))).children(this.options.warnings.map((w) => div4().text_size(11.5).text_color(WARN2).child(w === this.jira?.problem ? w : `Skipped ${w}`)));
   }
-  // What Start work would send for the open issue (else the first one listed), as typed.
+  // What Start work would send for the open issue (else the first one listed): its action rule's message, else as typed.
   preview(t) {
     const issue = this.detail ?? this.shown().rows[0];
     if (!issue) return div4();
-    const text = previewTask(issue, this.taskInput.value());
-    return v_flex3().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div4().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`)).children(text.split("\n").map((l) => div4().text_size(12).text_color(t.muted).child(l || " ")));
+    const typed = this.taskInput.value();
+    const template = startTemplate(this.options.actions, issue, typed);
+    const text = previewTask(issue, template);
+    return v_flex3().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div4().text_size(11).text_color(t.dim).child(template === typed ? `Preview for ${issue.key}` : `Preview for ${issue.key}, from its action rule`)).children(text.split("\n").map((l) => div4().text_size(12).text_color(t.muted).child(l || " ")));
   }
   problemView(t) {
     const p = this.problem;
@@ -2699,7 +2745,7 @@ var Jira = class extends View {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
     return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div4().w(76).flex_none().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
-${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
+${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.startTask))}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
       cx.stop_propagation();
       this.startWork(r, cx);
     }).child(svg3("mods/dock-jira/play.svg").size(11)));
@@ -2804,16 +2850,18 @@ ${previewTask(r, this.jira?.settings.startTask)}`).on_mouse_down("left", (_e, cx
     if (!d) {
       return pane.child(top).child(div4().p(16).text_size(12.5).text_color(this.detailProblem ? t.blocked : t.dim).child(this.detailProblem ? `${this.detailProblem.message} ${this.detailProblem.hint}` : "Loading\u2026"));
     }
+    const finish = finishWork(d, this.options.actions);
     const lines = (text) => (text ? text.split("\n") : []).map((l) => l.trim() ? div4().child(l) : div4().h(8));
     const meta = (label, value) => h_flex4().gap(8).child(div4().w(70).flex_none().text_color(t.dim).child(label)).child(div4().flex_1().min_w(0).truncate().child(value ?? "\u2014"));
-    return pane.child(top).child(v_flex3().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div4().text_size(16).font_semibold().child(d.summary)).child(h_flex4().gap(8).items_center().child(this.statusMenu(t, d)).when(canAssignToMe(d, this.me), (el) => el.child(this.button(
+    return pane.child(top).child(v_flex3().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div4().text_size(16).font_semibold().child(d.summary)).child(h_flex4().gap(8).items_center().flex_wrap().child(this.statusMenu(t, d)).when(canAssignToMe(d, this.me), (el) => el.child(this.button(
       t,
       "jira-assign",
       this.actionBusy === "assign" ? "Assigning\u2026" : "Assign to me",
       (cx) => this.assignMe(cx),
       { enabled: !this.actionBusy }
     ))).child(div4().flex_1()).child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:
-${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` })).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex3().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(changeView(this, t)).child(v_flex3().gap(4).text_size(12.8).text_color(t.foreground).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div4().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex3().gap(4).text_size(12.5).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex4().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div4().text_color(t.dim).child(l.label)).child(div4().child(l.key)))))).child(v_flex3().gap(10).child(div4().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex3().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex4().gap(6).child(div4().font_medium().child(c.author)).child(div4().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex3().gap(6).child(div4().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Input.new(this.commentInput).w_full().h(22).text_size(12.5).text_color(t.foreground))).child(h_flex4().gap(8).items_center().child(div4().flex_1().text_size(11).text_color(t.dim).child("Enter sends")).child(this.button(
+${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` })).when(Boolean(finish), (el) => el.child(this.button(t, "jira-finish", "Finish", (cx) => this.finishWork(d, cx), { tip: `Opens a Claude tab named ${d.key} finish with:
+${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex3().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(changeView(this, t)).child(v_flex3().gap(4).text_size(12.8).text_color(t.foreground).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div4().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex3().gap(4).text_size(12.5).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex4().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div4().text_color(t.dim).child(l.label)).child(div4().child(l.key)))))).child(v_flex3().gap(10).child(div4().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex3().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex4().gap(6).child(div4().font_medium().child(c.author)).child(div4().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex3().gap(6).child(div4().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Input.new(this.commentInput).w_full().h(22).text_size(12.5).text_color(t.foreground))).child(h_flex4().gap(8).items_center().child(div4().flex_1().text_size(11).text_color(t.dim).child("Enter sends")).child(this.button(
       t,
       "jira-comment-send",
       this.actionBusy === "comment" ? "Sending\u2026" : "Send",

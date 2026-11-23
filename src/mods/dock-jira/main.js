@@ -15,8 +15,8 @@ import {
 import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
-  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, needsDetail,
-  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startWork, withComment,
+  CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, finishWork, needsDetail,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { columnDrop, laneCells, pickSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
@@ -165,12 +165,13 @@ export default class Jira extends View {
 
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, the tabs
   // (tab-next, tab-prev, tab-<id>), and on the open issue: status (its status menu), assign (to me), comment (the
-  // cursor into the comment box), start (Start work).
+  // cursor into the comment box), start (Start work), finish (Finish, when an action rule gives one).
   command(c, cx) {
     if (c === "status") { if (this.detail) this.openTransitions(!this.transOpen, cx); return; }
     if (c === "assign") { if (canAssignToMe(this.detail, this.me)) this.assignMe(cx); return; }
     if (c === "comment") { if (this.detail) this.commentInput.focus(); return; }
     if (c === "start") { if (this.detail) this.startWork(this.detail, cx); return; }
+    if (c === "finish") { if (this.detail) this.finishWork(this.detail, cx); return; }
     if (c === "tab-next" || c === "tab-prev") { this.showTab(stepTab(this.tabs(), this.tab().id, c === "tab-next" ? 1 : -1), cx); return; }
     if (c.startsWith("tab-")) { const id = c.slice(4); if (this.tabs().some((x) => x.id === id)) this.showTab(id, cx); return; }
     if (c === "list" || c === "board") setShared(LAYOUT_KEY(this.tab().id), c);
@@ -949,10 +950,11 @@ export default class Jira extends View {
     this.doTransition(tr, cx, row.url, fields);
   }
 
-  // Start work: a Claude tab named after the issue, with the user's message; then the terminal comes to the front.
-  // From a list row, a template that uses {description} first fetches the full issue (rows don't carry it).
+  // Start work: a Claude tab named after the issue, with the message of its flow (the `start` of the first action rule
+  // that matches it, else the settings' Start-work message); then the terminal comes to the front. From a list row, a
+  // template that uses {description} first fetches the full issue (rows don't carry it).
   startWork(issue, cx) {
-    const template = this.jira?.settings.startTask;
+    const template = startTemplate(this.options.actions, issue, this.jira?.settings.startTask);
     if (issue && !("description" in issue) && needsDetail(template)) {
       if (this.detail?.key === issue.key) { this.startWork(this.detail, cx); return; }
       cx.spawn(async (cx) => {
@@ -965,6 +967,15 @@ export default class Jira extends View {
     const c = startWork(issue, template);
     if (!c) return;
     try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; return; }
+    showTerminal();
+  }
+
+  // Finish: a Claude tab named "<key> finish" with the `finish` message of the issue's flow (the detail has the
+  // description already); then the terminal. Nothing in Jira changes: the skill it names does that, step by step.
+  finishWork(issue, cx) {
+    const c = finishWork(issue, this.options.actions);
+    if (!c) return;
+    try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; cx.notify(); return; }
     showTerminal();
   }
 
@@ -1172,13 +1183,15 @@ export default class Jira extends View {
       .children(this.options.warnings.map((w) => div().text_size(11.5).text_color(WARN).child(w === this.jira?.problem ? w : `Skipped ${w}`)));
   }
 
-  // What Start work would send for the open issue (else the first one listed), as typed.
+  // What Start work would send for the open issue (else the first one listed): its action rule's message, else as typed.
   preview(t) {
     const issue = this.detail ?? this.shown().rows[0];
     if (!issue) return div();
-    const text = previewTask(issue, this.taskInput.value());
+    const typed = this.taskInput.value();
+    const template = startTemplate(this.options.actions, issue, typed);
+    const text = previewTask(issue, template);
     return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
-      .child(div().text_size(11).text_color(t.dim).child(`Preview for ${issue.key}`))
+      .child(div().text_size(11).text_color(t.dim).child(template === typed ? `Preview for ${issue.key}` : `Preview for ${issue.key}, from its action rule`))
       .children(text.split("\n").map((l) => div().text_size(12).text_color(t.muted).child(l || " ")));
   }
 
@@ -1256,7 +1269,7 @@ export default class Jira extends View {
       .child(div().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned"))
       .child(div().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now())))
       .child(div().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim)
-        .hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with\n${previewTask(r, this.jira?.settings.startTask)}`)
+        .hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with\n${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.startTask))}`)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); this.startWork(r, cx); })
         .child(svg("mods/dock-jira/play.svg").size(11)));
@@ -1405,17 +1418,19 @@ export default class Jira extends View {
       return pane.child(top).child(div().p(16).text_size(12.5).text_color(this.detailProblem ? t.blocked : t.dim)
         .child(this.detailProblem ? `${this.detailProblem.message} ${this.detailProblem.hint}` : "Loading…"));
     }
+    const finish = finishWork(d, this.options.actions);
     const lines = (text) => (text ? text.split("\n") : []).map((l) => (l.trim() ? div().child(l) : div().h(8)));
     const meta = (label, value) => h_flex().gap(8).child(div().w(70).flex_none().text_color(t.dim).child(label)).child(div().flex_1().min_w(0).truncate().child(value ?? "—"));
     return pane.child(top)
       .child(v_flex().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14)
         .child(div().text_size(16).font_semibold().child(d.summary))
-        .child(h_flex().gap(8).items_center()
+        .child(h_flex().gap(8).items_center().flex_wrap()
           .child(this.statusMenu(t, d))
           .when(canAssignToMe(d, this.me), (el) => el.child(this.button(t, "jira-assign", this.actionBusy === "assign" ? "Assigning…" : "Assign to me",
             (cx) => this.assignMe(cx), { enabled: !this.actionBusy })))
           .child(div().flex_1())
-          .child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, this.jira?.settings.startTask)?.args.task ?? ""}` }))
+          .child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` }))
+          .when(Boolean(finish), (el) => el.child(this.button(t, "jira-finish", "Finish", (cx) => this.finishWork(d, cx), { tip: `Opens a Claude tab named ${d.key} finish with:\n${finish.args.task}` })))
           .child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url))))
         .when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t)))
         .when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t)))

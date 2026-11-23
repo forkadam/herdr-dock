@@ -261,3 +261,48 @@ test("countFailure: only a rejected or forbidden token takes the page; anything 
   assert.equal(countFailure("forbidden"), "page");
   for (const kind of ["invalid", "notfound", "offline", "tls", "timeout", "server", "nocurl", "unknown"]) assert.equal(countFailure(kind), "tab", kind);
 });
+
+// ---- Start and Finish per flow ----
+import { finishWork, startTemplate } from "../src/shared/jira/page.js";
+
+const FLOW_RULES = [
+  { project: "SEC", type: "Bug", start: "/triage {key}", finish: "/close-bug {key}" },
+  { project: "SEC", start: "/triage {key}" },
+  { subtask: true, parentType: ["Story"], finish: "/report {key}" },
+];
+
+test("startTemplate: the first matching rule's start, else the settings' own message", () => {
+  assert.equal(startTemplate(FLOW_RULES, { key: "SEC-1", project: "SEC", type: "Task" }, "/own {key}"), "/triage {key}");
+  // A rule with no start (the third) leaves Start on the settings' message, and so does no rule at all.
+  assert.equal(startTemplate(FLOW_RULES, { key: "WEB-2", project: "WEB", type: "Sub-task", subtask: true, parent: { type: "Story" } }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate(FLOW_RULES, { key: "WEB-3", project: "WEB", type: "Bug" }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate([], { key: "WEB-3" }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate(undefined, { key: "WEB-3" }, "/own {key}"), "/own {key}");
+  // The settings' message may be empty: startTask then falls back to its default, as before rules existed.
+  assert.equal(startTemplate([], { key: "WEB-3" }, ""), "");
+  assert.equal(startWork({ key: "WEB-3", summary: "s", url: "u" }, startTemplate([], { key: "WEB-3" }, "")).args.task, "Work on Jira issue WEB-3: s\nu");
+});
+
+test("startTemplate: a flow's start that uses the description still asks for the detail (needsDetail on the chosen template)", () => {
+  const rules = [{ type: "Bug", start: "/fix {key}\n{description}" }];
+  const row = { key: "WEB-3", type: "Bug", summary: "s", url: "u" };
+  assert.equal(needsDetail(startTemplate(rules, row, "/own {key}")), true);
+  assert.equal(needsDetail(startTemplate(rules, { ...row, type: "Task" }, "/own {key}")), false);
+  assert.match(previewTask(row, startTemplate(rules, row, "")), /\(its description, fetched when you start\)/);
+});
+
+test("finishWork: a Claude tab named '<key> finish' with the matched finish message; none without one", () => {
+  const bug = { key: "SEC-9", project: "SEC", type: "Bug", summary: "Leak", url: "https://j/browse/SEC-9", description: "d" };
+  assert.deepEqual(finishWork(bug, FLOW_RULES), { command: "tab.new", args: { name: "SEC-9 finish", argv: ["claude"], task: "/close-bug SEC-9" } });
+  // A sub-task under a story: only the third rule gives a finish.
+  const sub = { key: "WEB-4", project: "WEB", type: "Sub-task", subtask: true, parent: { key: "WEB-1", type: "Story" } };
+  assert.equal(finishWork(sub, FLOW_RULES).args.task, "/report WEB-4");
+  // Start only (the second rule), no rule, no rules, no issue: no Finish.
+  assert.equal(finishWork({ key: "SEC-2", project: "SEC", type: "Task" }, FLOW_RULES), null);
+  assert.equal(finishWork({ key: "WEB-3", project: "WEB", type: "Bug" }, FLOW_RULES), null);
+  assert.equal(finishWork(bug, []), null);
+  assert.equal(finishWork(bug, undefined), null);
+  assert.equal(finishWork(null, FLOW_RULES), null);
+  // The same placeholders as Start work, filled from the issue.
+  assert.equal(finishWork(bug, [{ finish: "{key} {summary} {type} {description}" }]).args.task, "SEC-9 Leak Bug d");
+});
