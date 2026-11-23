@@ -38,7 +38,7 @@ test("serverInfo needs no token; everything else wants the Bearer token", async 
 test("search: assigned to me and unresolved, newest first, with only the asked fields", async () => {
   const r = await search("assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC", "&fields=summary,status");
   assert.equal(r.status, 200);
-  assert.equal(r.data.total, 10);
+  assert.equal(r.data.total, 12);
   assert.equal(r.data.startAt, 0);
   const i = r.data.issues[0];
   assert.deepEqual(Object.keys(i.fields).sort(), ["status", "summary"]);
@@ -57,7 +57,7 @@ test("dates are shifted so the newest update is minutes before `now`", async () 
 
 test("search: the JQL subset", async () => {
   assert.ok(keys(await search("project = API")).every((k) => k.startsWith("API-")));
-  assert.equal((await search("project in (WEB, OPS)")).data.total, 20);
+  assert.equal((await search("project in (WEB, OPS)")).data.total, 23);
   assert.ok((await search('status = "In Progress"', "&fields=status")).data.issues.every((i) => i.fields.status.name === "In Progress"));
   assert.ok((await search("statusCategory != Done", "&fields=status")).data.issues.every((i) => i.fields.status.statusCategory.key !== "done"));
   assert.ok((await search('statusCategory = "In Progress"', "&fields=status")).data.issues.every((i) => i.fields.status.statusCategory.key === "indeterminate"));
@@ -77,14 +77,14 @@ test("search: the JQL subset", async () => {
 test("search: paging with startAt and maxResults", async () => {
   const a = await search("ORDER BY key ASC", "&maxResults=10");
   const b = await search("ORDER BY key ASC", "&startAt=10&maxResults=10");
-  assert.equal(a.data.total, 30);
+  assert.equal(a.data.total, 33);
   assert.equal(a.data.maxResults, 10);
   assert.equal(b.data.startAt, 10);
   assert.equal(new Set([...keys(a), ...keys(b)]).size, 20);
 });
 
 test("search: JQL outside the subset and unknown projects are 400s in Jira's shape", async () => {
-  for (const jql of ["sprint in openSprints()", "assignee = currentUser() OR reporter = currentUser()", "project = NOPE"]) {
+  for (const jql of ["labels = urgent", "assignee = currentUser() OR reporter = currentUser()", "project = NOPE"]) {
     const r = await search(jql);
     assert.equal(r.status, 400, jql);
     assert.ok(Array.isArray(r.data.errorMessages) && r.data.errorMessages.length, jql);
@@ -228,4 +228,181 @@ test("transitions with expand=transitions.fields: a screen step lists its requir
     const plain = await call(`/rest/api/2/issue/${inReview}/transitions`, { base: own.url });
     assert.equal("fields" in plain.data.transitions[0], false);
   } finally { await own.close(); }
+});
+
+const agile = (path, opts) => call(`/rest/agile/1.0${path}`, opts);
+test("agile: boards, configuration, sprints", async () => {
+  assert.deepEqual((await agile("/board?type=scrum&name=WEB")).data.values.map((b) => b.name), ["WEB board"]);
+  const cols = (await agile("/board/1/configuration")).data.columnConfig.columns;
+  assert.deepEqual(cols.map((c) => c.name), ["To Do", "In Progress", "Done"]);
+  assert.deepEqual(cols[1].statuses.map((s) => s.id), ["3", "10001"]);
+  assert.deepEqual((await agile("/board/1/sprint?state=active")).data.values.map((s) => s.name), ["Sprint 42", "Otter Sprint 7"]);
+  assert.deepEqual((await agile("/board/1/sprint?state=closed")).data.values.map((s) => s.name), ["Sprint 41"]);
+});
+test("search: sprint clauses, rank order, parent field", async () => {
+  const r = await search("sprint = 42 AND assignee = currentUser() ORDER BY Rank", "&fields=parent,issuetype");
+  assert.ok(keys(r).includes("WEB-41"));
+  const sub = r.data.issues.find((i) => i.key === "WEB-41");
+  assert.equal(sub.fields.parent.key, "WEB-40");
+  assert.equal(sub.fields.issuetype.subtask, true);
+  assert.equal((await search("sprint = 7 AND assignee = currentUser()")).data.total, 0);
+  assert.ok((await search("sprint in openSprints() AND assignee = currentUser()")).data.total >= r.data.total);
+});
+
+test("agile boards: a list page in Jira's shape; type and name narrow it (name is a case-insensitive contains)", async () => {
+  const r = await agile("/board?type=scrum&name=WEB");
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.data.startAt, r.data.maxResults, r.data.total, r.data.isLast], [0, 50, 1, true]);
+  assert.deepEqual(Object.keys(r.data.values[0]).sort(), ["id", "name", "self", "type"]);
+  assert.equal(r.data.values[0].id, 1);
+  assert.equal(r.data.values[0].type, "scrum");
+  assert.equal(r.data.values[0].self, `${mock.url}/rest/agile/1.0/board/1`);
+  for (const name of ["web", "board", "B"]) assert.deepEqual((await agile(`/board?name=${name}`)).data.values.map((b) => b.id), [1], name);
+  assert.equal((await agile("/board")).data.values.length, 1);
+  for (const q of ["name=nope", "type=kanban"]) {
+    const none = await agile(`/board?${q}`);
+    assert.deepEqual([none.status, none.data.values, none.data.total, none.data.isLast], [200, [], 0, true], q);
+  }
+});
+
+test("agile board configuration: columns of status ids that are the workflow's own", async () => {
+  const r = await agile("/board/1/configuration");
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.data.id, r.data.name, r.data.type], [1, "WEB board", "scrum"]);
+  assert.equal(r.data.columnConfig.constraintType, "none");
+  const ids = r.data.columnConfig.columns.flatMap((c) => c.statuses.map((s) => s.id));
+  assert.deepEqual(r.data.columnConfig.columns[0].statuses, [{ id: "10000", self: `${mock.url}/rest/api/2/status/10000` }]);
+  assert.equal(new Set(ids).size, ids.length, "a status sits in one column");
+  const known = (await call("/rest/api/2/status")).data.map((s) => s.id);
+  assert.deepEqual([...ids].sort(), [...known].sort(), "the board maps every status of the workflow, and only those");
+});
+
+test("agile sprints: ordered by start, filtered by any listed state, dates ISO with Z shifted like the issues", async () => {
+  const all = (await agile("/board/1/sprint")).data;
+  assert.deepEqual(all.values.map((s) => s.name), ["Sprint 41", "Sprint 42", "Otter Sprint 7", "Sprint 43"]);
+  assert.deepEqual(all.values.map((s) => s.id), [41, 42, 7, 43]);
+  assert.deepEqual([all.startAt, all.maxResults, all.isLast], [0, 50, true]);
+  assert.deepEqual((await agile("/board/1/sprint?state=active,future")).data.values.map((s) => s.name), ["Sprint 42", "Otter Sprint 7", "Sprint 43"]);
+  assert.deepEqual((await agile("/board/1/sprint?state=future")).data.values.map((s) => s.name), ["Sprint 43"]);
+  const iso = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+  for (const s of all.values) {
+    for (const k of ["id", "self", "state", "name", "startDate", "endDate", "originBoardId"]) assert.ok(k in s, `${s.name}.${k}`);
+    assert.equal(s.originBoardId, 1);
+    assert.equal(s.self, `${mock.url}/rest/agile/1.0/sprint/${s.id}`);
+    assert.match(s.startDate, iso);
+    assert.match(s.endDate, iso);
+    assert.equal("completeDate" in s, s.state === "closed", `${s.name} completeDate`);
+    if (s.state === "closed") assert.match(s.completeDate, iso);
+    const [start, end] = [Date.parse(s.startDate), Date.parse(s.endDate)];
+    assert.ok(start < end, s.name);
+    if (s.state === "active") assert.ok(start <= NOW && NOW <= end, `${s.name} spans now`);
+    if (s.state === "closed") assert.ok(end < NOW && Date.parse(s.completeDate) < NOW, `${s.name} is over`);
+    if (s.state === "future") assert.ok(start > NOW, `${s.name} is ahead`);
+  }
+});
+
+test("agile sprints: startAt and maxResults page the list, isLast says when it ends", async () => {
+  const names = (r) => r.data.values.map((s) => s.name);
+  const a = await agile("/board/1/sprint?maxResults=2");
+  assert.deepEqual(names(a), ["Sprint 41", "Sprint 42"]);
+  assert.deepEqual([a.data.startAt, a.data.maxResults, a.data.isLast], [0, 2, false]);
+  const b = await agile("/board/1/sprint?startAt=2&maxResults=2");
+  assert.deepEqual(names(b), ["Otter Sprint 7", "Sprint 43"]);
+  assert.deepEqual([b.data.startAt, b.data.isLast], [2, true]);
+  const c = await agile("/board/1/sprint?startAt=3&maxResults=2");
+  assert.deepEqual([names(c), c.data.isLast], [["Sprint 43"], true]);
+  assert.equal((await agile("/board/1/sprint?maxResults=500")).data.maxResults, 50); // Jira caps a page at 50
+});
+
+test("agile: an unknown board is a 404 in Jira's shape; the routes want the token; only GET", async () => {
+  for (const path of ["/board/99/configuration", "/board/99/sprint"]) {
+    const r = await agile(path);
+    assert.equal(r.status, 404, path);
+    assert.ok(r.data.errorMessages.length, path);
+    assert.deepEqual(r.data.errors, {}, path);
+  }
+  for (const token of [null, "wrong"]) {
+    for (const path of ["/board", "/board/1/configuration", "/board/1/sprint"]) {
+      const r = await agile(path, { token });
+      assert.equal(r.status, 401, path);
+      assert.ok(r.data.errorMessages.length, path);
+    }
+  }
+  assert.equal((await agile("/board", { method: "POST", body: {} })).status, 405);
+  const bad = await startMock({ port: 0, failStatus: 500 });
+  try { assert.equal((await agile("/board/1/sprint", { base: bad.url })).status, 500); } finally { await bad.close(); }
+});
+
+test("search: sprint = <id> is the issues in that sprint, a carry-over is in both; an unknown sprint is a 400", async () => {
+  assert.deepEqual(keys(await search("sprint = 41 ORDER BY key ASC")), ["WEB-3", "WEB-8"]);
+  assert.deepEqual(keys(await search("sprint = 43")), ["WEB-10"]);
+  assert.deepEqual(keys(await search("sprint = 7 ORDER BY key ASC")), ["WEB-9", "WEB-11"]);
+  assert.ok(keys(await search("sprint = 42")).includes("WEB-8")); // carried over from Sprint 41
+  assert.deepEqual(keys(await search("sprint = 42 AND assignee = currentUser() AND statusCategory != Done ORDER BY key ASC")), ["WEB-2", "WEB-4", "WEB-8", "WEB-41", "WEB-42"]);
+  const none = await search("sprint = 999");
+  assert.equal(none.status, 400);
+  assert.match(none.data.errorMessages[0], /999.*Sprint/);
+});
+
+test("search: sprint in openSprints() is every active sprint, Otter's issues included", async () => {
+  const open = keys(await search("sprint in openSprints()"));
+  const both = [...keys(await search("sprint = 42")), ...keys(await search("sprint = 7"))];
+  assert.deepEqual([...open].sort(), [...both].sort());
+  assert.ok(!open.includes("WEB-3") && !open.includes("WEB-10"), "closed and future sprints are not open");
+  assert.ok(open.includes("WEB-9"));
+});
+
+test("search: ORDER BY Rank follows the fixture's rank, Rank DESC reverses it", async () => {
+  const jql = (order) => `sprint = 42 AND assignee = currentUser() ${order}`;
+  const ranked = ["WEB-41", "WEB-4", "WEB-42", "WEB-2", "WEB-8", "WEB-6"];
+  for (const order of ["ORDER BY Rank", "ORDER BY Rank ASC", "ORDER BY rank", "order by RANK asc"]) assert.deepEqual(keys(await search(jql(order))), ranked, order);
+  assert.deepEqual(keys(await search(jql("ORDER BY Rank DESC"))), [...ranked].reverse());
+  assert.notDeepEqual(keys(await search(jql("ORDER BY key ASC"))), ranked, "rank is not just the key order");
+  const board = keys(await search("sprint = 42 ORDER BY Rank"));
+  assert.deepEqual(board, ["WEB-40", "WEB-41", "WEB-1", "WEB-4", "WEB-42", "WEB-2", "WEB-7", "WEB-8", "WEB-5", "WEB-6"]);
+});
+
+test("search and issue: the mock's own sprints, rank and parent bookkeeping never reach the JSON", async () => {
+  const everything = await search("sprint = 42", "&fields=*all");
+  const one = await call("/rest/api/2/issue/WEB-41");
+  const named = await search("sprint = 42", "&fields=sprints,rank,parentKey,summary");
+  for (const r of [everything, one, named]) assert.doesNotMatch(JSON.stringify(r.data), /"(sprints|rank|parentKey)"\s*:/);
+  assert.deepEqual(Object.keys(named.data.issues[0].fields), ["summary"]);
+});
+
+test("sub-tasks: a parent with its summary, status, priority and type; the parent's changes show; stories carry none", async () => {
+  const own = await startMock({ port: 0 });
+  try {
+    const q = (jql, extra) => call(`/rest/api/2/search?jql=${encodeURIComponent(jql)}${extra}`, { base: own.url });
+    const sub = (await q("key in (WEB-41)", "&fields=parent")).data.issues[0];
+    assert.deepEqual(Object.keys(sub.fields), ["parent"]);
+    const parent = sub.fields.parent;
+    assert.deepEqual(Object.keys(parent).sort(), ["fields", "id", "key", "self"]);
+    assert.equal(parent.key, "WEB-40");
+    assert.equal(parent.self, `${own.url}/rest/api/2/issue/${parent.id}`);
+    assert.deepEqual(Object.keys(parent.fields).sort(), ["issuetype", "priority", "status", "summary"]);
+    assert.equal(parent.fields.issuetype.name, "Story");
+    assert.equal(parent.fields.issuetype.subtask, false);
+    assert.equal(parent.fields.status.name, "In Progress");
+    assert.ok(parent.fields.summary && parent.fields.priority.name);
+    // All fields (no `fields` asked, and on one issue) carry the parent too, and the sub-task type says so.
+    const full = await call("/rest/api/2/issue/WEB-42", { base: own.url });
+    assert.equal(full.data.fields.parent.key, "WEB-40");
+    assert.equal(full.data.fields.issuetype.subtask, true);
+    assert.equal(full.data.fields.issuetype.name, "Sub-task");
+    // Only sub-tasks have one: the story asked for it gets no parent field.
+    assert.deepEqual((await q("key in (WEB-40)", "&fields=parent")).data.issues[0].fields, {});
+    assert.equal("parent" in (await call("/rest/api/2/issue/WEB-40", { base: own.url })).data.fields, false);
+    // The parent is read live: moving the story moves what its sub-task says.
+    const go = await call("/rest/api/2/issue/WEB-40/transitions", { base: own.url, method: "POST", body: { transition: { id: "21" } } });
+    assert.equal(go.status, 204);
+    assert.equal((await q("key in (WEB-41)", "&fields=parent")).data.issues[0].fields.parent.fields.status.name, "In Review");
+    // The sub-tasks are the mock user's, unresolved, and findable by type.
+    assert.deepEqual((await q("issuetype = Sub-task AND assignee = currentUser() AND resolution = Unresolved ORDER BY key ASC", "&fields=summary")).data.issues.map((i) => i.key), ["WEB-41", "WEB-42"]);
+  } finally { await own.close(); }
+});
+
+test("project statuses: a sub-task type says it is one", async () => {
+  const web = (await call("/rest/api/2/project/WEB/statuses")).data;
+  assert.deepEqual(web.map((t) => [t.name, t.subtask]).sort(), [["Bug", false], ["Story", false], ["Sub-task", true], ["Task", false]]);
 });

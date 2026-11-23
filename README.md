@@ -245,7 +245,7 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-mine`,
   `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
-  `mock-token`) with 30 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
+  `mock-token`) with 33 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.
 
 ## Render

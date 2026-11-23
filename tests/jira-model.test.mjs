@@ -210,7 +210,7 @@ test("the built-in filters, with and without a search, run on the mock Jira", as
       }
     }
     const mine = await (await fetch(searchUrl(mock.url, BUILTIN_FILTERS[0].jql), { headers: { Authorization: "Bearer mock-token" } })).json();
-    assert.equal(mine.total, 10);
+    assert.equal(mine.total, 12);
     assert.equal(groupByCategory(mine.issues.map((i) => issueRow(i, mock.url))).some((g) => g.category === "done"), false);
   } finally { await mock.close(); }
 });

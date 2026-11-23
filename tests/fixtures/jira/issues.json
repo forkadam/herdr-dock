@@ -34,6 +34,10 @@
    "id": "20000",
    "key": "WEB-1",
    "self": "http://jira.mock/rest/api/2/issue/20000",
+   "rank": 3,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Search banner overlaps the filters on narrow screens",
     "description": "h3. Context\nSearch banner overlaps the filters on narrow screens was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -107,6 +111,10 @@
    "id": "20001",
    "key": "WEB-2",
    "self": "http://jira.mock/rest/api/2/issue/20001",
+   "rank": 6,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Daily search limit banner",
     "description": "h3. Context\nDaily search limit banner was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -193,6 +201,10 @@
    "id": "20002",
    "key": "WEB-3",
    "self": "http://jira.mock/rest/api/2/issue/20002",
+   "rank": 14,
+   "sprints": [
+    41
+   ],
    "fields": {
     "summary": "Dark mode: chart tooltips unreadable",
     "description": "h3. Context\nDark mode: chart tooltips unreadable was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -289,6 +301,10 @@
    "id": "20003",
    "key": "WEB-4",
    "self": "http://jira.mock/rest/api/2/issue/20003",
+   "rank": 4,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Sign-in page loses the return URL",
     "description": "h3. Context\nSign-in page loses the return URL was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -401,6 +417,10 @@
    "id": "20004",
    "key": "WEB-5",
    "self": "http://jira.mock/rest/api/2/issue/20004",
+   "rank": 9,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Upgrade the date picker",
     "description": null,
@@ -472,6 +492,10 @@
    "id": "20005",
    "key": "WEB-6",
    "self": "http://jira.mock/rest/api/2/issue/20005",
+   "rank": 10,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Profile photo upload fails over 5 MB",
     "description": "h3. Context\nProfile photo upload fails over 5 MB was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -548,6 +572,10 @@
    "id": "20006",
    "key": "WEB-7",
    "self": "http://jira.mock/rest/api/2/issue/20006",
+   "rank": 7,
+   "sprints": [
+    42
+   ],
    "fields": {
     "summary": "Keyboard focus lost after closing a dialog",
     "description": "h3. Context\nKeyboard focus lost after closing a dialog was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -634,6 +662,11 @@
    "id": "20007",
    "key": "WEB-8",
    "self": "http://jira.mock/rest/api/2/issue/20007",
+   "rank": 8,
+   "sprints": [
+    41,
+    42
+   ],
    "fields": {
     "summary": "Pagination resets when changing sort",
     "description": "h3. Context\nPagination resets when changing sort was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -733,6 +766,10 @@
    "id": "20008",
    "key": "WEB-9",
    "self": "http://jira.mock/rest/api/2/issue/20008",
+   "rank": 11,
+   "sprints": [
+    7
+   ],
    "fields": {
     "summary": "Add empty state to saved searches",
     "description": "h3. Context\nAdd empty state to saved searches was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -857,6 +894,10 @@
    "id": "20009",
    "key": "WEB-10",
    "self": "http://jira.mock/rest/api/2/issue/20009",
+   "rank": 13,
+   "sprints": [
+    43
+   ],
    "fields": {
     "summary": "Slow first paint on the dashboard",
     "description": "h3. Context\nSlow first paint on the dashboard was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check web\n{code}\n\nSee [the design doc|https://wiki.example.com/web] for details.",
@@ -910,6 +951,10 @@
    "id": "20010",
    "key": "WEB-11",
    "self": "http://jira.mock/rest/api/2/issue/20010",
+   "rank": 12,
+   "sprints": [
+    7
+   ],
    "fields": {
     "summary": "Typo in the onboarding email",
     "description": null,
@@ -983,6 +1028,7 @@
    "id": "20011",
    "key": "API-1",
    "self": "http://jira.mock/rest/api/2/issue/20011",
+   "rank": 15,
    "fields": {
     "summary": "Rate limit headers missing on 429",
     "description": "h3. Context\nRate limit headers missing on 429 was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1069,6 +1115,7 @@
    "id": "20012",
    "key": "API-2",
    "self": "http://jira.mock/rest/api/2/issue/20012",
+   "rank": 16,
    "fields": {
     "summary": "Enforce daily search quota per account",
     "description": "h3. Context\nEnforce daily search quota per account was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1183,6 +1230,7 @@
    "id": "20013",
    "key": "API-3",
    "self": "http://jira.mock/rest/api/2/issue/20013",
+   "rank": 17,
    "fields": {
     "summary": "v2 /candidates returns duplicates",
     "description": "h3. Context\nv2 /candidates returns duplicates was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1295,6 +1343,7 @@
    "id": "20014",
    "key": "API-4",
    "self": "http://jira.mock/rest/api/2/issue/20014",
+   "rank": 18,
    "fields": {
     "summary": "Document the webhook retry policy",
     "description": "h3. Context\nDocument the webhook retry policy was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1354,6 +1403,7 @@
    "id": "20015",
    "key": "API-5",
    "self": "http://jira.mock/rest/api/2/issue/20015",
+   "rank": 19,
    "fields": {
     "summary": "Timeout on bulk export over 10k rows",
     "description": "h3. Context\nTimeout on bulk export over 10k rows was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1430,6 +1480,7 @@
    "id": "20016",
    "key": "API-6",
    "self": "http://jira.mock/rest/api/2/issue/20016",
+   "rank": 20,
    "fields": {
     "summary": "Deprecate the v1 search endpoint",
     "description": null,
@@ -1522,6 +1573,7 @@
    "id": "20017",
    "key": "API-7",
    "self": "http://jira.mock/rest/api/2/issue/20017",
+   "rank": 21,
    "fields": {
     "summary": "Add ETag to /profiles",
     "description": "h3. Context\nAdd ETag to /profiles was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1621,6 +1673,7 @@
    "id": "20018",
    "key": "API-8",
    "self": "http://jira.mock/rest/api/2/issue/20018",
+   "rank": 22,
    "fields": {
     "summary": "Validation error shape differs from the docs",
     "description": "h3. Context\nValidation error shape differs from the docs was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1733,6 +1786,7 @@
    "id": "20019",
    "key": "API-9",
    "self": "http://jira.mock/rest/api/2/issue/20019",
+   "rank": 23,
    "fields": {
     "summary": "Search ranking ignores recent activity",
     "description": "h3. Context\nSearch ranking ignores recent activity was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1792,6 +1846,7 @@
    "id": "20020",
    "key": "API-10",
    "self": "http://jira.mock/rest/api/2/issue/20020",
+   "rank": 24,
    "fields": {
     "summary": "OAuth refresh token rotation",
     "description": "h3. Context\nOAuth refresh token rotation was reported by support.\n\n*Steps*\n# Open the page\n# Look at the result\n\n{code:bash}\necho check api\n{code}\n\nSee [the design doc|https://wiki.example.com/api] for details.",
@@ -1877,6 +1932,7 @@
    "id": "20021",
    "key": "OPS-1",
    "self": "http://jira.mock/rest/api/2/issue/20021",
+   "rank": 25,
    "fields": {
     "summary": "Rotate the staging database credentials",
     "description": "h3. Context\nRotate the staging database credentials was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -1963,6 +2019,7 @@
    "id": "20022",
    "key": "OPS-2",
    "self": "http://jira.mock/rest/api/2/issue/20022",
+   "rank": 26,
    "fields": {
     "summary": "Alert on disk usage over 85%",
     "description": null,
@@ -2065,6 +2122,7 @@
    "id": "20023",
    "key": "OPS-3",
    "self": "http://jira.mock/rest/api/2/issue/20023",
+   "rank": 27,
    "fields": {
     "summary": "Nightly backup job failed twice",
     "description": "h3. Context\nNightly backup job failed twice was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2171,6 +2229,7 @@
    "id": "20024",
    "key": "OPS-4",
    "self": "http://jira.mock/rest/api/2/issue/20024",
+   "rank": 28,
    "fields": {
     "summary": "Move CI runners to the new pool",
     "description": "h3. Context\nMove CI runners to the new pool was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2242,6 +2301,7 @@
    "id": "20025",
    "key": "OPS-5",
    "self": "http://jira.mock/rest/api/2/issue/20025",
+   "rank": 29,
    "fields": {
     "summary": "Grafana dashboard for search latency",
     "description": "h3. Context\nGrafana dashboard for search latency was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2318,6 +2378,7 @@
    "id": "20026",
    "key": "OPS-6",
    "self": "http://jira.mock/rest/api/2/issue/20026",
+   "rank": 30,
    "fields": {
     "summary": "Renew the wildcard certificate",
     "description": "h3. Context\nRenew the wildcard certificate was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2404,6 +2465,7 @@
    "id": "20027",
    "key": "OPS-7",
    "self": "http://jira.mock/rest/api/2/issue/20027",
+   "rank": 31,
    "fields": {
     "summary": "Clean up old preview environments",
     "description": "h3. Context\nClean up old preview environments was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2503,6 +2565,7 @@
    "id": "20028",
    "key": "OPS-8",
    "self": "http://jira.mock/rest/api/2/issue/20028",
+   "rank": 32,
    "fields": {
     "summary": "Log retention to 30 days",
     "description": null,
@@ -2627,6 +2690,7 @@
    "id": "20029",
    "key": "OPS-9",
    "self": "http://jira.mock/rest/api/2/issue/20029",
+   "rank": 33,
    "fields": {
     "summary": "Patch the bastion host",
     "description": "h3. Context\nPatch the bastion host was reported by support.\n\n*Steps*\n# Open the runbook\n# Look at the result\n\n{code:bash}\necho check ops\n{code}\n\nSee [the design doc|https://wiki.example.com/ops] for details.",
@@ -2673,6 +2737,197 @@
     },
     "created": "2026-11-07T22:00:00.000+0000",
     "updated": "2026-11-11T16:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20030",
+   "key": "WEB-40",
+   "self": "http://jira.mock/rest/api/2/issue/20030",
+   "rank": 1,
+   "sprints": [
+    42
+   ],
+   "fields": {
+    "summary": "Redesign the search results page",
+    "description": "h3. Goal\nRedesign the search results page: a filter bar that stays in view and a clearer empty state.\n\n*Sub-tasks*\n# Build the new filter bar\n# Write tests for the filter bar",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T02:00:00.000+0000",
+    "updated": "2026-11-18T16:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20031",
+   "key": "WEB-41",
+   "self": "http://jira.mock/rest/api/2/issue/20031",
+   "rank": 2,
+   "sprints": [
+    42
+   ],
+   "parentKey": "WEB-40",
+   "fields": {
+    "summary": "Build the new filter bar",
+    "description": "h3. Context\nPart of the results page redesign.\n\n*Done when*\n# The bar stays in view while scrolling\n# Filters can be cleared in one click",
+    "issuetype": {
+     "id": "5",
+     "name": "Sub-task",
+     "subtask": true,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/subtask.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "High",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T03:00:00.000+0000",
+    "updated": "2026-11-19T03:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20032",
+   "key": "WEB-42",
+   "self": "http://jira.mock/rest/api/2/issue/20032",
+   "rank": 5,
+   "sprints": [
+    42
+   ],
+   "parentKey": "WEB-40",
+   "fields": {
+    "summary": "Write tests for the filter bar",
+    "description": "h3. Context\nPart of the results page redesign. Cover the narrow-screen layout and clearing the filters.",
+    "issuetype": {
+     "id": "5",
+     "name": "Sub-task",
+     "subtask": true,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/subtask.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "Medium",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-16T03:00:00.000+0000",
+    "updated": "2026-11-16T03:00:00.000+0000",
     "comment": {
      "comments": [],
      "maxResults": 0,

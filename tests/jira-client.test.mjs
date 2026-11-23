@@ -46,7 +46,7 @@ for (const transport of ["fetch", "curl"]) {
     assert.equal((await c.myself()).data.name, "me");
     const s = await c.search("assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC", { maxResults: 5 });
     assert.equal(s.ok, true);
-    assert.equal(s.data.total, 10);
+    assert.equal(s.data.total, 12);
     assert.equal(s.data.issues.length, 5);
     const key = s.data.issues[0].key;
     const issue = await c.issue(key);
@@ -87,7 +87,7 @@ for (const transport of ["fetch", "curl"]) {
     assert.equal(wrong.ok, false);
     assert.equal(wrong.problem.kind, "auth");
     assert.ok(!wrong.problem.message.includes("nope"));
-    const bad = await client(transport).search("sprint in openSprints()");
+    const bad = await client(transport).search("labels = urgent");
     assert.equal(bad.problem.kind, "invalid");
     assert.match(bad.problem.message, /Unable to parse/);
     assert.equal((await client(transport).issue("WEB-999")).problem.kind, "notfound");
