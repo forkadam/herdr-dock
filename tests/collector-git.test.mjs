@@ -746,3 +746,59 @@ test("lost git call (e): a worktree delete that never answers ends in an error n
   assert.equal(notes.length, 1);
   assert.equal(notes[0].body, "timeout");
 });
+
+// --- auto-add never appends a path already listed (docs/superpowers/plans/2026-11-23-auto-add-no-duplicates.md) ---
+const refused = () => { throw new Error("ssh: connection refused"); };
+const ticks = async (io, c, n) => { for (let i = 0; i < n; i++) { io.t = i * 1000; await c.tick(); } };
+
+test("auto-add (a): a repo whose listing keeps failing isn't appended again every tick", async () => {
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }],
+    table: {
+      [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": refused,
+      " -C /w/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 11);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/api", machine: null }]);
+});
+
+test("auto-add (b): on Windows, an added path in another case counts as listed", async () => {
+  const io = fakeIo({
+    platform: "windows", autoAdd: true, spaces: oneSpace, repos: [{ path: "D:/Work/Api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "D:/work/api" }],
+    table: {
+      [` -C D:/Work/Api ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      [` -C D:/work/api ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      " -C D:/work/api worktree list --porcelain": refused,
+      " -C D:/work/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 5);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "D:/Work/Api", machine: null }]);
+});
+
+test("auto-add (c): the same path on another machine is a different repo, still added once", async () => {
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, repos: [{ path: "/w/api", machine: null }],
+    spaces: [{ id: "s1", name: "a", machine: "devbox", tabs: [{ id: "t1" }] }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }],
+    table: {
+      [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": refused,
+      [`devbox -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      "devbox -C /w/api worktree list --porcelain": refused,
+      "devbox -C /w/api remote get-url origin": NO_ORIGIN,
+      "devbox --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 5);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/api", machine: null }, { path: "/w/api", machine: "devbox" }]);
+});

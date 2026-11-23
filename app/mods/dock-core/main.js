@@ -953,11 +953,12 @@ function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return;
     if (resolving) return;
+    const listed = new Set(addedList.map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
       const w = [...r.wts.values()].find((x) => x.open);
-      if (w) extra.push({ path: w.path, machine: r.machine ?? null });
+      if (w && !listed.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...io.shared(REPOS_KEY) ?? [], ...extra]);
   }

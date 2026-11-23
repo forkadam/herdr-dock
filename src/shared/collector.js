@@ -365,11 +365,14 @@ export function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return; // tests of other behaviour can turn it off; on in the app
     if (resolving) return;
+    // An added entry whose listing failed is keyed by its path, not its common dir, so its terminal's row looks
+    // un-added: never append a path that is already listed (the same check as the panel's Add repo).
+    const listed = new Set(addedList.map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
       const w = [...r.wts.values()].find((x) => x.open);
-      if (w) extra.push({ path: w.path, machine: r.machine ?? null });
+      if (w && !listed.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...(io.shared(REPOS_KEY) ?? []), ...extra]);
   }
