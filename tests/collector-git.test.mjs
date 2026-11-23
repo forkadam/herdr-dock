@@ -878,3 +878,30 @@ test("auto-add (f): Remove on a failing repo with a terminal in it sticks until 
   await c.tick();
   assert.deepEqual(io.shared("dock.git.skipped"), []);
 });
+
+test("rev-parse failing after a good listing: the error row is keyed by its path, not the old common dir", async () => {
+  const state = { gone: false };
+  const io = fakeIo({
+    platform: "linux", repos: [{ path: "/w/api", machine: null }],
+    table: {
+      [` -C /w/api ${RP}`]: () =>
+        state.gone ? { code: 128, stdout: "", stderr: "fatal: not a git repository" } : ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": wtList(["/w/api", "main"]),
+      " -C /w/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(c.state().repos.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
+  state.gone = true; // the folder is deleted
+  io.t = 60000;
+  await c.tick();
+  const rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.added]), [["|/w/api", true]]);
+  assert.match(rows[0].error, /not a git repository/);
+  state.gone = false; // it comes back
+  io.t = 120000;
+  await c.tick();
+  assert.deepEqual(c.state().repos.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
+});
