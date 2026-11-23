@@ -2,6 +2,7 @@ import { build } from "esbuild";
 import { readdirSync, readFileSync, mkdirSync, copyFileSync, rmSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { patchMermaidIds } from "../src/shared/render/mermaid-patch.js";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -36,6 +37,10 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
         entryPoints: [join(ROOT, "src/app/render-helper.js")], outfile: join(dest, "herdr-render.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
         banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+        // beautiful-mermaid's node ids, made arrow-aware so `A-->B` is two nodes (src/shared/render/mermaid-patch.js).
+        plugins: [{ name: "beautiful-mermaid-ids", setup(b) {
+          b.onLoad({ filter: /beautiful-mermaid[\\/]dist[\\/]index\.js$/ }, (a) => ({ contents: patchMermaidIds(readFileSync(a.path, "utf8")), loader: "js" }));
+        } }],
       });
     }
     if (name === "dock-quotas") {

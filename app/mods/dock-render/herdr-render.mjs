@@ -93077,37 +93077,37 @@ var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\.-|===)(?:\|([^|]*)\|)?/;
 var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|===)/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
-  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
   // A(((text)))
   // Double delimiters with mixed brackets
-  { regex: /^([\w-]+)\(\[(.+?)\]\)/, shape: "stadium" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\[(.+?)\]\)/, shape: "stadium" },
   // A([text])
-  { regex: /^([\w-]+)\(\((.+?)\)\)/, shape: "circle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\((.+?)\)\)/, shape: "circle" },
   // A((text))
-  { regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: "subroutine" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\[(.+?)\]\]/, shape: "subroutine" },
   // A[[text]]
-  { regex: /^([\w-]+)\[\((.+?)\)\]/, shape: "cylinder" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\((.+?)\)\]/, shape: "cylinder" },
   // A[(text)]
   // Trapezoid variants — must come before plain [text]
-  { regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: "trapezoid" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\/(.+?)\\\]/, shape: "trapezoid" },
   // A[/text\]
-  { regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: "trapezoid-alt" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\\(.+?)\/\]/, shape: "trapezoid-alt" },
   // A[\text/]
   // Asymmetric flag shape
-  { regex: /^([\w-]+)>(.+?)\]/, shape: "asymmetric" },
+  { regex: /^((?:\w|-(?![-.>]))+)>(.+?)\]/, shape: "asymmetric" },
   // A>text]
   // Double curly braces (hexagon) — must come before single {text}
-  { regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: "hexagon" },
+  { regex: /^((?:\w|-(?![-.>]))+)\{\{(.+?)\}\}/, shape: "hexagon" },
   // A{{text}}
   // Single-char delimiters (last — most common, least specific)
-  { regex: /^([\w-]+)\[(.+?)\]/, shape: "rectangle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[(.+?)\]/, shape: "rectangle" },
   // A[text]
-  { regex: /^([\w-]+)\((.+?)\)/, shape: "rounded" },
+  { regex: /^((?:\w|-(?![-.>]))+)\((.+?)\)/, shape: "rounded" },
   // A(text)
-  { regex: /^([\w-]+)\{(.+?)\}/, shape: "diamond" }
+  { regex: /^((?:\w|-(?![-.>]))+)\{(.+?)\}/, shape: "diamond" }
   // A{text}
 ];
-var BARE_NODE_REGEX = /^([\w-]+)/;
+var BARE_NODE_REGEX = /^((?:\w|-(?![-.>]))+)/;
 var CLASS_SHORTHAND_REGEX = /^:::([\w][\w-]*)/;
 function parseEdgeLine(line, graph, subgraphStack) {
   let remaining = line.trim();
@@ -97325,7 +97325,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 3;
+var LOOK_VERSION = 4;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;
