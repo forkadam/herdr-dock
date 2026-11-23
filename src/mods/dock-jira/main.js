@@ -92,8 +92,8 @@ export default class Jira extends View {
     // was last dropped on there (its choice box or note shows in that column, in the card's lane).
     this.sprint = blankSprint(null);
     this.sprintOpen = false;
-    // The board's closed sprints (readClosed): its newest read wins, and the read the menu started (a promise; a
-    // refresh of Today waits for it).
+    // The board's closed sprints (readClosed): its newest read wins, and the read running (a promise, the menu's or a
+    // refresh's; a refresh of Today starting waits for it).
     this.closedSeq = latestOnly();
     this.closedRead = null;
     this.collapsed = new Set();
@@ -449,7 +449,8 @@ export default class Jira extends View {
     };
     s.loading = true;
     cx.notify();
-    // A read of the closed sprints the menu started ends first: requests go one at a time.
+    // A read of the closed sprints still running (the menu's, or an older refresh's) ends first: requests go one at a
+    // time. Only here, before this refresh starts one of its own (closedInTurn awaits that one where it starts it).
     if (this.closedRead) { await this.closedRead; if (!live()) return; }
     const c = this.client(cx);
     const onBoard = (problem) => { this.sprint = { ...this.sprint, problem }; };
@@ -680,20 +681,26 @@ export default class Jira extends View {
   // The board's closed sprints (the sprint menu's older ones; the series it offers with no active sprint), when
   // closedNeeded says so: this.sprint's `closed` and `closedAt`, or `closedProblem`, said in the menu (never the page's
   // problem, nor the board's). `closedLoading` while it runs (one read at a time); its newest read wins, and an answer
-  // for a board or a site the page has left since is dropped. Drawn when it ends (the menu fills in while open).
-  async readClosed(c, cx) {
+  // for a board or a site the page has left since is dropped. Drawn when it ends (the menu fills in while open). The
+  // read is this.closedRead while it runs, whoever started it, so a refresh of Today starting meanwhile waits for it.
+  readClosed(c, cx) {
     const board = this.options.board;
     const s = this.state("today");
     const seq = this.closedSeq.next();
     const live = () => this.closedSeq.accept(seq) && this.states.get("today") === s && this.options.board === board;
     this.sprint = { ...this.sprint, closedLoading: true, closedProblem: null };
     cx.notify();
-    const r = await c.sprints(board, ["closed"]);
-    if (!live()) return;
-    this.sprint = r.ok
-      ? { ...this.sprint, closed: r.data, closedAt: Date.now(), closedLoading: false }
-      : { ...this.sprint, closedLoading: false, closedProblem: r.problem };
-    cx.notify();
+    const read = (async () => {
+      const r = await c.sprints(board, ["closed"]);
+      if (this.closedRead === read) this.closedRead = null;
+      if (!live()) return;
+      this.sprint = r.ok
+        ? { ...this.sprint, closed: r.data, closedAt: Date.now(), closedLoading: false }
+        : { ...this.sprint, closedLoading: false, closedProblem: r.problem };
+      cx.notify();
+    })();
+    this.closedRead = read;
+    return read;
   }
 
   // The sprint menu opened or closed. Opened, its older sprints are read when closedNeeded says so: now, or, while
@@ -704,12 +711,7 @@ export default class Jira extends View {
     const sp = this.sprint;
     if (!open || !sp.cachedAt || sp.closedLoading || this.state("today").loading) return;
     if (!closedNeeded({ active: sp.active, menuOpen: open, closedAt: sp.closedAt })) return;
-    cx.spawn(async (cx) => {
-      const read = this.readClosed(this.client(cx), cx);
-      this.closedRead = read;
-      await read;
-      if (this.closedRead === read) this.closedRead = null;
-    });
+    cx.spawn(async (cx) => this.readClosed(this.client(cx), cx));
   }
 
   // The sprint menu: shows another sprint of the board, from the top, with nothing open (not remembered: Today opens
