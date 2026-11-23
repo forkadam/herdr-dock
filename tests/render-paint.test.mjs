@@ -115,3 +115,15 @@ test("paintDiagram: a chart's legend, line shadows and dots take their series' c
     assert.ok((a.style ?? "").includes(want), `${a.tag}.${a.class} has ${want}`);
   }
 });
+
+test("styledIds: a classed node after an unspaced open link (--- or -.-) is the node, not the arrow", () => {
+  const ids = (line) => [...styledIds("flowchart LR\n  " + line).ids].sort();
+  assert.deepEqual(ids("A:::hot---B:::cold"), ["A", "B"]);
+  assert.deepEqual(ids("A:::hot-.-B:::cold"), ["A", "B"]);
+  assert.deepEqual(ids("A---B:::cold"), ["B"]);
+  assert.deepEqual(ids("A[x]---B:::cold"), ["B"]);
+  assert.deepEqual(ids("A:::hot-->B:::cold"), ["A", "B"]);
+  assert.deepEqual(ids("A-->B:::cold"), ["B"]);
+  assert.deepEqual(ids("my-node:::x --- B"), ["my-node"]);
+  assert.deepEqual(ids("A --- my-node:::x"), ["my-node"]);
+});

@@ -62,7 +62,11 @@ function idBefore(text) {
       else if (Object.values(close).includes(ch) && --depth === 0) { end = i; break; }
     }
   }
-  return /([\w.-]+)\s*$/.exec(text.slice(0, end))?.[1] ?? null;
+  const token = /([\w.-]+)\s*$/.exec(text.slice(0, end))?.[1];
+  // An open link written without spaces (--- or -.-) is made of these characters too: the id is what follows the last
+  // arrow-starting hyphen run (a hyphen before -, . or >, the rule the patched parser uses), so `hot---B` is `B` and
+  // `my-node` stays whole.
+  return token?.split(/-(?=[-.>])[-.]*/).pop() || null;
 }
 
 // The nodes the source styles itself: `style X`, `class X,Y name` (not in a class diagram, where it declares a class),

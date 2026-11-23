@@ -4,7 +4,7 @@ import { hashText } from "./markdown.js";
 
 // The drawing's version: bumped whenever how a picture is drawn changes (painting, figures), so a file drawn before
 // isn't shown again. It is part of the theme id, the cache name's second part.
-export const LOOK_VERSION = 5;
+export const LOOK_VERSION = 6;
 export const themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 
 export const CACHE_MAX_AGE_MS = 14 * 86400e3;

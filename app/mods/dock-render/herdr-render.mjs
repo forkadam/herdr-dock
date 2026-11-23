@@ -97325,7 +97325,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 5;
+var LOOK_VERSION = 6;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;
@@ -97409,7 +97409,8 @@ function idBefore(text) {
       }
     }
   }
-  return /([\w.-]+)\s*$/.exec(text.slice(0, end))?.[1] ?? null;
+  const token = /([\w.-]+)\s*$/.exec(text.slice(0, end))?.[1];
+  return token?.split(/-(?=[-.>])[-.]*/).pop() || null;
 }
 function styledIds(source) {
   const lines = String(source ?? "").split("\n");

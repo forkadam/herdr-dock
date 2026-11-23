@@ -93,3 +93,20 @@ test("the built Render helper draws a :::class node followed by an unspaced arro
     });
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
+
+test("the built Render helper keeps a classed node's colour after an unspaced open link", () => {
+  const h = mkdtempSync(join(tmpdir(), "render-open-"));
+  try {
+    const cases = ["A:::hot---B:::cold", "A:::hot-.-B:::cold", "A---B:::cold", "A[x]---B:::cold"];
+    const f = join(h, "open.md");
+    writeFileSync(f, cases.map((c) => "```mermaid\nflowchart LR\n  " + c + "\n  classDef hot fill:#ff0000\n  classDef cold fill:#0000ff\n```").join("\n\n"));
+    const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const segs = JSON.parse(r.stdout).segments;
+    assert.equal(segs.length, cases.length);
+    segs.forEach((s, i) => {
+      const svg = readFileSync(join(h, s.svg), "utf8");
+      assert.match(svg, /<g class="node" data-id="B"[^>]*>\s*<[a-z]+[^>]*fill="#0000ff"/, `${cases[i]}: B keeps cold's blue`);
+    });
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
