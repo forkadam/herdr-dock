@@ -447,7 +447,16 @@ function bytesOf(data) {
   return decodeBase64(data);
 }
 var textOf = (raw) => typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-async function clearFolder(rel) {
+var clearing = /* @__PURE__ */ new Map();
+function clearFolder(rel) {
+  const p = (clearing.get(rel) ?? Promise.resolve()).then(() => removeFolder(rel));
+  clearing.set(rel, p);
+  p.finally(() => {
+    if (clearing.get(rel) === p) clearing.delete(rel);
+  });
+  return p;
+}
+async function removeFolder(rel) {
   const dir = `${slashPath(appHome())}/${rel}`;
   let names = [];
   try {
@@ -491,6 +500,8 @@ var Stream = class {
     cx.spawn(async () => {
       let ws = null;
       try {
+        await (clearing.get(this.framesRel) ?? Promise.resolve()).catch(() => {
+        });
         await fs.mkdir(`${home2}/${this.framesRel}`, { recursive: true });
         ws = await WebSocket.connect(`ws://127.0.0.1:${this.port}/?maxFps=${MAX_FPS}`);
         if (this.stopped || gen !== this.gen) {
@@ -539,11 +550,17 @@ var Stream = class {
     const size = jpegSize(bytes);
     if (!size) return;
     const { rel, drop } = this.ring.next(`${this.epoch}-${++this.count}`);
+    const file = `${home2}/${rel}`;
     try {
-      await fs.writeFile(`${home2}/${rel}`, bytes);
+      await fs.writeFile(file, bytes);
     } catch {
-      this.ring.list = this.ring.list.filter((r) => r !== rel);
-      return;
+      try {
+        await fs.mkdir(`${home2}/${this.framesRel}`, { recursive: true });
+        await fs.writeFile(file, bytes);
+      } catch {
+        this.ring.list = this.ring.list.filter((r) => r !== rel);
+        return;
+      }
     }
     for (const d of drop) fs.unlink(`${home2}/${d}`).catch(() => {
     });

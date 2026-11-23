@@ -24,8 +24,19 @@ function bytesOf(data) {
 
 const textOf = (raw) => (typeof raw === "string" ? raw : new TextDecoder().decode(raw));
 
+// Clears in flight, by folder: a new stream for the same terminal waits for the old one's clear, so the old rmdir
+// never lands after the new mkdir.
+const clearing = new Map();
+
 // Every file in an app-home-relative folder, then the folder: what a stopped stream leaves behind.
-export async function clearFolder(rel) {
+export function clearFolder(rel) {
+  const p = (clearing.get(rel) ?? Promise.resolve()).then(() => removeFolder(rel));
+  clearing.set(rel, p);
+  p.finally(() => { if (clearing.get(rel) === p) clearing.delete(rel); });
+  return p;
+}
+
+async function removeFolder(rel) {
   const dir = `${slashPath(appHome())}/${rel}`;
   let names = [];
   try { names = await fs.readdir(dir); } catch { return; }
@@ -60,6 +71,7 @@ export class Stream {
     cx.spawn(async () => {
       let ws = null;
       try {
+        await (clearing.get(this.framesRel) ?? Promise.resolve()).catch(() => {});
         await fs.mkdir(`${home}/${this.framesRel}`, { recursive: true });
         ws = await WebSocket.connect(`ws://127.0.0.1:${this.port}/?maxFps=${MAX_FPS}`);
         if (this.stopped || gen !== this.gen) { ws.close().catch(() => {}); return; }
@@ -97,11 +109,18 @@ export class Stream {
     const size = jpegSize(bytes);
     if (!size) return;
     const { rel, drop } = this.ring.next(`${this.epoch}-${++this.count}`);
+    const file = `${home}/${rel}`;
     try {
-      await fs.writeFile(`${home}/${rel}`, bytes);
+      await fs.writeFile(file, bytes);
     } catch {
-      this.ring.list = this.ring.list.filter((r) => r !== rel);
-      return;
+      // The folder went away under us (a clear that landed late): make it again and try once more.
+      try {
+        await fs.mkdir(`${home}/${this.framesRel}`, { recursive: true });
+        await fs.writeFile(file, bytes);
+      } catch {
+        this.ring.list = this.ring.list.filter((r) => r !== rel);
+        return;
+      }
     }
     for (const d of drop) fs.unlink(`${home}/${d}`).catch(() => {});
     if (this.stopped) { fs.unlink(`${home}/${rel}`).catch(() => {}); return; }
