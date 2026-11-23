@@ -37,7 +37,7 @@ function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "w
     async exec(cmd, args, opts) {
       if (cmd !== "git") throw new Error(`spawn ${cmd} ENOENT`); // no glab/gh here: CI shows "not logged in"
       const key = `${opts?.on ?? ""} ${args.join(" ")}`;
-      io.calls.push({ key, on: opts?.on });
+      io.calls.push({ key, on: opts?.on, timeout: opts?.timeout });
       io.active++;
       io.maxActive = Math.max(io.maxActive, io.active);
       await new Promise((r) => setTimeout(r, 1));
@@ -648,4 +648,101 @@ test("deleteWorktree: git's refusal (uncommitted changes) comes back as the erro
   assert.equal(notes.length, 1);
   assert.equal(notes[0].level, "error");
   assert.match(notes[0].body, /modified or untracked files/);
+});
+
+// --- git calls that never answer (docs/superpowers/plans/2026-11-23-git-call-deadline.md) ---
+// A tick waiting on a lost call never ends, so these tests don't await tick(): tickAt runs it at fake time t and
+// lets its git calls (1 ms each in fakeIo) and the follow-up work settle.
+const lost = () => new Promise(() => {});
+async function tickAt(io, c, t) {
+  io.t = t;
+  c.tick();
+  await new Promise((r) => setTimeout(r, 20));
+}
+const oneSpace = [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }];
+const LOCAL_TOOL = {
+  " -C /w/tool remote get-url origin": NO_ORIGIN,
+  " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": status("main"),
+};
+
+test("lost git call (a): gives up after 30 s and frees its slot, so the call queued behind it runs", async () => {
+  const dead = ["/w/l1", "/w/l2", "/w/l3", "/w/l4"];
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace,
+    panes: [...dead, "/w/tool"].map((cwd, i) => ({ pane: `p${i}`, tab: "t1", cwd })),
+    table: { ...Object.fromEntries(dead.map((d) => [` -C ${d} ${RP}`, lost])), [` -C /w/tool ${RP}`]: ok("/w/tool\n/w/tool/.git\n"), ...LOCAL_TOOL },
+  });
+  const c = createCollector(io);
+  for (let t = 0; t <= 29000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 0, "queued behind the four lost calls");
+  assert.deepEqual(c.state().repos, []);
+  await tickAt(io, c, 30000);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"], "its own 30 s start when it runs, not when queued");
+  for (const call of io.calls) assert.equal(call.timeout, 30000, call.key);
+});
+
+test("lost git call (b): a rev-parse that gave up is tried again, not cached as 'not a repo'", async () => {
+  let n = 0;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: { [` -C /w/tool ${RP}`]: () => (n++ ? ok("/w/tool\n/w/tool/.git\n") : lost()), ...LOCAL_TOOL },
+  });
+  const logs = [];
+  io.log = (m) => logs.push(m);
+  const c = createCollector(io);
+  for (let t = 0; t <= 31000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 2);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"]);
+  assert.ok(logs.some((m) => m.includes("/w/tool") && m.includes("timeout")), logs.join("\n"));
+});
+
+test("lost git call (c): a slow answer inside 30 s is used, never given up", async () => {
+  let answer;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: { [` -C /w/tool ${RP}`]: () => new Promise((r) => { answer = r; }), ...LOCAL_TOOL },
+  });
+  const logs = [];
+  io.log = (m) => logs.push(m);
+  const c = createCollector(io);
+  for (let t = 0; t <= 20000; t += 1000) await tickAt(io, c, t);
+  answer(ok("/w/tool\n/w/tool/.git\n"));
+  for (let t = 21000; t <= 45000; t += 1000) await tickAt(io, c, t);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"]);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 1);
+  assert.equal(logs.some((m) => m.includes("timeout")), false, logs.join("\n"));
+});
+
+test("lost git call (d): a status poll that gave up is polled again, and its worktree updates", async () => {
+  let s = 0;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: {
+      ...LOCAL_TOOL,
+      [` -C /w/tool ${RP}`]: ok("/w/tool\n/w/tool/.git\n"),
+      " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": () => (s++ ? status("main", { ab: "+1 -0" }) : lost()),
+    },
+  });
+  const c = createCollector(io);
+  for (let t = 0; t <= 29000; t += 1000) await tickAt(io, c, t);
+  assert.equal(c.state().repos[0].worktrees[0].branch, null, "no status yet");
+  for (let t = 30000; t <= 31000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool status"), 2);
+  assert.equal(c.state().repos[0].worktrees[0].branch, "main");
+  assert.equal(c.state().repos[0].worktrees[0].ahead, 1);
+});
+
+test("lost git call (e): a worktree delete that never answers ends in an error notification after 30 s", async () => {
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table: { ...API, " -C D:/work/api worktree remove D:/work/api-login": lost } });
+  const notes = [];
+  io.notify = (n) => notes.push(n);
+  const c = createCollector(io);
+  await c.tick();
+  const done = c.deleteWorktree("|d:/work/api-login");
+  await new Promise((r) => setTimeout(r, 5)); // the limiter starts the call (and its 30 s) at t = 0
+  for (let t = 1000; t <= 30000; t += 1000) await tickAt(io, c, t);
+  const r = await Promise.race([done, new Promise((res) => setTimeout(() => res("still waiting"), 100))]);
+  assert.deepEqual(r, { ok: false, error: "timeout" });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].body, "timeout");
 });

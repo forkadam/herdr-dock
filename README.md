@@ -421,6 +421,8 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
   everything now.
 - At most 4 requests run at once, each with a 15 s timeout. A host that fails backs off (30 s up to 5 minutes)
   and shows ⚠ with the error on hover.
+- At most 4 git commands run at once. One that doesn't answer within 30 s is given up and tried again on the
+  next poll, so a lost git call can't freeze the list until Herdr restarts.
 - When a pipeline turns failed (or a new failed pipeline appears that was created after Herdr started), you get a
   notification "<repo> · <branch>: Pipeline failed: <first failed job> (+N more)" with a sound. Clicking it opens
   Pipelines for that worktree. Each failure alerts once, also across restarts; a retried pipeline that fails again

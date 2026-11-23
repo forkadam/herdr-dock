@@ -12,6 +12,9 @@ import { gitCommandName } from "./gitcmd.js";
 import { slashPath } from "./path.js";
 
 const GIT_LIMIT = 4; // git processes at once
+// How long a git call may take before it is given up (Herdr's own exec default). A call Herdr never answers would
+// otherwise keep its GIT_LIMIT slot for good, and every later git call would wait behind it.
+const GIT_TIMEOUT = 30000;
 // Absolute paths (git >= 2.31): without it the common dir comes back relative to the -C folder.
 const REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
@@ -42,15 +45,28 @@ export function createCollector(io) {
     machine == null ? io.platform : /^[A-Za-z]:\//.test(slashPath(path)) ? "windows" : "linux";
   const idOf = (machine, path) => worktreeId(machine, path, platformOf(machine, path));
 
-  // One git process via the limiter. A rejected exec (no git, machine unreachable) becomes code -1.
+  // Git calls running now, each { deadline, giveUp }: tick() gives up every one past its deadline (sweepGit).
+  const gitCalls = new Set();
+
+  // One git process via the limiter. A rejected exec (no git, machine unreachable) becomes code -1, and so does a
+  // call with no answer after GIT_TIMEOUT (stderr "timeout"). Its deadline starts when it runs, not while it waits
+  // for a slot, and giving up frees the slot.
   const run = (machine, args) =>
-    git(async () => {
-      try {
-        return await io.exec("git", args, { on: machine ?? undefined });
-      } catch (e) {
-        return { code: -1, stdout: "", stderr: String(e?.message ?? e) };
-      }
+    git(() => {
+      const call = { deadline: io.now() + GIT_TIMEOUT, giveUp: null };
+      const given = new Promise((resolve) => {
+        call.giveUp = () => resolve({ code: -1, stdout: "", stderr: "timeout" });
+      });
+      gitCalls.add(call);
+      const ran = Promise.resolve()
+        .then(() => io.exec("git", args, { on: machine ?? undefined, timeout: GIT_TIMEOUT }))
+        .catch((e) => ({ code: -1, stdout: "", stderr: String(e?.message ?? e) }));
+      return Promise.race([ran, given]).finally(() => gitCalls.delete(call));
     });
+
+  const sweepGit = (now) => {
+    for (const call of gitCalls) if (now >= call.deadline) call.giveUp();
+  };
 
   // --- internal state ---------------------------------------------------------------------------
   // Added repos, by `${machine}|${path}`: { machine, path, at, busy, done, error, commonDir, list }.
@@ -444,6 +460,7 @@ export function createCollector(io) {
     const gen = ++tickGen;
     const now = io.now();
     client.sweep(now); // time out requests past their 15 s
+    sweepGit(now); // and git calls past their 30 s
     const addedList = readAdded();
     const paneList = readPanes();
 

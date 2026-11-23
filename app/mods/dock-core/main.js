@@ -654,6 +654,7 @@ var showPlan = (merged) => revealPlan(merged, "dock-pipelines", DIALOG);
 
 // src/shared/collector.js
 var GIT_LIMIT = 4;
+var GIT_TIMEOUT = 3e4;
 var REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 var LIST_EVERY = 6e4;
 var REPOS_KEY = "dock.git.repos";
@@ -679,13 +680,19 @@ function createCollector(io) {
   const startedAt = io.now();
   const platformOf = (machine, path) => machine == null ? io.platform : /^[A-Za-z]:\//.test(slashPath(path)) ? "windows" : "linux";
   const idOf = (machine, path) => worktreeId(machine, path, platformOf(machine, path));
-  const run2 = (machine, args) => git(async () => {
-    try {
-      return await io.exec("git", args, { on: machine ?? void 0 });
-    } catch (e) {
-      return { code: -1, stdout: "", stderr: String(e?.message ?? e) };
-    }
+  const gitCalls = /* @__PURE__ */ new Set();
+  const run2 = (machine, args) => git(() => {
+    const call = { deadline: io.now() + GIT_TIMEOUT, giveUp: null };
+    const given = new Promise((resolve) => {
+      call.giveUp = () => resolve({ code: -1, stdout: "", stderr: "timeout" });
+    });
+    gitCalls.add(call);
+    const ran = Promise.resolve().then(() => io.exec("git", args, { on: machine ?? void 0, timeout: GIT_TIMEOUT })).catch((e) => ({ code: -1, stdout: "", stderr: String(e?.message ?? e) }));
+    return Promise.race([ran, given]).finally(() => gitCalls.delete(call));
   });
+  const sweepGit = (now) => {
+    for (const call of gitCalls) if (now >= call.deadline) call.giveUp();
+  };
   const added = /* @__PURE__ */ new Map();
   const cwds = /* @__PURE__ */ new Map();
   const repoRecs = /* @__PURE__ */ new Map();
@@ -1033,6 +1040,7 @@ function createCollector(io) {
     const gen = ++tickGen;
     const now = io.now();
     client.sweep(now);
+    sweepGit(now);
     const addedList = readAdded();
     const paneList = readPanes();
     const addedKeys = /* @__PURE__ */ new Set();
