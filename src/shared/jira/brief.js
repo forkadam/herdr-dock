@@ -54,9 +54,10 @@ export function changedSearches({ since, parentKeys }) {
 }
 
 // Which issues found in the window (changedSearches' answers, `updated` only: [{ key, updated }]) need their history
-// read, against what was read before (`cache`: Map key -> { updated, issue }): `stale`, those new to the cache or whose
-// `updated` differs from the cached one; `keep`, the others found. Each key once, in the order found. A key cached but
-// not found is in neither: it left the window.
+// read, against what was read before (`cache`: Map key -> { updated, issue }): `keep`, those whose `updated` is the one
+// cached (a missing stamp, on either side, never matches: nothing says the history is unchanged); `stale`, the others
+// found, including those new to the cache. Each key once, in the order found. A key cached but not found is in
+// neither: it left the window.
 export function historyPlan(found, cache) {
   const stale = [], keep = [], seen = new Set();
   for (const f of list(found)) {
@@ -64,7 +65,7 @@ export function historyPlan(found, cache) {
     if (typeof key !== "string" || !key || seen.has(key)) continue;
     seen.add(key);
     const cached = cache?.get?.(key);
-    (cached && cached.updated === f.updated ? keep : stale).push(key);
+    (cached && cached.updated != null && cached.updated === f.updated ? keep : stale).push(key);
   }
   return { stale, keep };
 }

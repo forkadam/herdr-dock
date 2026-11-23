@@ -528,7 +528,7 @@ function historyPlan(found, cache) {
     if (typeof key !== "string" || !key || seen.has(key)) continue;
     seen.add(key);
     const cached = cache?.get?.(key);
-    (cached && cached.updated === f.updated ? keep : stale).push(key);
+    (cached && cached.updated != null && cached.updated === f.updated ? keep : stale).push(key);
   }
   return { stale, keep };
 }

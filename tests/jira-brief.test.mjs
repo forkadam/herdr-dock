@@ -64,6 +64,12 @@ test("historyPlan: fetch only new or changed issues, each once", () => {
   assert.deepEqual(twice, { stale: ["WEB-3"], keep: ["WEB-1"] });
 });
 
+test("historyPlan: no `updated` stamp on either side means fetch, not keep", () => {
+  const cache = new Map([["WEB-1", { issue: {} }], ["WEB-2", { updated: null, issue: {} }], ["WEB-3", { updated: undefined, issue: {} }], ["WEB-4", { updated: "t4", issue: {} }], ["WEB-5", { issue: {} }]]);
+  const p = historyPlan([{ key: "WEB-1" }, { key: "WEB-2", updated: null }, { key: "WEB-3", updated: undefined }, { key: "WEB-4" }, { key: "WEB-5", updated: "t5" }], cache);
+  assert.deepEqual(p, { stale: ["WEB-1", "WEB-2", "WEB-3", "WEB-4", "WEB-5"], keep: [] });
+});
+
 test("keySearches: chunks of 50 well-formed keys, each key once", () => {
   const keys = Array.from({ length: 120 }, (_, i) => `WEB-${i}`);
   const q = keySearches([...keys, "WEB-1", "bad key)"]);
