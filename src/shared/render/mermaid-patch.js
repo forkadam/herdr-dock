@@ -1,9 +1,10 @@
 // beautiful-mermaid's node ids, rewritten as the Render helper is bundled (pure; no imports). beautiful-mermaid 1.1.3
 // reads an id as [\w-]+, so an arrow written without spaces is swallowed into it: `A-->B` draws one node `A--`. With
 // (?:\w|-(?![-.>]))+ a hyphen is part of an id only when it doesn't start an arrow (-- -. ->): `my-node-->B` still
-// keeps its hyphen. The `:::class` shorthand after a node ([\w][\w-]*) swallows the same way (`A:::hot-->B` is one
-// node of class `hot--`), so it gets the same rule. The rewrite fails rather than guess if the library moved its
-// patterns, so an upgrade can't ship the bug back silently.
+// keeps its hyphen. As in Mermaid, an id can't contain `--`, `-.` or `->` (`my--node` reads as `my`). The `:::class`
+// shorthand after a node ([\w][\w-]*) swallows the same way (`A:::hot-->B` is one node of class `hot--`), so it gets
+// the same rule. The rewrite fails rather than guess if the library moved its patterns, so an upgrade can't ship the
+// bug back silently.
 // The id rule is prismantis's (scripts/build-vendor.mjs, MIT, (c) 2026 Nahum Litvin: https://github.com/NahumLitvin/prismantis).
 
 export const NODE_ID = "[\\w-]+";
@@ -13,9 +14,9 @@ const END = "var CLASS_SHORTHAND_REGEX";
 const EXPECTED = 13; // the 12 node shapes and the bare id
 export const CLASS_SHORTHAND = "var CLASS_SHORTHAND_REGEX = /^:::([\\w][\\w-]*)/;";
 export const CLASS_SHORTHAND_BEFORE_ARROW = "var CLASS_SHORTHAND_REGEX = /^:::(\\w(?:\\w|-(?![-.>]))*)/;";
-// Long links (A---->B, A-..->B, A====>B, A-- text --->B): beautiful-mermaid's arrow patterns know fixed lengths only, so
-// a longer link left a stray node and no edge; its style lookup compares exact operators, so a long one is normalised
-// to its short form first. A long link is drawn at the usual length.
+// Long links (A---->B, A-..->B, A====>B, A-- text --->B): beautiful-mermaid's arrow patterns know fixed lengths
+// only, so a longer link left a stray node and no edge; its style lookup compares exact operators, so a long one is
+// normalised to its short form first. A long link is drawn at the usual length.
 export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|([^|]*)\\|)?/;";
 export const ARROW_WIDE = "var ARROW_REGEX = /^(<)?(-{2,}>|-\\.+->|={2,}>|-{3,}|-\\.+-|={3,})(?:\\|([^|]*)\\|)?/;";
 export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-->|---|\\.\\->|-\\.\\-|==>|===)/;";

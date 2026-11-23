@@ -148,3 +148,7 @@ test("paintDiagram: in an all-negative bar chart the bar of largest magnitude ta
   assert.match(bars.find((b) => b["data-value"] === "-100").style, new RegExp(`stroke:${THEME.accent}`));
   assert.match(bars.find((b) => b["data-value"] === "-10").style, new RegExp(`stroke:${THEME.muted}`));
 });
+
+test("styledIds: a hyphenated id right after an unspaced open link is read whole", () => {
+  assert.deepEqual([...styledIds("flowchart LR\n  A---my-node:::x").ids], ["my-node"]);
+});

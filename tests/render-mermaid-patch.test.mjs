@@ -46,17 +46,18 @@ const THEME = { background: "#1e1f22", foreground: "#d4d4d8", muted: "#8b8d94", 
 test("the built Render helper draws an arrow without spaces as two nodes and an edge", () => {
   const h = mkdtempSync(join(tmpdir(), "render-ids-"));
   try {
-    const cases = ["A-->B", "A-->|x|B", "A---B", "A-.->B", "A-- text -->B", "my-node-->other-node", "A-B-->C", "A --> B", "A==>B"];
+    const cases = ["A-->B", "A-->|x|B", "A---B", "A-.->B", "A-- text -->B", "A-. text .->B", "my-node-->other-node", "A-B-->C", "A --> B", "A==>B"];
     const f = join(h, "ids.md");
     writeFileSync(f, cases.map((c) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).segments.length, cases.length);
     JSON.parse(r.stdout).segments.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
       assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2, cases[i]);
       assert.equal((svg.match(/class="edge"/g) ?? []).length, 1, cases[i]);
     });
-    assert.match(readFileSync(join(h, JSON.parse(r.stdout).segments[5].svg), "utf8"), /data-id="my-node"/);
+    assert.match(readFileSync(join(h, JSON.parse(r.stdout).segments[6].svg), "utf8"), /data-id="my-node"/);
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
 
@@ -141,5 +142,20 @@ test("the built Render helper draws long links as two nodes and one edge, in the
       assert.equal((svg.match(/class="edge"/g) ?? []).length, 1, cases[i][0]);
       assert.equal(edgeStyle(svg), cases[i][1], cases[i][0]);
     });
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
+
+test("the built Render helper: a bare classed node keeps its class; a hyphen inside a class name stays in it", () => {
+  const h = mkdtempSync(join(tmpdir(), "render-pins-"));
+  try {
+    const f = join(h, "pins.md");
+    writeFileSync(f, "```mermaid\nflowchart LR\n  A:::hot\n  classDef hot fill:#ff0000\n```\n\n```mermaid\nflowchart LR\n  A:::my-cls-->B\n```\n");
+    const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const [bare, hyphen] = JSON.parse(r.stdout).segments.map((s) => readFileSync(join(h, s.svg), "utf8"));
+    assert.equal((bare.match(/<g class="node"/g) ?? []).length, 1);
+    assert.match(bare, /<g class="node" data-id="A"[^>]*>\s*<[a-z]+[^>]*fill="#ff0000"/);
+    assert.equal((hyphen.match(/<g class="node"/g) ?? []).length, 2);
+    assert.equal((hyphen.match(/class="edge"/g) ?? []).length, 1);
   } finally { rmSync(h, { recursive: true, force: true }); }
 });

@@ -398,7 +398,7 @@ var Render = class extends View {
   }
   diagramsView(t) {
     const list = this.data?.diagrams ?? [];
-    if (!list.length) return [this.note(t, "No Mermaid diagrams in this session yet.")];
+    if (!list.length) return [this.note(t, "No diagrams or figures in this session yet.")];
     const maxW = Math.max(120, this.width - PAD * 2);
     return list.flatMap((d, i) => [
       div().text_size(11).text_color(t.dim).child(d.at ? `${ago(d.at, Date.now())} ago` : ""),

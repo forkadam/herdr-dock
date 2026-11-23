@@ -1,6 +1,6 @@
 // Render: what the focused agent wrote, drawn. A right-panel mod with three views:
-//   Answer    the agent's latest reply: Markdown (TextView.markdown) with its Mermaid diagrams drawn;
-//   Diagrams  every Mermaid diagram of the session, newest first;
+//   Answer    the agent's latest reply: Markdown (TextView.markdown) with its Mermaid diagrams and figures drawn;
+//   Diagrams  every Mermaid diagram and figure of the session, newest first;
 //   Files     the Markdown files under the agent's folder, one opened formatted with its diagrams.
 // Claude Code (its transcript) and Codex (its rollout). The reading and the diagrams are done by the helper shipped
 // in this mod (herdr-render.mjs, beautiful-mermaid bundled): it renders each diagram once into
@@ -272,7 +272,7 @@ export default class Render extends View {
 
   diagramsView(t) {
     const list = this.data?.diagrams ?? [];
-    if (!list.length) return [this.note(t, "No Mermaid diagrams in this session yet.")];
+    if (!list.length) return [this.note(t, "No diagrams or figures in this session yet.")];
     const maxW = Math.max(120, this.width - PAD * 2);
     return list.flatMap((d, i) => [
       div().text_size(11).text_color(t.dim).child(d.at ? `${ago(d.at, Date.now())} ago` : ""),
