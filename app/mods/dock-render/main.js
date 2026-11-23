@@ -347,7 +347,7 @@ var Render = class extends View {
   }
   segments(t, list, prefix) {
     const maxW = Math.max(120, this.width - PAD * 2);
-    return list.map((s, i) => s.kind === "mermaid" ? this.diagram(t, s, `${prefix}-${i}`, maxW) : div().id(`${prefix}-${i}`).w_full().text_size(13).child(TextView.markdown(`${prefix}-md-${i}`, s.text).selectable(true)));
+    return list.map((s, i) => s.kind !== "md" ? this.diagram(t, s, `${prefix}-${i}`, maxW) : div().id(`${prefix}-${i}`).w_full().text_size(13).child(TextView.markdown(`${prefix}-md-${i}`, s.text).selectable(true)));
   }
   header(t) {
     const a = this.target?.agent;

@@ -9,15 +9,18 @@
 //   { mode: "clear", cacheDir }                                     delete every rendered diagram
 // After each read the cache is tidied: diagrams not shown for 14 days go, and past the 300 most recently used.
 //
-// Each diagram is rendered once: <cacheDir>/<hash of source>-<hash of theme>.svg, shown by the mod as
-// image("<relBase>/<that file>"). A diagram that doesn't render gives { error, source } instead.
+// Each picture (a Mermaid diagram, painted after rendering, or a ```figure) is drawn once:
+// <cacheDir>/<its id>-<hash of theme and look version>.svg, shown by the mod as image("<relBase>/<that file>"). One that
+// doesn't draw gives { error, source } instead (a figure's error is why, as prismantis words it).
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
-import { flattenSvg, mix } from "../shared/render/flatten.js";
-import { hashText, splitSegments } from "../shared/render/markdown.js";
-import { cacheToPrune } from "../shared/render/cache.js";
+import { flattenSvg } from "../shared/render/flatten.js";
+import { splitSegments } from "../shared/render/markdown.js";
+import { cacheToPrune, themeKey } from "../shared/render/cache.js";
+import { mermaidColors, paintDiagram } from "../shared/render/paint.js";
+import { decideFigure, figureSvg } from "../shared/render/figure.js";
 import { codexCwd, readClaude, readCodex } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
 
@@ -33,24 +36,28 @@ function readText(path, max) {
   return buf.subarray(buf.length - max).toString("utf8");
 }
 
-function colors(t) {
-  return {
-    bg: t.background, fg: t.foreground, line: mix(t.foreground, 0.5, t.background), accent: t.accent, muted: t.muted,
-    surface: mix(t.foreground, t.dark ? 0.06 : 0.04, t.background), border: t.border, font: "sans-serif",
-  };
+// One picture's SVG: a Mermaid diagram rendered, flattened and painted; a figure checked and drawn.
+function draw(seg, theme) {
+  if (seg.kind === "figure") {
+    const d = decideFigure(seg.source);
+    if (d.note) throw new Error(d.note);
+    return figureSvg(d.lines, theme).svg;
+  }
+  return paintDiagram(flattenSvg(renderMermaidSVG(seg.source, mermaidColors(theme)), theme.background), seg.source, theme);
 }
 
-// One diagram -> { svg: "<relBase>/<file>" } or { error }.
-function render(source, req, themeId) {
+// One picture ({ kind, source, id }) -> { svg: "<relBase>/<file>", w, h } or { error }.
+function render(seg, req, themeId) {
+  const { source } = seg;
   try {
-    if (source.length > MAX_SOURCE) throw new Error(`diagram too large (${Math.round(source.length / 1024)} KiB)`);
-    const name = `${hashText(source)}-${themeId}.svg`;
+    if (source.length > MAX_SOURCE) throw new Error(`${seg.kind === "figure" ? "figure" : "diagram"} too large (${Math.round(source.length / 1024)} KiB)`);
+    const name = `${seg.id}-${themeId}.svg`;
     const file = join(req.cacheDir, name);
     if (existsSync(file)) {
       // Shown again: its date says "last used", so the cleanup keeps it.
       try { const now = new Date(); utimesSync(file, now, now); } catch {}
     } else {
-      const svg = flattenSvg(renderMermaidSVG(source, colors(req.theme)), req.theme.background);
+      const svg = draw(seg, req.theme);
       mkdirSync(req.cacheDir, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, svg);
@@ -66,16 +73,16 @@ function render(source, req, themeId) {
 }
 
 function segments(text, req, themeId) {
-  return splitSegments(text).map((s) => (s.kind === "mermaid" ? { ...s, ...render(s.source, req, themeId) } : s));
+  return splitSegments(text).map((s) => (s.kind === "md" ? s : { ...s, ...render(s, req, themeId) }));
 }
 
 function fromLog(read, lines, req, extra) {
-  const themeId = hashText(JSON.stringify(req.theme));
+  const themeId = themeKey(req.theme);
   const r = read(lines);
   return {
     ok: true, ...extra, prompt: r.prompt,
     answer: r.answer ? { at: r.answer.at, segments: segments(r.answer.text, req, themeId) } : null,
-    diagrams: r.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d.source, req, themeId) })),
+    diagrams: r.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d, req, themeId) })),
   };
 }
 
@@ -140,7 +147,7 @@ function run(req) {
       return { ok: false, error: "no Codex session started in this folder in the last two weeks" };
     }
     case "file": {
-      const themeId = hashText(JSON.stringify(req.theme));
+      const themeId = themeKey(req.theme);
       return { ok: true, path: req.path, segments: segments(readText(req.path, MAX_FILE), req, themeId) };
     }
     case "list":

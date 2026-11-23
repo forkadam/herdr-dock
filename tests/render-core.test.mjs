@@ -101,3 +101,33 @@ test("cacheToPrune: a temp file left by a crashed write goes after an hour", () 
   const tmp = [{ name: "dddddddd-11111111.svg.4242.tmp", mtimeMs: now - 2 * 3600e3 }, { name: "eeeeeeee-11111111.svg.4243.tmp", mtimeMs: now - 60e3 }];
   assert.deepEqual(cacheToPrune(tmp, now), ["dddddddd-11111111.svg.4242.tmp"]);
 });
+
+// ---- Figures beside Mermaid; the look version ----
+import { blockId, pictureBlocks } from "../src/shared/render/markdown.js";
+import { themeKey } from "../src/shared/render/cache.js";
+
+test("splitSegments: ```figure blocks (any case) are pictures; an open one (still streaming) stays text", () => {
+  const s = splitSegments("a\n```figure\nA {ok:B}\n```\n```FIGURE\nx\n```");
+  assert.deepEqual(s.map((x) => x.kind), ["md", "figure", "figure"]);
+  assert.equal(s[1].source, "A {ok:B}");
+  assert.equal(s[1].id, blockId("figure", "A {ok:B}"));
+  assert.deepEqual(splitSegments("a\n```figure\nA {ok:B}").map((x) => x.kind), ["md"]);
+});
+
+test("blockId: the same text as Mermaid and as a figure gives two ids", () => {
+  assert.equal(blockId("mermaid", "graph TD"), hashText("graph TD"));
+  assert.notEqual(blockId("figure", "graph TD"), blockId("mermaid", "graph TD"));
+  assert.deepEqual(pictureBlocks("```figure\nA\n```\n```mermaid\nA\n```"), [{ kind: "figure", source: "A" }, { kind: "mermaid", source: "A" }]);
+});
+
+test("readClaude: the session's pictures hold figures too, each with its kind", () => {
+  const l = [JSON.stringify({ type: "user", message: { content: "draw" }, timestamp: "2026-11-23T10:00:00Z" }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "```figure\nA\n```\n```mermaid\nA\n```" }] }, timestamp: "2026-11-23T10:00:01Z" })];
+  assert.deepEqual(readClaude(l).diagrams.map((d) => [d.kind, d.source]), [["mermaid", "A"], ["figure", "A"]]);
+});
+
+test("themeKey: the look version is part of the theme id, so drawings from before a look change aren't reused", () => {
+  const t = { background: "#000000" };
+  assert.match(themeKey(t), /^[0-9a-f]{8}$/);
+  assert.notEqual(themeKey(t), hashText(JSON.stringify(t)));
+});
