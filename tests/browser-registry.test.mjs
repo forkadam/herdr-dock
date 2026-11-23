@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseSession, parseControl, startHandoff, clearHandoff, personHas, waitOutcome,
-  answer, takeOver, handBack, goneSessions, newId,
+  answer, takeOver, handBack, goneSessions, newId, isStale,
 } from "../src/shared/browser/registry.js";
 
 const MIN = 60_000;
@@ -74,4 +74,31 @@ test("parseSession", () => {
 test("newId", () => {
   assert.match(newId(), /^[a-z0-9]{6,16}$/);
   assert.notEqual(newId(), newId());
+});
+
+test("isStale", () => {
+  assert.equal(isStale({ ...base, terminalCreated: 5 }, 5), false);
+  assert.equal(isStale({ ...base, terminalCreated: 5 }, 6), true);
+  assert.equal(isStale(base, 5), true);
+  assert.equal(isStale(null, 5), true);
+  assert.equal(isStale({ ...free, terminalCreated: 7 }, 7), false);
+});
+
+test("terminalCreated kept or omitted by parsers; takeOver sets it", () => {
+  assert.equal(parseSession(JSON.stringify({ ...base, terminalCreated: 9 })).terminalCreated, 9);
+  assert.equal("terminalCreated" in parseSession(JSON.stringify({ ...base, terminalCreated: "x" })), false);
+  assert.equal(parseControl('{"v":1,"terminalCreated":9}').terminalCreated, 9);
+  assert.equal("terminalCreated" in parseControl('{"v":1,"terminalCreated":null}'), false);
+  assert.equal(takeOver(free, "person", T0, 42).terminalCreated, 42);
+  assert.equal("terminalCreated" in takeOver(free, "person", T0), false);
+  assert.equal(startHandoff({ ...base, terminalCreated: 3 }, "m", T0, "h").terminalCreated, 3);
+});
+
+test("bad handoffMinutes counts as 15", () => {
+  const s = startHandoff(base, "m", T0, "h1");
+  for (const m of [NaN, 0, -3, undefined]) {
+    assert.equal(waitOutcome(s, free, T0 + 16 * MIN, m), "timeout");
+    assert.equal(waitOutcome(s, free, T0 + MIN, m), "waiting");
+    assert.equal(personHas(s, free, T0 + 16 * MIN, m), false);
+  }
 });

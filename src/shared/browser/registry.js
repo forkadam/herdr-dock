@@ -7,6 +7,8 @@ const VALUES = ["done", "cancel"];
 const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
 const isStr = (x) => typeof x === "string" && x !== "";
 
+const created = (o) => (Number.isFinite(o.terminalCreated) ? { terminalCreated: o.terminalCreated } : {});
+
 function json(text) {
   try { return JSON.parse(String(text ?? "")); } catch { return null; }
 }
@@ -23,6 +25,7 @@ export function parseSession(text) {
     profile: String(o.profile ?? ""), port: Number.isFinite(o.port) ? o.port : 0,
     url: String(o.url ?? ""), title: String(o.title ?? ""),
     opened: Number.isFinite(o.opened) ? o.opened : 0, handoff,
+    ...created(o),
   };
 }
 
@@ -34,13 +37,18 @@ export function parseControl(text) {
     v: 1,
     takeover: isObj(t) && REASONS.includes(t.reason) && Number.isFinite(t.since) ? { reason: t.reason, since: t.since } : null,
     answer: isObj(a) && isStr(a.id) && VALUES.includes(a.value) ? { id: a.id, value: a.value } : null,
+    ...created(o),
   };
 }
 
 export const startHandoff = (session, message, now, id) => ({ ...session, handoff: { id, message, since: now } });
 export const clearHandoff = (session) => ({ ...session, handoff: null });
 
-const expired = (h, now, minutes) => now - h.since > minutes * 60_000;
+const limit = (m) => (Number.isFinite(m) && m > 0 ? m : 15);
+const expired = (h, now, minutes) => now - h.since > limit(minutes) * 60_000;
+
+// A record belongs to one terminal incarnation: stale when null or its terminalCreated differs from the live one.
+export const isStale = (record, createdMs) => !record || !Number.isFinite(record.terminalCreated) || record.terminalCreated !== createdMs;
 const answerOf = (session, control) =>
   session.handoff && control.answer && control.answer.id === session.handoff.id ? control.answer.value : null;
 
@@ -61,7 +69,9 @@ export function waitOutcome(session, control, now, handoffMinutes) {
 }
 
 export const answer = (control, id, value) => ({ ...control, answer: { id, value } });
-export const takeOver = (control, reason, now) => ({ ...control, takeover: { reason, since: now } });
+export const takeOver = (control, reason, now, terminalCreated) => ({
+  ...control, takeover: { reason, since: now }, ...(Number.isFinite(terminalCreated) ? { terminalCreated } : {}),
+});
 export const handBack = (control) => ({ ...control, takeover: null });
 
 export const goneSessions = (sessions, liveTerminals) => sessions.filter((s) => !liveTerminals.has(s.terminal));
