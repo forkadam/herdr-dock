@@ -259,6 +259,85 @@ terminal, so you keep Claude Code's own terminal UI:
   Whatever is on screen is drawn again.
 - Deleting the folder yourself is safe too: it is only a cache.
 
+## Browser
+
+**Browser** (`dock-browser`, a right-panel mod, off by default) gives each agent a real browser of its own and shows
+it beside the terminal. The agent opens and drives a page with the `browse` command; you watch the same page live in
+the panel and can take it over at any point. It is for debugging a UI flow end to end, checking a page for security
+bugs, checking layout at phone, tablet and desktop sizes, and acting on your design notes.
+
+### Turning it on
+
+- Set `"browser": { "enabled": true }` in your local file (`~/.config/herdr-app/herdr-dock/local.json`) or
+  `config/dock.json`, then run `npm run deploy` (a clone) or let the app recipe do it (an app install: `node
+  <app home>/mods/dock-browser/herdr-browser-setup.mjs`). Setup downloads the pinned `agent-browser` (~20 MB, checked
+  against a pinned checksum) into `<app home>/herdr-dock/browser/bin/` and, unless `chrome` points at a Chrome or
+  Chromium, Chrome for Testing (~150 MB). It writes the `dock-browser` skill to `~/.claude/skills`, `~/.codex/skills`
+  and, where it has a `skills` folder, `~/.gemini/config/skills`, so Claude Code, Codex and Antigravity know the
+  commands. `deploy --no-skills` skips the skills. Enabling adds the Browser panel to the end of the right region.
+- Turning it off (`enabled: false`) removes the Browser panel, the skills and the downloaded binary. The signed-in
+  profile file stays.
+- **Settings** (`browser`): `enabled` (default `false`), `chrome` (path to Chrome or Chromium; empty downloads one),
+  `production` (host patterns, below) and `handoffMinutes` (how long a handoff waits, default 15).
+- It works only in a Herdr terminal; outside one, `browse` says so and exits 2.
+
+### The `browse` command
+
+`browse open [--profile clean|signed-in] <url>`, `browse action -- <agent-browser command>`, `browse handoff
+"<message>"`, `browse wait`, `browse status`, `browse close` and `browse login <url>`. One browser per terminal.
+`action` passes agent-browser's own commands through (`snapshot -i`, `click @e3`, `fill`, `eval`, `console`, `errors`,
+`network requests`, `screenshot`, `tab`, `set viewport`, `set device`); `close`, `connect`, `--cdp`, `--session` and
+`--profile` are refused there.
+
+- **Two profiles.** `clean` (the default) is a fresh browser that keeps nothing. `signed-in` starts from your saved
+  logins, shared by every session. You sign in once with `browse login <url>` (a real window; you press Done), and
+  the cookies are saved to `<app home>/herdr-dock/browser/profiles/signed-in.json`. Security checks are meant to run
+  on `clean` only.
+- **Production.** List hosts in `browser.production` (`"example.com"`, or `"*.example.com"` for anything below it).
+  When the agent's page is one of them, every `action` prints a `PRODUCTION (<host>)` banner: no probing,
+  nothing that writes unless you asked for exactly that. This is guidance and a warning to the agent in its output
+  and its skill, not enforcement: `browse` doesn't block anything.
+
+### The panel
+
+- A live view of the agent's page. It stays a view until you **Take over**: then clicks and keys go to the page, text
+  can be pasted (up to 2000 characters, a trailing line break dropped), and the agent's next `action` stops with exit
+  3 ("the person has control") until you **Hand back**, which also restores the agent's tab and size.
+- **Handoff.** For a sign-in, a captcha or 2FA the agent runs `browse handoff "<message>"` then `browse wait`; the
+  panel shows the message with **Done**, **Cancel** and **Open in a real window** (a visible browser window on the
+  same page, for captchas and passkeys). `wait` returns after at most 9 minutes per call and the handoff times out
+  after `handoffMinutes`. The agent never types credentials or solves captchas itself.
+- **Phone, Tablet, Desktop** open the page in a new tab at that size and take it over; Hand back restores the
+  agent's tab and size. **Enlarge** shows the page in a big window; **Close** closes it. Bind `dock-browser.enlarge`,
+  `dock-browser.pick` or `dock-browser.notes` in `keys.json` for keys.
+- **Pick** and **Notes** (design feedback). Pick: click one element in the page; Notes: click up to 20, each with its
+  own note, intent and priority. **Send** types a `## Design Feedback` prompt into the agent's terminal (`hc send`):
+  per element a selector, its text, your note, and on a dev build the source file and line, plus a `Picture:` path to
+  a screenshot of the whole viewport with that element outlined. Anything that looks like a secret is replaced by
+  `[redacted]`. An element inside a frame (an iframe) can't be picked one by one: the pick is the whole frame.
+
+### Where the Browser keeps things
+
+All under `<app home>/herdr-dock/browser/` (`~/.config/herdr-app/herdr-dock/browser/` by default):
+`bin/` (agent-browser), `profiles/signed-in.json`, `sessions/` (one small record per terminal, which the panel
+reads), `frames/` (the live view's pictures, removed when the browser closes) and `picks/` (Pick pictures, deleted
+after a day).
+
+### Be careful with
+
+- **The signed-in file holds live cookies**: anyone who can read it can act as you on those sites. It is yours alone
+  and never committed (the folder is under your app home), but don't share it or back it up somewhere public.
+- **agent-browser's debugging port** is reachable by any program running as you on this PC while a browser is open.
+  Don't leave a signed-in browser open when you don't need it (`browse close`).
+- Use `clean` for anything that probes a page, and keep real production hosts in `browser.production`.
+
+### Credits
+
+Browser automation is [agent-browser](https://github.com/vercel-labs/agent-browser) by Vercel (Apache-2.0), downloaded
+at setup, not bundled. The panel's design, the skill and the pick logic are adapted from
+[cockpit](https://github.com/quaresc/cockpit) (MIT); cockpit's pick/grab logic itself came from
+[Orca](https://github.com/stablyai/orca) (MIT, Copyright (c) 2026 Lovecast Inc.).
+
 ## Panel modes
 
 The left panel has three modes. Ctrl+Alt+B (or the top-bar toggle) cycles through them:
