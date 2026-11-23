@@ -182,6 +182,14 @@ export function unionStatuses(lists) {
   return [...seen.values()];
 }
 
+// The empty workflow columns of the board: one project's whole workflow when every issue is from that project, else
+// none (14 projects' workflows would run the board off the screen; a drag still adds what its card can reach).
+// `statusesByProject` maps a project key to its statuses, or "loading" while they are being asked.
+export function workflowStatuses(rows, statusesByProject) {
+  const projects = boardProjects(rows);
+  return projects.length === 1 ? unionStatuses([statusesByProject?.get(projects[0])]) : [];
+}
+
 // Said in the column a card was dropped on when its workflow has no move there (the drop did nothing, on purpose).
 export function refusedDropText(key, from, to, targets) {
   const allowed = targets ? [...targets] : [];

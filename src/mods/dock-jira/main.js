@@ -11,7 +11,7 @@ import { withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail,
-  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, unionStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
 import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
@@ -235,20 +235,22 @@ export default class Jira extends View {
     await this.updateBadge(cx, f);
   }
 
-  // The workflow statuses of each project on the board, asked once per project (the board shows them all as columns,
-  // empty ones too). A failure leaves that project out: its columns then come from its issues, as before.
+  // The workflow statuses of the board's project, asked once per project, only when the board is one project (its
+  // columns show them all, empty ones too; a mixed board has none to ask for). A failure leaves the project out: its
+  // columns then come from its issues, as before.
   async loadProjectStatuses(cx) {
-    for (const key of boardProjects(this.rows)) {
-      if (this.projectStatuses.has(key)) continue;
-      this.projectStatuses.set(key, "loading");
-      const r = await this.client(cx).projectStatuses(key);
-      this.projectStatuses.set(key, r.ok ? r.data : []);
-      cx.notify();
-    }
+    const projects = boardProjects(this.rows);
+    if (projects.length !== 1) return;
+    const key = projects[0];
+    if (this.projectStatuses.has(key)) return;
+    this.projectStatuses.set(key, "loading");
+    const r = await this.client(cx).projectStatuses(key);
+    this.projectStatuses.set(key, r.ok ? r.data : []);
+    cx.notify();
   }
 
   boardStatuses() {
-    return unionStatuses(boardProjects(this.rows).map((k) => this.projectStatuses.get(k)));
+    return workflowStatuses(this.rows, this.projectStatuses);
   }
 
   // How many issues are assigned to me and unresolved: free when that's the filter shown, else one count query.

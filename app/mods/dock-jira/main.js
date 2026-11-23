@@ -472,6 +472,10 @@ function unionStatuses(lists) {
   }
   return [...seen.values()];
 }
+function workflowStatuses(rows, statusesByProject) {
+  const projects = boardProjects(rows);
+  return projects.length === 1 ? unionStatuses([statusesByProject?.get(projects[0])]) : [];
+}
 function refusedDropText(key, from, to, targets) {
   const allowed = targets ? [...targets] : [];
   if (!allowed.length) return `${key} can't move from ${from}.`;
@@ -928,19 +932,21 @@ var Jira = class extends View {
     await this.loadProjectStatuses(cx);
     await this.updateBadge(cx, f);
   }
-  // The workflow statuses of each project on the board, asked once per project (the board shows them all as columns,
-  // empty ones too). A failure leaves that project out: its columns then come from its issues, as before.
+  // The workflow statuses of the board's project, asked once per project, only when the board is one project (its
+  // columns show them all, empty ones too; a mixed board has none to ask for). A failure leaves the project out: its
+  // columns then come from its issues, as before.
   async loadProjectStatuses(cx) {
-    for (const key of boardProjects(this.rows)) {
-      if (this.projectStatuses.has(key)) continue;
-      this.projectStatuses.set(key, "loading");
-      const r = await this.client(cx).projectStatuses(key);
-      this.projectStatuses.set(key, r.ok ? r.data : []);
-      cx.notify();
-    }
+    const projects = boardProjects(this.rows);
+    if (projects.length !== 1) return;
+    const key = projects[0];
+    if (this.projectStatuses.has(key)) return;
+    this.projectStatuses.set(key, "loading");
+    const r = await this.client(cx).projectStatuses(key);
+    this.projectStatuses.set(key, r.ok ? r.data : []);
+    cx.notify();
   }
   boardStatuses() {
-    return unionStatuses(boardProjects(this.rows).map((k) => this.projectStatuses.get(k)));
+    return workflowStatuses(this.rows, this.projectStatuses);
   }
   // How many issues are assigned to me and unresolved: free when that's the filter shown, else one count query.
   async updateBadge(cx, f) {

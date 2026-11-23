@@ -193,7 +193,7 @@ test("dragStarted: a press becomes a drag only once the pointer has moved a few 
 });
 
 // ---- Board columns from the projects' workflows ----
-import { boardProjects, unionStatuses } from "../src/shared/jira/page.js";
+import { boardProjects, unionStatuses, workflowStatuses } from "../src/shared/jira/page.js";
 
 test("boardProjects: the project keys on the board, from the issue keys", () => {
   assert.deepEqual(boardProjects([{ key: "WEB-1" }, { key: "API-3" }, { key: "WEB-9" }]), ["WEB", "API"]);
@@ -204,6 +204,14 @@ test("unionStatuses: each status once, in the order the projects list them", () 
   const web = [{ name: "To Do", category: "new" }, { name: "Done", category: "done" }];
   const api = [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }, { name: "Done", category: "done" }];
   assert.deepEqual(unionStatuses([web, api, "loading", null]).map((x) => x.name), ["To Do", "Done", "QA"]);
+});
+
+test("workflowStatuses: a project's whole workflow only when every row is from that project", () => {
+  const m = new Map([["WEB", [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }]], ["OPS", "loading"]]);
+  assert.deepEqual(workflowStatuses([{ key: "WEB-1" }, { key: "WEB-2" }], m).map((s) => s.name), ["To Do", "QA"]);
+  assert.deepEqual(workflowStatuses([{ key: "WEB-1" }, { key: "OPS-3" }], m), []);
+  assert.deepEqual(workflowStatuses([{ key: "OPS-3" }], m), []); // still loading
+  assert.deepEqual(workflowStatuses([], m), []);
 });
 
 // ---- Drop feedback where the card was dropped ----
