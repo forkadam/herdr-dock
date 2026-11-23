@@ -128,3 +128,25 @@ test("cache: a reused diagram's date is refreshed, old ones are pruned after a r
     assert.deepEqual(readdirSync(x.cacheDir), ["keep.txt"]);
   } finally { x.done(); }
 });
+
+// ---- Figures and painted diagrams ----
+import { themeKey } from "../src/shared/render/cache.js";
+
+test("figures and painted diagrams: kinds, files named with the look version, a failed figure's reason", () => {
+  const x = home();
+  try {
+    const f = join(x.h, "look.md");
+    writeFileSync(f, "```figure\nA {ok:██} B\n```\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```figure\nbad\tline\n```\n\n```mermaid\nA {ok:██} B\n```\n");
+    const out = run({ ...x.base, mode: "file", path: f });
+    const s = out.segments;
+    assert.deepEqual(s.map((g) => g.kind), ["figure", "mermaid", "figure", "mermaid"]);
+    assert.ok(s[0].svg.endsWith(`-${themeKey(THEME)}.svg`) && s[0].w > 0 && s[0].h > 0);
+    assert.match(readFileSync(join(x.h, s[0].svg), "utf8"), /^<svg/);
+    // Inside node A's own group (arrowheads are accent already, so a match anywhere would prove nothing).
+    const groupA = /<g class="node" data-id="A"[^>]*>([\s\S]*?)<\/g>/.exec(readFileSync(join(x.h, s[1].svg), "utf8"))[1];
+    assert.match(groupA, new RegExp(`stroke="${THEME.accent}"`));
+    assert.equal(s[2].error, "figure line 1: tab, use spaces");
+    assert.ok(!s[2].svg);
+    assert.notEqual(s[0].id, s[3].id);
+  } finally { x.done(); }
+});

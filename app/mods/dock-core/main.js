@@ -654,6 +654,7 @@ var showPlan = (merged) => revealPlan(merged, "dock-pipelines", DIALOG);
 
 // src/shared/collector.js
 var GIT_LIMIT = 4;
+var GIT_TIMEOUT = 3e4;
 var REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 var LIST_EVERY = 6e4;
 var REPOS_KEY = "dock.git.repos";
@@ -679,13 +680,19 @@ function createCollector(io) {
   const startedAt = io.now();
   const platformOf = (machine, path) => machine == null ? io.platform : /^[A-Za-z]:\//.test(slashPath(path)) ? "windows" : "linux";
   const idOf = (machine, path) => worktreeId(machine, path, platformOf(machine, path));
-  const run2 = (machine, args) => git(async () => {
-    try {
-      return await io.exec("git", args, { on: machine ?? void 0 });
-    } catch (e) {
-      return { code: -1, stdout: "", stderr: String(e?.message ?? e) };
-    }
+  const gitCalls = /* @__PURE__ */ new Set();
+  const run2 = (machine, args) => git(() => {
+    const call = { deadline: io.now() + GIT_TIMEOUT, giveUp: null };
+    const given = new Promise((resolve) => {
+      call.giveUp = () => resolve({ code: -1, stdout: "", stderr: "timeout" });
+    });
+    gitCalls.add(call);
+    const ran = Promise.resolve().then(() => io.exec("git", args, { on: machine ?? void 0, timeout: GIT_TIMEOUT })).catch((e) => ({ code: -1, stdout: "", stderr: String(e?.message ?? e) }));
+    return Promise.race([ran, given]).finally(() => gitCalls.delete(call));
   });
+  const sweepGit = (now) => {
+    for (const call of gitCalls) if (now >= call.deadline) call.giveUp();
+  };
   const added = /* @__PURE__ */ new Map();
   const cwds = /* @__PURE__ */ new Map();
   const repoRecs = /* @__PURE__ */ new Map();
@@ -713,13 +720,13 @@ function createCollector(io) {
     try {
       const rp = await run2(e.machine, ["-C", e.path, ...REV_PARSE]);
       if (rp.code !== 0) {
-        Object.assign(e, { error: errText(rp), list: [] });
+        Object.assign(e, { error: errText(rp), commonDir: null, list: [] });
         return;
       }
       const { top, commonDir } = parseRevParse(rp.stdout, e.path);
       const wl = await run2(e.machine, ["-C", top, "worktree", "list", "--porcelain"]);
       if (wl.code !== 0) {
-        Object.assign(e, { error: errText(wl), list: [] });
+        Object.assign(e, { error: errText(wl), commonDir, list: [] });
         return;
       }
       Object.assign(e, { error: null, commonDir, list: parseWorktrees(wl.stdout).filter((w) => !w.bare) });
@@ -896,7 +903,7 @@ function createCollector(io) {
       const e = added.get(`${a.machine ?? ""}|${a.path}`);
       if (!e?.done) continue;
       if (e.error) {
-        const bad = repoFor(idOf(a.machine, a.path), a.machine, a.path);
+        const bad = e.commonDir ? repoFor(idOf(a.machine, e.commonDir), a.machine, mainFromCommonDir(e.commonDir)) : repoFor(idOf(a.machine, a.path), a.machine, a.path);
         Object.assign(bad, { added: true, error: e.error });
         bad.addedPaths.push({ path: a.path, machine: a.machine });
         continue;
@@ -946,11 +953,12 @@ function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return;
     if (resolving) return;
+    const listed = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
       const w = [...r.wts.values()].find((x) => x.open);
-      if (w) extra.push({ path: w.path, machine: r.machine ?? null });
+      if (w && !listed.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...io.shared(REPOS_KEY) ?? [], ...extra]);
   }
@@ -1033,6 +1041,7 @@ function createCollector(io) {
     const gen = ++tickGen;
     const now = io.now();
     client.sweep(now);
+    sweepGit(now);
     const addedList = readAdded();
     const paneList = readPanes();
     const addedKeys = /* @__PURE__ */ new Set();

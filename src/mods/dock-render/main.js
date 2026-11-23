@@ -1,6 +1,6 @@
 // Render: what the focused agent wrote, drawn. A right-panel mod with three views:
-//   Answer    the agent's latest reply: Markdown (TextView.markdown) with its Mermaid diagrams drawn;
-//   Diagrams  every Mermaid diagram of the session, newest first;
+//   Answer    the agent's latest reply: Markdown (TextView.markdown) with its Mermaid diagrams and figures drawn;
+//   Diagrams  every Mermaid diagram and figure of the session, newest first;
 //   Files     the Markdown files under the agent's folder, one opened formatted with its diagrams.
 // Claude Code (its transcript) and Codex (its rollout). The reading and the diagrams are done by the helper shipped
 // in this mod (herdr-render.mjs, beautiful-mermaid bundled): it renders each diagram once into
@@ -15,6 +15,7 @@ import {
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
 import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.js";
+import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 
 const MOD = "dock-render";
@@ -93,7 +94,11 @@ export default class Render extends View {
     const base = slashPath(appHome());
     return JSON.stringify({
       cacheDir: `${base}/herdr-dock/render`, relBase: "herdr-dock/render",
-      theme: { background: t.background, foreground: t.foreground, muted: t.muted, border: t.border, accent: t.accent, dark: isDark(t.background) },
+      // The terminal's colours too: nodes take ansi4/6/2/5/3, figures' warn / ok / note take ansi1/2/3.
+      theme: {
+        background: t.background, foreground: t.foreground, muted: t.muted, border: t.border, accent: t.accent, dim: t.dim,
+        ansi1: t.ansi1, ansi2: t.ansi2, ansi3: t.ansi3, ansi4: t.ansi4, ansi5: t.ansi5, ansi6: t.ansi6, dark: isDark(t.background),
+      },
       ...extra,
     });
   }
@@ -204,22 +209,29 @@ export default class Render extends View {
   // ---- drawing ----
 
   diagram(t, s, id, maxW) {
+    if (s.kind === "figure" && (s.error || !s.svg)) {
+      // As prismantis shows it: why, dim, then the figure's source as code.
+      return v_flex().id(id).gap(6)
+        .child(div().text_size(11.5).text_color(t.dim).child(s.error ?? "figure didn't draw"))
+        .child(TextView.markdown(`${id}-src`, "```figure\n" + (s.source ?? "") + "\n```").selectable(true));
+    }
     if (s.error || !s.svg) {
       return v_flex().id(id).gap(6).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
         .child(div().text_size(11.5).text_color(t.blocked).child(`Diagram didn't render: ${s.error ?? "unknown error"}`))
         .child(TextView.markdown(`${id}-src`, "```mermaid\n" + (s.source ?? "") + "\n```").selectable(true));
     }
-    const w = Math.max(40, Math.min(maxW, s.w ?? maxW));
-    const h = s.w && s.h ? Math.round((w * s.h) / s.w) : Math.round(w * 0.6);
-    return div().id(id).rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer()
+    // Natural size when it fits; never below 70% of it: a wider picture scrolls sideways.
+    const { w, h, scroll } = shownSize(s, maxW);
+    const card = div().id(id).flex_none().rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer()
       .hover((st) => st.border_color(t.accent)).tooltip("Open large")
       .on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } }))
       .child(image(s.svg).w(w).h(h));
+    return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
   }
 
   segments(t, list, prefix) {
     const maxW = Math.max(120, this.width - PAD * 2);
-    return list.map((s, i) => (s.kind === "mermaid" ? this.diagram(t, s, `${prefix}-${i}`, maxW)
+    return list.map((s, i) => (s.kind !== "md" ? this.diagram(t, s, `${prefix}-${i}`, maxW)
       : div().id(`${prefix}-${i}`).w_full().text_size(13).child(TextView.markdown(`${prefix}-md-${i}`, s.text).selectable(true))));
   }
 
@@ -260,7 +272,7 @@ export default class Render extends View {
 
   diagramsView(t) {
     const list = this.data?.diagrams ?? [];
-    if (!list.length) return [this.note(t, "No Mermaid diagrams in this session yet.")];
+    if (!list.length) return [this.note(t, "No diagrams or figures in this session yet.")];
     const maxW = Math.max(120, this.width - PAD * 2);
     return list.flatMap((d, i) => [
       div().text_size(11).text_color(t.dim).child(d.at ? `${ago(d.at, Date.now())} ago` : ""),

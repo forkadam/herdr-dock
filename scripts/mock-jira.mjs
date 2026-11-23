@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // A mock Jira Server / Data Center for developing and testing the Jira page without the company's Jira.
-// It answers the REST v2 endpoints the page uses, with Jira's JSON shapes, from tests/fixtures/jira/*.json, and keeps
-// changes in memory (a transition moves the issue, a comment appears) until it stops. No dependencies.
+// It answers the REST v2 endpoints the page uses and Jira Software's agile REST (boards, their columns, sprints), with
+// Jira's JSON shapes, from tests/fixtures/jira/*.json, and keeps changes in memory (a transition moves the issue, a
+// comment appears) until it stops. An issue's history (`expand=changelog`) is the fixture's own: a change made here
+// (a transition, an assignment) adds none. No dependencies.
 //
 //   npm run mock:jira                       http://127.0.0.1:8089, token mock-token
 //   node scripts/mock-jira.mjs --port 9000 --slow 3000 --status 500 --token other
 //
-// Dates are shifted so the newest update is ~20 minutes before now. JQL is a small subset (see parseJql); anything
-// else is a 400 with Jira's error shape, so the page's error display gets exercised too.
+// Dates (sprints' too) are shifted so the newest update is ~20 minutes before now. JQL is a small subset (see
+// parseJql); anything else is a 400 with Jira's error shape, so the page's error display gets exercised too.
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -15,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures", "jira");
 const API = "/rest/api/2";
+const AGILE = "/rest/agile/1.0";
 const DAY = 86400e3;
 
 const load = (name) => JSON.parse(readFileSync(join(FIXTURES, name), "utf8"));
@@ -30,7 +33,7 @@ const FIELD_INFO = {
   resolution: { required: true, schema: { type: "resolution", system: "resolution" }, name: "Resolution", key: "resolution", operations: ["set"], allowedValues: RESOLUTIONS },
 };
 
-// Shift every date so the newest `updated` is 20 minutes before `now`.
+// Shift every date so the newest `updated` is 20 minutes before `now`. Returns the shift, in ms, for the sprints' dates.
 function shiftDates(issues, now) {
   const newest = Math.max(...issues.map((i) => Date.parse(i.fields.updated)));
   const by = now - 20 * 60e3 - newest;
@@ -39,7 +42,9 @@ function shiftDates(issues, now) {
     i.fields.created = shift(i.fields.created);
     i.fields.updated = shift(i.fields.updated);
     for (const c of i.fields.comment.comments) { c.created = shift(c.created); c.updated = shift(c.updated); }
+    for (const h of i.history ?? []) h.created = shift(h.created);
   }
+  return by;
 }
 
 // ---- JQL (a subset) ----
@@ -93,7 +98,7 @@ function clause(text, ctx) {
     if (field === "project") for (const v of values) checkProject(v, ctx);
     return (i) => values.some((v) => matches(i, field, v)) !== not;
   }
-  if ((m = /^(project|status|issuetype|type|priority|statuscategory|resolution)\s*(!=|=)\s*(.+)$/i.exec(text))) {
+  if ((m = /^(project|key|status|issuetype|type|priority|statuscategory|resolution)\s*(!=|=)\s*(.+)$/i.exec(text))) {
     const field = m[1].toLowerCase(), not = m[2] === "!=", value = unquote(m[3]);
     if (field === "project") checkProject(value, ctx);
     return (i) => matches(i, field, value) !== not;
@@ -110,6 +115,16 @@ function clause(text, ctx) {
       const t = Date.parse(i.fields[field]);
       return op === ">=" ? t >= at : op === ">" ? t > at : op === "<=" ? t <= at : t < at;
     };
+  }
+  // A sprint holds issues by the fixture's `sprints: [ids]`; Jira's openSprints() is the active ones.
+  if ((m = /^sprint\s*=\s*(\d+)$/i.exec(text))) {
+    const id = Number(m[1]);
+    if (!ctx.sprints.some((s) => s.id === id)) throw new JqlError(`The value '${m[1]}' does not exist for the field 'Sprint'.`);
+    return (i) => i.sprints?.includes(id) ?? false;
+  }
+  if (/^sprint\s+in\s+openSprints\(\)$/i.test(text)) {
+    const open = ctx.sprints.filter((s) => s.state === "active").map((s) => s.id);
+    return (i) => i.sprints?.some((id) => open.includes(id)) ?? false;
   }
   throw new JqlError(`Error in the JQL Query: Unable to parse "${text}".`);
 }
@@ -137,6 +152,7 @@ const ORDER = {
   created: (i) => Date.parse(i.fields.created),
   priority: (i) => -Number(i.fields.priority?.id ?? 99), // Highest (id 1) first when DESC, as Jira does
   key: (i) => `${i.fields.project.key}-${String(Number(i.key.split("-")[1])).padStart(6, "0")}`,
+  rank: (i) => i.rank ?? Infinity, // the fixture's `rank`: Jira's board order, first is smallest
 };
 
 // jql -> { filter(issue), sort(a, b) }. Throws JqlError for anything outside the subset.
@@ -167,20 +183,45 @@ export function parseJql(jql, ctx) {
 
 // ---- The server ----
 
+// What Jira says of a sub-task's parent: a few of its fields.
+const parentField = (p) => ({ id: p.id, key: p.key, self: p.self,
+  fields: { summary: p.fields.summary, status: p.fields.status, priority: p.fields.priority, issuetype: p.fields.issuetype } });
+
 // The fields an issue response carries: all, or only those asked for (`fields=a,b`; `*all` / `*navigable` = all).
-function pick(issue, fields) {
+// Only `fields` is copied: the fixture's own `rank`, `sprints`, `history` and `parentKey` never go out. A sub-task's
+// `parent` is built from the parent as it is now (`parentOf(key)`), as Jira does; other issues have none.
+function pick(issue, fields, parentOf) {
   const want = (fields ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const all = !want.length || want.some((f) => f.startsWith("*"));
   const out = { expand: "", id: issue.id, self: issue.self, key: issue.key, fields: {} };
-  for (const [k, v] of Object.entries(issue.fields)) if (all || want.includes(k)) out.fields[k] = clone(v);
+  const parent = issue.parentKey ? parentOf(issue.parentKey) : null;
+  const own = parent ? { ...issue.fields, parent: parentField(parent) } : issue.fields;
+  for (const [k, v] of Object.entries(own)) if (all || want.includes(k)) out.fields[k] = clone(v);
   return out;
+}
+
+// One page of an agile list, as Jira Software's `startAt` / `maxResults` / `isLast` (a page is at most 50).
+function agilePage(url, all) {
+  const num = (name, fallback) => {
+    const v = url.searchParams.get(name);
+    return v === null || v.trim() === "" || !Number.isFinite(Number(v)) ? fallback : Number(v);
+  };
+  const startAt = Math.max(0, num("startAt", 0)), maxResults = Math.min(50, Math.max(0, num("maxResults", 50)));
+  return { maxResults, startAt, isLast: startAt + maxResults >= all.length, values: all.slice(startAt, startAt + maxResults) };
 }
 
 export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock-token", slowMs = 0, failStatus = null, now = Date.now() } = {}) {
   const { users, issues } = load("issues.json");
   const workflow = load("workflow.json");
   const filters = load("filters.json");
-  shiftDates(issues, now);
+  const agile = load("agile.json");
+  const by = shiftDates(issues, now);
+  // Sprints shift like the issues (an active one still spans `now`), oldest start first as Jira lists them.
+  const sprints = agile.sprints.map((s) => {
+    const out = clone(s);
+    for (const k of ["startDate", "endDate", "completeDate"]) if (out[k]) out[k] = new Date(Date.parse(out[k]) + by).toISOString();
+    return out;
+  }).sort((a, b) => Date.parse(a.startDate) - Date.parse(b.startDate));
   const me = users.me.name;
   const started = Date.now();
   const clock = () => now + (Date.now() - started); // "now" moves on with real time
@@ -193,6 +234,18 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
   const viewed = new Map(); // issue key -> when GET /issue last returned it (issueHistory(), lastViewed)
 
   const find = (key) => issues.find((i) => i.key.toLowerCase() === String(key).toLowerCase());
+  // An issue's history, as Jira's `expand=changelog` gives it: the fixture's `history`, oldest first (none is an empty list).
+  // As on Jira Server, an author has its key beside its name, and an assignee item's `from` / `to` are user keys (the
+  // fixture's; the mock user's key, JIRAUSER10000, is not its name).
+  const changelog = (issue) => {
+    const histories = (issue.history ?? []).map((h) => ({ id: h.id, author: { key: users[h.author].key, name: users[h.author].name, displayName: users[h.author].displayName }, created: h.created, items: clone(h.items) }));
+    return { startAt: 0, maxResults: histories.length, total: histories.length, histories };
+  };
+  const show = (issue, fields, expand) => {
+    const out = pick(issue, fields, find);
+    if ((expand ?? "").split(",").map((s) => s.trim()).includes("changelog")) out.changelog = changelog(issue);
+    return out;
+  };
   const available = (issue) => workflow.transitions.filter((t) => t.from.includes(issue.fields.status.id));
 
   async function route(req, url, body) {
@@ -211,15 +264,16 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
     }
     if (req.method === "GET" && p("/search")) {
       const startAt = Math.max(0, Number(url.searchParams.get("startAt") ?? 0) || 0);
-      const maxResults = Math.min(100, Math.max(0, Number(url.searchParams.get("maxResults") ?? 50) || 50));
+      const asked = url.searchParams.get("maxResults"); // 0 is a count only: the total and no issues
+      const maxResults = Math.min(100, Math.max(0, asked === null || asked.trim() === "" || !Number.isFinite(Number(asked)) ? 50 : Number(asked)));
       let q;
-      try { q = parseJql(url.searchParams.get("jql") ?? "", { me, now: clock(), projects, viewed }); } catch (e) {
+      try { q = parseJql(url.searchParams.get("jql") ?? "", { me, now: clock(), projects, viewed, sprints }); } catch (e) {
         if (e instanceof JqlError) return [400, err([e.message])];
         throw e;
       }
       const hits = issues.filter(q.filter).sort(q.sort);
       return [200, { expand: "names,schema", startAt, maxResults, total: hits.length,
-        issues: hits.slice(startAt, startAt + maxResults).map((i) => pick(i, url.searchParams.get("fields"))) }];
+        issues: hits.slice(startAt, startAt + maxResults).map((i) => show(i, url.searchParams.get("fields"), url.searchParams.get("expand"))) }];
     }
     if (req.method === "GET" && p("/status")) return [200, workflow.statuses.map(statusObj)];
     const ps = new RegExp(`^${API}/project/([A-Za-z]+)/statuses$`).exec(path);
@@ -227,11 +281,33 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
       const key = projects.find((k) => same(k, ps[1]));
       if (!key) return [404, err([`No project could be found with key '${ps[1]}'.`])];
       const types = [...new Map(issues.filter((i) => i.fields.project.key === key).map((i) => [i.fields.issuetype.id, i.fields.issuetype])).values()];
-      return [200, types.map((t) => ({ self: self(`${API}/issuetype/${t.id}`), id: t.id, name: t.name, subtask: false, statuses: workflow.statuses.map(statusObj) }))];
+      return [200, types.map((t) => ({ self: self(`${API}/issuetype/${t.id}`), id: t.id, name: t.name, subtask: Boolean(t.subtask), statuses: workflow.statuses.map(statusObj) }))];
     }
     if (req.method === "GET" && p("/filter/favourite")) {
       return [200, filters.map((f) => ({ self: self(`${API}/filter/${f.id}`), ...clone(f),
         viewUrl: self(`/issues/?filter=${f.id}`), searchUrl: self(`${API}/search?jql=${encodeURIComponent(f.jql)}`) }))];
+    }
+    const ag = new RegExp(`^${AGILE}/board(?:/(\\d+)/(configuration|sprint))?$`).exec(path);
+    if (ag) {
+      if (req.method !== "GET") return [405, err([`Method ${req.method} not allowed here.`])];
+      const q = (name) => url.searchParams.get(name);
+      const board = (b) => ({ id: b.id, self: self(`${AGILE}/board/${b.id}`), name: b.name, type: b.type });
+      if (!ag[1]) {
+        const types = list(q("type") ?? ""), name = (q("name") ?? "").toLowerCase();
+        const hits = agile.boards.filter((b) => (!types.length || types.some((t) => same(b.type, t))) && b.name.toLowerCase().includes(name));
+        const page = agilePage(url, hits);
+        return [200, { maxResults: page.maxResults, startAt: page.startAt, total: hits.length, isLast: page.isLast, values: page.values.map(board) }];
+      }
+      const b = agile.boards.find((x) => x.id === Number(ag[1]));
+      if (!b) return [404, err(["Board does not exist or you do not have permission to see it."])];
+      if (ag[2] === "configuration") {
+        const column = (c) => ({ name: c.name, statuses: c.statusIds.map((id) => ({ id, self: self(`${API}/status/${id}`) })) });
+        return [200, { ...board(b), columnConfig: { columns: b.columns.map(column), constraintType: "none" } }];
+      }
+      const states = list(q("state") ?? "");
+      const hits = sprints.filter((s) => s.originBoardId === b.id && (!states.length || states.some((st) => same(s.state, st))));
+      const page = agilePage(url, hits);
+      return [200, { ...page, values: page.values.map(({ id, ...rest }) => ({ id, self: self(`${AGILE}/sprint/${id}`), ...rest })) }];
     }
     const m = new RegExp(`^${API}/issue/([A-Za-z]+-\\d+)(/transitions|/assignee|/comment)?$`).exec(path);
     if (!m) return [404, err([`null for uri: ${url.pathname}`])];
@@ -243,7 +319,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
     if (req.method === "GET" && sub === "") {
       viewed.delete(issue.key); // most recent last, whatever the clock's resolution
       viewed.set(issue.key, clock() + viewed.size * 1e-3);
-      return [200, pick(issue, url.searchParams.get("fields"))];
+      return [200, show(issue, url.searchParams.get("fields"), url.searchParams.get("expand"))];
     }
     if (req.method === "GET" && sub === "/transitions") {
       // expand=transitions.fields: each step's screen fields, as Jira lists them (required, allowed values).

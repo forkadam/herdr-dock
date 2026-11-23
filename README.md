@@ -172,15 +172,18 @@ time, for the whole window (not per space or tab), so a page is never open twice
 
 ## Jira page
 
-`dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues and filters as a list or a
-board, an issue's detail beside them, quick actions, and **Start work**.
+`dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues in tabs, each a list or a
+board, a daily brief and your team's sprint board on **Today**, an issue's detail beside them, quick actions,
+**Start work** and **Finish** (each with the message of the issue's flow).
 
 - **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
 - **Connect**: the page asks for Jira's address and a **personal access token** (Jira → Profile → Personal Access
   Tokens; Jira 8.14 or later). If you use the mcp-atlassian MCP, its `JIRA_URL` and `JIRA_PERSONAL_TOKEN` are the
   two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
 - **Where things live** (per PC, never in git or the shared config):
-  - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters.
+  - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
+    own tabs (`views`), the Scrum board (`board`, its id), the brief's `highPriorities`, `briefBugs` and
+    `checkTask` (below), and the `actions` rules for Start work and Finish (below).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -190,9 +193,101 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
   **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
   reaches curl only through the private `-K` file, never on its command line.
-- **Filters**: Assigned to me (the default), Reported by me, Recently viewed (Jira's `issueHistory()`), then your Jira favourite
-  filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
-  filter (Enter). The choice and the List / Board view are remembered per PC.
+- **Tabs** under the header, each with its count: **Today** (the brief, and your sprint board when a Scrum board is
+  set; its count is the brief's unread items), your own tabs (`views` in the settings file, in their order), then
+  **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
+  old ticket). Each tab keeps its own search text, rows and open issue while Herdr runs, so switching back finds it
+  as you left it; the shown tab, and each tab's List / Board choice, are remembered per PC. The shown tab refreshes as
+  below; the others' counts every 10 minutes (one count-only search each). A tab whose search Jira rejects shows `!`
+  and says why, while the other tabs carry on.
+- **The brief**, at the top of Today: what's new or changed for you since the current sprint started (the last 14
+  days without a Scrum board). Each row is the issue's key, summary, why it's there and when; a click opens the issue
+  beside the brief.
+  - **Changed**: description edits by someone other than you on your unresolved issues and on the parents of your
+    sub-tasks (a story whose spec moved under your FE/BE sub-tasks).
+  - **New in sprint** (with a Scrum board): your issues in the current sprint that became yours in it after it
+    started: added to the sprint (a carry-over from the sprint before doesn't count), created in it, or assigned to
+    you.
+  - **High-priority bugs**: every bug `briefBugs` finds at a priority in `highPriorities`, unread ones first and
+    marked **new**. A bug that leaves the list (fixed, reprioritised, reassigned) is new again if it comes back.
+  - **Read marks** are kept per PC. Opening an issue (from the brief, the board or any tab) reads its New-in-sprint
+    and bug items. A Changed item is read only by **Mark read** (in its detail) or **Mark all read** (on the brief):
+    opening it doesn't, so it doesn't vanish between reading the change and checking it against your work. Read
+    Changed and New-in-sprint items drop off; a newer edit makes a Changed item unread again.
+  - **What changed**: a Changed item's detail opens with the description's line diff (added and removed lines
+    marked, long unchanged stretches folded: click to show all), from before the first unread edit to after the
+    last, so 8 edits read as one change; who edited and when; **Mark read**, **Open in browser** and **Check against
+    my work**. The diff stays as it was while the issue is open, whatever a refresh brings.
+  - **Check against my work** opens a Claude tab named `<key> check`, as Start work does, with a first message from
+    `checkTask`. Placeholders: `{key} {summary} {when}` (the span of the edits) and `{mine}` (your sub-tasks under
+    that issue when it is their parent, else the issue itself). The message never carries the description's text:
+    Claude reads the change itself with your Jira tools. The default:
+    `The description of {key} ({summary}) changed {when}. Read the change with your Jira tools and check it against my work on {mine} in this repo.`
+  - **Recent changes**, on any issue's detail: the description edits by others since the brief's start, each as a
+    diff, read or not (asked when you open it).
+  - **Settings**: `highPriorities` (Settings → High priorities, or the file: your Jira's names for urgent
+    priorities; default `["Highest", "High"]`), `briefBugs` (the bugs JQL, narrowed with
+    `AND priority in (<highPriorities>)`; default
+    `issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved`) and `checkTask`, in
+    `jira-work.json`. For example:
+
+    ```json
+    "highPriorities": ["P0", "P1"],
+    "briefBugs": "issuetype = Bug AND status in (Open, \"In Progress\") AND assignee = currentUser()",
+    "checkTask": "/review-spec-change {key}: changed {when}; my work is {mine}"
+    ```
+
+  - **Requests**: each refresh of Today asks one search for your changed issues and one per 50 parents (these read
+    only when each issue was last updated), and one for the bugs (the sprint's search, already made for the board,
+    also brings what New in sprint reads). The history Changed reads is fetched apart, one search per 50 issues that
+    are new to the window or were updated since their history was fetched, so most refreshes fetch none. Your
+    sub-tasks' parents are read once an hour with the board's columns, or when you press refresh.
+- **Today**'s board, under the brief, is your Scrum board's current sprint, laid out like the board in Jira
+  Software: the board's own columns (each holding the statuses the board maps to it) sharing the width, and one lane
+  per parent story (its key, status and summary; click it to fold the lane), then **Other issues**. It lists the
+  sprint's issues assigned to you, done ones too, as Jira's board does (an issue in a status the board has no column
+  for isn't shown, as there either). The current sprint is the board's active sprint holding most of your issues (a
+  tie: the one that started first); its name, dates and days left head the board. Today has no search box and no
+  List / Board switch.
+  - **Scrum board** (Settings): type part of the board's name and pick it from Jira's scrum boards; the page keeps its
+    id as `board` in `jira-work.json` (you can also write `"board": <id>` there). **No board** removes it: Today is
+    then the brief alone.
+  - **The sprint menu** (the sprint's name): its series, the sprints whose name differs only by its number
+    (`Sprint 41`, `Sprint 42`, …), newest first: the next one, the active one and the last 5 closed. The closed ones
+    load when the menu opens: until they have, it lists the others and says "Loading older sprints…" (or "Couldn't
+    load older sprints"; opening it again tries again). A sprint named without a number lists the sprints holding your
+    issues instead. Picking one shows it until Herdr restarts. With no active sprint Today says so, and the menu
+    offers the series of the sprint that ended last.
+  - **Drag a card** to another column: a column lights up when the issue's workflow reaches any status it holds. A
+    drop there runs that move, asks which when several lead there (and for a Resolution when the step needs one), and
+    on a dimmed column says, in that column, where the issue can go. A drop on the card's own column does nothing.
+  - **Requests**: each refresh asks for the shown sprint's issues; the board's columns, statuses and its active and
+    future sprints (and how many of yours each active sprint holds) once an hour, or when you press refresh. The
+    closed sprints are read apart: when the sprint menu first opens after each of those reads, or right away when no
+    sprint is active. Requests still go one at a time, so a refresh waits for a read of them that is running.
+- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"?, "button"? }`. The id is
+  lower-case letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type
+  first, then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
+  `"button": { "label", "task" }` puts one button in that tab's header, right of the search box (never on Today):
+  clicking it opens a Claude tab named after the label whose first message is the `task` (a typed `\n` is a line
+  break, as in the Start-work message), then shows the terminal. It makes no Jira request. Hover it to see the
+  message it sends. A button without a label or a task is skipped (Settings says so) and the tab stays. For example:
+
+  ```json
+  "views": [
+    { "id": "sec", "name": "Security", "group": "type",
+      "jql": "project = SEC AND assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+      "button": { "label": "Triage all", "task": "/triage" } },
+    { "id": "bugs", "name": "Bugs",
+      "jql": "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved ORDER BY priority DESC" }
+  ]
+  ```
+
+  The page reads the file again when it changes (within 30 seconds, no restart), and Settings shows where it is and
+  any entry it skipped, and why.
+- **Filters** (on the All tab): All my issues (the default), Assigned to me, Reported by me, Recently viewed (Jira's
+  `issueHistory()`), then your Jira favourite filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the
+  settings file. The search box narrows the tab's search (Enter). The choice is remembered per PC.
 - **List** groups by To do / In progress / Done; **Board** has one column per status of the workflows of the projects
   on it (asked once per project, `GET /project/{key}/statuses`), empty ones too, in Jira's own order. The columns
   share the width; past 240px each, the board scrolls sideways.
@@ -203,25 +298,59 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   there too, from Jira's allowed values. Dropping on a dimmed column says, in that column, where the issue can go.
   A moved card stays in its new column until you change the filter or search (a move to Done takes it out of an
   "unresolved" filter). A step that needs more than one picked value names what's missing and links to Jira.
-  This is a board of the filter's statuses, not your Jira sprint board.
+  This is a board of the filter's statuses; your Jira sprint board is on Today.
 - **Detail**: description (Jira markup shown as text), last 5 comments, links, Open in browser. **Actions**: the
   status pill lists the moves the workflow allows (a step that needs a Resolution asks for it; one that needs more
   names what's missing and links to Jira), Assign to me, and a one-line comment box (Enter or Send).
 - **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
-  from your template, then shows the terminal. Placeholders: `{key} {summary} {url} {type} {status} {priority}
-  {assignee} {description}`; type `\n` for a line break. For example `/init-ticket {key}` hands it to your own skill.
-  Settings previews the message for the selected issue, and so does the ▶'s tooltip. **Mind `{description}`:**
-  anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
+  from your template (or the message of the issue's flow: **Action rules**, below), then shows the terminal.
+  Placeholders: `{key} {summary} {url} {type} {status} {priority} {assignee} {description}`; type `\n` for a line
+  break. For example `/init-ticket {key}` hands it to your own skill. Settings previews the message for the selected
+  issue, and so does the ▶'s tooltip. **Mind `{description}`:** anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
   description could try to steer the agent. Use it only for issues from people you trust, or leave it out and let
   your skill fetch the issue.
-- **Refresh**: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your open issues),
-  and no sooner than 5 minutes after a failure. A rejected token stops the polling (and clears the badge) until you
-  press **Connect again** or **Try again**. The refresh button reconnects at once. A new address forgets the old
-  site's issues.
-- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
-  `keys.json`.
+- **Action rules** (`actions` in `jira-work.json`): a different Start work message, and a **Finish** button, for each
+  flow of issues. `actions` is a list of rules, and **the first rule whose keys all match the issue wins**, so put
+  the narrow rules first. A rule with no match keys matches every issue. The match keys, all optional:
+  - `project`: the issue's project key (`SEC` for SEC-12);
+  - `type`: the issue type's name (`Bug`);
+  - `subtask`: `true` or `false`;
+  - `parentType`: the issue type of the issue's parent (a sub-task's story or task), or a list of them: any one
+    matches. An issue without a parent never matches a rule that has it.
+
+  Names are Jira's own, matched exactly. A rule gives `start`, `finish` or both, with Start work's placeholders (and
+  its `{description}` warning). **Start work** sends the matched rule's `start`; with no matching rule, or one
+  without a `start`, it sends the Start-work message of Settings, as before. **Finish** is a button in the issue's
+  detail, there only when the matched rule has a `finish`: it opens a tab named `<key> finish` running Claude, with
+  that message, then shows the terminal (the command `finish`, below). The page changes nothing in Jira itself: the
+  skill or prompt the message names does, and can ask you before each step. The matched rule is the first one even
+  when it lacks a `finish`: a later rule is not looked at. For example:
+
+  ```json
+  "actions": [
+    { "project": "SEC", "type": "Bug", "start": "/triage {key}", "finish": "/close-bug {key}" },
+    { "project": "SEC", "start": "/triage {key}" },
+    { "subtask": true, "parentType": ["Story", "Task"], "finish": "/write-report {key}" },
+    { "type": "Bug", "finish": "/close-bug {key}" }
+  ]
+  ```
+
+  Here a SEC bug starts with `/triage` and finishes with `/close-bug`; any other SEC issue starts with `/triage` and
+  has no Finish; a sub-task of another project, under a story or task, keeps your Start-work message and finishes
+  with `/write-report`; a bug of another project starts as usual and finishes with `/close-bug`. A rule that isn't
+  an object, names a key with the wrong kind of value, or gives neither `start` nor `finish` is skipped, and
+  Settings says which.
+- **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden, and no sooner than 5
+  minutes after a failure; Today's brief also every 10 minutes while another tab shows. A rejected token stops the
+  polling (and clears the badge) until you press **Connect again** or **Try again**. The refresh button reconnects at
+  once. A new address forgets the old site's issues.
+- **The Pages badge** is the number of the brief's unread items (Today's count): warning-coloured while a
+  high-priority bug is unread, and no badge when nothing is.
+- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start|finish` can be bound in
+  `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
+  `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
-  `mock-token`) with 30 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
+  `mock-token`) with 40 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.
 
 ## Render
@@ -230,25 +359,41 @@ board, an issue's detail beside them, quick actions, and **Start work**.
 terminal, so you keep Claude Code's own terminal UI:
 
 - **Answer**: the focused agent's latest reply (what came after your last message), formatted (headings, lists,
-  tables, code), with each ```` ```mermaid ```` block drawn as a diagram. It follows the agent you're looking at (the
-  focused pane's, else the tab's first) and updates as the reply arrives.
-- **Diagrams**: every Mermaid diagram of the session, newest first.
+  tables, code), with each ```` ```mermaid ```` block drawn as a diagram and each ```` ```figure ```` block as a
+  picture. It follows the agent you're looking at (the focused pane's, else the tab's first) and updates as the reply
+  arrives.
+- **Diagrams**: every Mermaid diagram and figure of the session, newest first.
 - **Files**: the Markdown files under the agent's folder (plans, specs), newest first; one opens formatted, with its
   diagrams drawn.
 - Click a diagram to open it large. A diagram that doesn't parse shows its error and source.
+- **Colours**: each node, participant, class box and ER entity, and each series of a chart, takes its own colour
+  from your terminal's colours (blue, cyan, green, magenta, yellow, then the accent; red is kept for errors). A node
+  styled in the source (`classDef` / `class`, `style`, `:::`) keeps its own colours. A bar chart with one series shows
+  each value over its bar, the tallest in the accent colour.
+- **Figures**: a ```` ```figure ```` block is a text picture drawn as written, in
+  [prismantis](https://github.com/NahumLitvin/prismantis)'s syntax: `{accent|warn|ok|note|dim|strong:text}` colours a
+  run, at most 100 columns and 80 lines, one-column glyphs. A figure that can't be drawn shows why, then its source.
+  The syntax and its checks are ported from prismantis (MIT).
+- **Size**: a picture is shown at its own size when it fits, and never below 70% of it: a wider one scrolls sideways.
 - **Claude Code** is read from its session transcript (`~/.claude/projects/…/<session>.jsonl`), **Codex** from its
   newest rollout started in the agent's folder. Remote agents aren't followed.
 - Diagrams are drawn by `beautiful-mermaid` (MIT, pure JavaScript, no browser), bundled into the mod's helper
   (`mods/dock-render/herdr-render.mjs`): nothing to install, on Windows, macOS and Linux. Each is rendered once into
   `<app home>/herdr-dock/render/`, in your theme's colours. Making its SVG drawable by Herdr's renderer (no CSS
   variables, `color-mix()` or web fonts) is ported from [herdr-chat](https://github.com/ChmaraX/herdr-chat) (MIT).
+  It is patched as it is bundled (each patched line checked, so an upgrade that moves one fails the build): arrows
+  written without spaces (`A-->B`, the id rule [prismantis](https://github.com/NahumLitvin/prismantis) uses, MIT) and
+  long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
+  invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
+  drawn at the usual length.
 - **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
 
 ### Where Render keeps its diagrams
 
 - **Where**: `<app home>/herdr-dock/render/`, which is `~/.config/herdr-app/herdr-dock/render/` by default (or
-  `$HERDR_APP_HOME/herdr-dock/render/`). One `.svg` per diagram and theme, named `<hash of the diagram>-<hash of the
-  theme>.svg`, so each is drawn once and switching themes draws fresh copies.
+  `$HERDR_APP_HOME/herdr-dock/render/`). One `.svg` per picture and theme, named `<hash of the picture>-<hash of the
+  theme and the look version>.svg`, so each is drawn once, and switching themes (or an update that changes how
+  pictures are drawn) draws fresh copies.
 - **Kept while used**: each time a diagram is shown again, its file date is refreshed.
 - **Tidied automatically**, after each read:
   - a diagram not shown for **14 days** is deleted;
@@ -503,6 +648,8 @@ Herdr's own state on this PC (`dock.git.*` keys), never in `config/dock.json`.
   everything now.
 - At most 4 requests run at once, each with a 15 s timeout. A host that fails backs off (30 s up to 5 minutes)
   and shows ⚠ with the error on hover.
+- At most 4 git commands run at once. One that doesn't answer within 30 s is given up and tried again on the
+  next poll, so a lost git call can't freeze the list until Herdr restarts.
 - When a pipeline turns failed (or a new failed pipeline appears that was created after Herdr started), you get a
   notification "<repo> · <branch>: Pipeline failed: <first failed job> (+N more)" with a sound. Clicking it opens
   Pipelines for that worktree. Each failure alerts once, also across restarts; a retried pipeline that fails again

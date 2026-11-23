@@ -36,6 +36,11 @@
    "category": "indeterminate"
   },
   {
+   "id": "10003",
+   "name": "Resolved",
+   "category": "indeterminate"
+  },
+  {
    "id": "10002",
    "name": "Done",
    "category": "done"

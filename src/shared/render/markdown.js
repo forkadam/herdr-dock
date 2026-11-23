@@ -20,9 +20,15 @@ const trimBlank = (lines) => {
   return lines.slice(a, b).join("\n");
 };
 
-// Text -> [{ kind: "md", text } | { kind: "mermaid", source, id }], in order. A ```mermaid (or ~~~mermaid, any case)
-// block becomes a diagram; any other fenced block stays Markdown (and a "mermaid" inside it isn't one). A fence not
-// closed yet (an answer still arriving) stays text.
+const PICTURES = new Set(["mermaid", "figure"]);
+
+// A picture's id (and its cache name's first part): a Mermaid block by its source; a figure by its source and kind, so
+// the same text as both is two pictures.
+export const blockId = (kind, source) => hashText(kind === "figure" ? `figure\n${source}` : source);
+
+// Text -> [{ kind: "md", text } | { kind: "mermaid" | "figure", source, id }], in order. A ```mermaid or ```figure
+// (or ~~~, any case) block becomes a picture; any other fenced block stays Markdown (and a "mermaid" inside it isn't
+// one). A fence not closed yet (an answer still arriving) stays text.
 export function splitSegments(text) {
   const out = [];
   let md = [];
@@ -40,10 +46,11 @@ export function splitSegments(text) {
     let j = i + 1;
     while (j < lines.length && !close.test(lines[j])) j++;
     if (j >= lines.length) { md.push(...lines.slice(i)); break; } // not closed: text
-    if (m[2].toLowerCase() === "mermaid") {
+    const kind = m[2].toLowerCase();
+    if (PICTURES.has(kind)) {
       flush();
       const source = lines.slice(i + 1, j).join("\n").replace(/\s+$/, "");
-      out.push({ kind: "mermaid", source, id: hashText(source) });
+      out.push({ kind, source, id: blockId(kind, source) });
     } else {
       md.push(...lines.slice(i, j + 1));
     }
@@ -55,3 +62,5 @@ export function splitSegments(text) {
 
 // Just the Mermaid sources of a text, in order.
 export const mermaidBlocks = (text) => splitSegments(text).filter((s) => s.kind === "mermaid").map((s) => s.source);
+// Every picture of a text (Mermaid and figures), in order.
+export const pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));

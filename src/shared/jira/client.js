@@ -7,7 +7,7 @@ import { curlArgs, fetchRequest, parseCurl, parseJson } from "./transport.js";
 
 // What the detail pane shows.
 export const DETAIL_FIELDS = ["summary", "description", "status", "issuetype", "priority", "assignee", "reporter", "project",
-  "created", "updated", "resolution", "comment", "issuelinks"];
+  "created", "updated", "resolution", "comment", "issuelinks", "parent"];
 const TIMEOUT = Symbol("timeout");
 
 // A fetch failure's text, with its cause (Node and some hosts say "fetch failed" and put ECONNREFUSED, a DNS or a
@@ -24,6 +24,7 @@ function errorText(e) {
 export function createClient({ base, transport = "fetch", token, curlConfigPath, curlBodyPath, caFile, io, timeoutMs = 20000 }) {
   const root = String(base ?? "").replace(/\/+$/, "");
   const api = (path) => `${root}/rest/api/2${path}`;
+  const agile = (path) => `${root}/rest/agile/1.0${path}`; // Jira Software: boards and sprints
   const issuePath = (key) => `/issue/${encodeURIComponent(key)}`;
 
   async function viaFetch(method, url, body) {
@@ -81,6 +82,16 @@ export function createClient({ base, transport = "fetch", token, curlConfigPath,
     }
   }
   const map = (r, f) => (r.ok ? { ...r, data: f(r.data) } : r);
+  // Jira's JSON as the board and sprint calls read it: lists of objects, whatever else a response holds is skipped.
+  const list = (d) => (Array.isArray(d) ? d : []);
+  const objects = (d) => list(d).filter((x) => x && typeof x === "object" && !Array.isArray(x));
+  // Jira's ids (boards, sprints, statuses, histories) are numbers or numeric strings.
+  const hasId = (x) => (typeof x?.id === "number" ? Number.isFinite(x.id) : typeof x?.id === "string" && x.id.trim() !== "" && Number.isFinite(Number(x.id)));
+  const ms = (s) => { const t = Date.parse(s ?? ""); return Number.isFinite(t) ? t : null; };
+  // A call that can't resolve { ok: false, problem } even when it can't build its request (an id that won't encode).
+  const never = (call) => async (...args) => {
+    try { return await call(...args); } catch (e) { return { ok: false, problem: classify({ error: String(e?.message ?? e) }) }; }
+  };
 
   return {
     serverInfo: () => request("GET", api("/serverInfo")),
@@ -95,6 +106,36 @@ export function createClient({ base, transport = "fetch", token, curlConfigPath,
       }
       return [...seen.values()];
     })),
+    // The scrum boards (whose name has `name` in it, when given): [{ id, name, type }].
+    boards: never((name) => request("GET", agile(`/board?${new URLSearchParams({ type: "scrum", ...(name ? { name } : {}) })}`))
+      .then((r) => map(r, (d) => objects(d?.values).filter(hasId).map((b) => ({ id: b.id, name: b.name, type: b.type }))))),
+    // A board's columns, each with the ids (strings) of the statuses it holds, and the board's name when Jira sends
+    // one: { name?, columns: [{ name, statusIds }] }.
+    boardConfiguration: never((id) => request("GET", agile(`/board/${encodeURIComponent(id)}/configuration`))
+      .then((r) => map(r, (d) => ({
+        ...(typeof d?.name === "string" && d.name.trim() ? { name: d.name } : {}),
+        columns: objects(d?.columnConfig?.columns).filter((c) => typeof c.name === "string").map((c) => ({ name: c.name, statusIds: objects(c.statuses).filter(hasId).map((st) => String(st.id)) })),
+      })))),
+    // A board's sprints in the given states ("active", "future", "closed"; anything but a list means all), in Jira's
+    // order, following its pages of 50 (isLast; at most 20 pages): [{ id, name, state, startMs, endMs }]. A page that
+    // fails fails the call.
+    sprints: never(async (boardId, states) => {
+      const state = list(states).filter((x) => typeof x === "string" && x).join(",");
+      const out = [];
+      for (let page = 0, startAt = 0; page < 20; page++) {
+        const params = new URLSearchParams({ ...(state ? { state } : {}), startAt: String(startAt), maxResults: "50" });
+        const r = await request("GET", agile(`/board/${encodeURIComponent(boardId)}/sprint?${params}`));
+        if (!r.ok) return r;
+        const values = list(r.data?.values);
+        out.push(...objects(values).filter(hasId).map((s) => ({ id: Number(s.id), name: s.name, state: s.state, startMs: ms(s.startDate), endMs: ms(s.endDate) })));
+        if (r.data?.isLast !== false || !values.length) break;
+        startAt += values.length;
+      }
+      return { ok: true, data: out };
+    }),
+    // An issue's description and its changelog's histories (what changed, when, by whom), newest last as Jira sends them.
+    issueHistory: never((key) => request("GET", `${api(issuePath(key))}?fields=description&expand=changelog`)
+      .then((r) => map(r, (d) => ({ description: d?.fields?.description ?? null, histories: objects(d?.changelog?.histories).filter(hasId) })))),
     statuses: () => request("GET", api("/status")).then((r) => map(r, (d) => (Array.isArray(d) ? d : []))),
     favouriteFilters: () => request("GET", api("/filter/favourite")).then((r) => map(r, (d) => (Array.isArray(d) ? d : []))),
     // With each step's screen fields (required ones and their allowed values), so the page can ask for them.

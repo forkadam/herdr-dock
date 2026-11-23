@@ -1,5 +1,12 @@
 // The rendered-diagram cache (<app home>/herdr-dock/render/): what to delete (pure; no host imports). A diagram's
 // file date is refreshed each time it is shown, so the date is "last used".
+import { hashText } from "./markdown.js";
+
+// The drawing's version: bumped whenever how a picture is drawn changes (painting, figures), so a file drawn before
+// isn't shown again. It is part of the theme id, the cache name's second part.
+export const LOOK_VERSION = 10;
+export const themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
+
 export const CACHE_MAX_AGE_MS = 14 * 86400e3;
 export const CACHE_MAX_COUNT = 300;
 const TMP_MAX_AGE_MS = 3600e3;

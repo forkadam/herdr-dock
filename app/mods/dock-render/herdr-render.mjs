@@ -59568,7 +59568,7 @@ var require_elk_bundled = __commonJS({
               Bvc = phd;
               Gwc = Ztc;
               lvc = gsc;
-              kvc = esc;
+              kvc = esc2;
               jvc = dsc;
               gwc = ttc;
               fwc = stc;
@@ -61782,7 +61782,7 @@ var require_elk_bundled = __commonJS({
               hsc = (vpc(), tpc);
               gsc = new pEd(Xze, hsc);
               fsc = (Bnc(), Anc);
-              esc = new pEd(Yze, fsc);
+              esc2 = new pEd(Yze, fsc);
               ttc = new pEd(Zze, false);
               zfb(0);
               stc = new pEd($ze, zfb(16));
@@ -66917,7 +66917,7 @@ var require_elk_bundled = __commonJS({
             mdb(2068, 1, nte);
             var CH = zeb(xte, "RangeGwtSerializationDependencies", 2068);
             mdb(507, 2068, { 178: 1, 507: 1, 3: 1, 48: 1 }, ox);
-            _.Lb = function px(a) {
+            _.Lb = function px3(a) {
               return nx(this, JD(a, 35));
             };
             _.Mb = function tx(a) {
@@ -74307,7 +74307,7 @@ var require_elk_bundled = __commonJS({
               mdd(a, new ied(yed(xed(zed(red(sed(wed(ted(ued(new Aed(), FAe), bBe), "Crossing Minimization Enforced Group Orders"), "Holds all group ids which are enforcing their order during crossing minimization strategies. E.g. if only groups 2 and -1 (default) enforce their ordering. Other groups e.g. the group of timer nodes can be ordered arbitrarily if it helps and the mentioned groups may not change their order."), tsc), Red), HK), Crb(Eed))));
               _xc((new ayc(), a));
             };
-            var csc, dsc, esc, fsc, gsc, hsc, isc, jsc, ksc, lsc, msc, nsc, osc, psc, qsc, rsc, ssc, tsc, usc, vsc, wsc, xsc, ysc, zsc, Asc, Bsc, Csc, Dsc, Esc, Fsc, Gsc, Hsc, Isc, Jsc, Ksc, Lsc, Msc, Nsc, Osc, Psc, Qsc, Rsc, Ssc, Tsc, Usc, Vsc, Wsc, Xsc, Ysc, Zsc, $sc, _sc, atc, btc, ctc, dtc, etc, ftc, gtc, htc, itc, jtc, ktc, ltc, mtc, ntc, otc, ptc, qtc, rtc, stc, ttc, utc, vtc, wtc, xtc, ytc, ztc, Atc, Btc, Ctc, Dtc, Etc, Ftc, Gtc, Htc, Itc, Jtc, Ktc, Ltc, Mtc, Ntc, Otc, Ptc, Qtc, Rtc, Stc, Ttc, Utc, Vtc, Wtc, Xtc, Ytc, Ztc, $tc, _tc, auc, buc, cuc, duc, euc, fuc, guc, huc, iuc, juc, kuc, luc, muc, nuc, ouc, puc, quc, ruc, suc, tuc, uuc, vuc, wuc, xuc, yuc, zuc, Auc, Buc, Cuc, Duc, Euc, Fuc, Guc, Huc, Iuc, Juc, Kuc, Luc, Muc, Nuc, Ouc, Puc, Quc, Ruc, Suc, Tuc, Uuc, Vuc, Wuc, Xuc, Yuc, Zuc, $uc, _uc, avc, bvc;
+            var csc, dsc, esc2, fsc, gsc, hsc, isc, jsc, ksc, lsc, msc, nsc, osc, psc, qsc, rsc, ssc, tsc, usc, vsc, wsc, xsc, ysc, zsc, Asc, Bsc, Csc, Dsc, Esc, Fsc, Gsc, Hsc, Isc, Jsc, Ksc, Lsc, Msc, Nsc, Osc, Psc, Qsc, Rsc, Ssc, Tsc, Usc, Vsc, Wsc, Xsc, Ysc, Zsc, $sc, _sc, atc, btc, ctc, dtc, etc, ftc, gtc, htc, itc, jtc, ktc, ltc, mtc, ntc, otc, ptc, qtc, rtc, stc, ttc, utc, vtc, wtc, xtc, ytc, ztc, Atc, Btc, Ctc, Dtc, Etc, Ftc, Gtc, Htc, Itc, Jtc, Ktc, Ltc, Mtc, Ntc, Otc, Ptc, Qtc, Rtc, Stc, Ttc, Utc, Vtc, Wtc, Xtc, Ytc, Ztc, $tc, _tc, auc, buc, cuc, duc, euc, fuc, guc, huc, iuc, juc, kuc, luc, muc, nuc, ouc, puc, quc, ruc, suc, tuc, uuc, vuc, wuc, xuc, yuc, zuc, Auc, Buc, Cuc, Duc, Euc, Fuc, Guc, Huc, Iuc, Juc, Kuc, Luc, Muc, Nuc, Ouc, Puc, Quc, Ruc, Suc, Tuc, Uuc, Vuc, Wuc, Xuc, Yuc, Zuc, $uc, _uc, avc, bvc;
             var fW = zeb(Tye, "LayeredMetaDataProvider", 843);
             mdb(982, 1, lxe, ayc);
             _.tf = function byc(a) {
@@ -92659,18 +92659,18 @@ function buildStyleBlock(font, hasMonoFont) {
     "</style>"
   ].join("\n");
 }
-function svgOpenTag(width, height, colors2, transparent) {
+function svgOpenTag(width2, height, colors, transparent) {
   const vars = [
-    `--bg:${colors2.bg}`,
-    `--fg:${colors2.fg}`,
-    colors2.line ? `--line:${colors2.line}` : "",
-    colors2.accent ? `--accent:${colors2.accent}` : "",
-    colors2.muted ? `--muted:${colors2.muted}` : "",
-    colors2.surface ? `--surface:${colors2.surface}` : "",
-    colors2.border ? `--border:${colors2.border}` : ""
+    `--bg:${colors.bg}`,
+    `--fg:${colors.fg}`,
+    colors.line ? `--line:${colors.line}` : "",
+    colors.accent ? `--accent:${colors.accent}` : "",
+    colors.muted ? `--muted:${colors.muted}` : "",
+    colors.surface ? `--surface:${colors.surface}` : "",
+    colors.border ? `--border:${colors.border}` : ""
   ].filter(Boolean).join(";");
   const bgStyle = transparent ? "" : ";background:var(--bg)";
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="${vars}${bgStyle}">`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width2} ${height}" width="${width2}" height="${height}" style="${vars}${bgStyle}">`;
 }
 var NARROW_CHARS = /* @__PURE__ */ new Set(["i", "l", "t", "f", "j", "I", "1", "!", "|", ".", ",", ":", ";", "'"]);
 var WIDE_CHARS = /* @__PURE__ */ new Set(["W", "M", "w", "m", "@", "%"]);
@@ -92845,7 +92845,7 @@ function parseFlowchart(lines) {
   const subgraphStack = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    const classDefMatch = line.match(/^classDef\s+(\w+)\s+(.+)$/);
+    const classDefMatch = line.match(/^classDef\s+([\w-]+)\s+(.+)$/);
     if (classDefMatch) {
       const name = classDefMatch[1];
       const propsStr = classDefMatch[2];
@@ -92853,7 +92853,7 @@ function parseFlowchart(lines) {
       graph.classDefs.set(name, props);
       continue;
     }
-    const classAssignMatch = line.match(/^class\s+([\w,-]+)\s+(\w+)$/);
+    const classAssignMatch = line.match(/^class\s+([\w,-]+)\s+([\w-]+)$/);
     if (classAssignMatch) {
       const nodeIds = classAssignMatch[1].split(",").map((s) => s.trim());
       const className = classAssignMatch[2];
@@ -93073,42 +93073,42 @@ function parseStyleProps(propsStr) {
   }
   return props;
 }
-var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\.-|===)(?:\|([^|]*)\|)?/;
-var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|===)/;
+var ARROW_REGEX = /^([<ox])?(-{2,}>|-\.+->|={2,}>|-{2,}[ox]|-\.+-[ox]|={2,}[ox]|-{3,}|-\.+-|={3,}|~{3,})(?:\|([^|]*)\|)?/;
+var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|(?<=^<?-\.\s.*)-\.+->|-\.+-|(?<=^<?-\.\s.*)\.+-|={2,}>|={3,})/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
-  { regex: /^([\w-]+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
   // A(((text)))
   // Double delimiters with mixed brackets
-  { regex: /^([\w-]+)\(\[(.+?)\]\)/, shape: "stadium" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\[(.+?)\]\)/, shape: "stadium" },
   // A([text])
-  { regex: /^([\w-]+)\(\((.+?)\)\)/, shape: "circle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\(\((.+?)\)\)/, shape: "circle" },
   // A((text))
-  { regex: /^([\w-]+)\[\[(.+?)\]\]/, shape: "subroutine" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\[(.+?)\]\]/, shape: "subroutine" },
   // A[[text]]
-  { regex: /^([\w-]+)\[\((.+?)\)\]/, shape: "cylinder" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\((.+?)\)\]/, shape: "cylinder" },
   // A[(text)]
   // Trapezoid variants — must come before plain [text]
-  { regex: /^([\w-]+)\[\/(.+?)\\\]/, shape: "trapezoid" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\/(.+?)\\\]/, shape: "trapezoid" },
   // A[/text\]
-  { regex: /^([\w-]+)\[\\(.+?)\/\]/, shape: "trapezoid-alt" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[\\(.+?)\/\]/, shape: "trapezoid-alt" },
   // A[\text/]
   // Asymmetric flag shape
-  { regex: /^([\w-]+)>(.+?)\]/, shape: "asymmetric" },
+  { regex: /^((?:\w|-(?![-.>]))+)>(.+?)\]/, shape: "asymmetric" },
   // A>text]
   // Double curly braces (hexagon) — must come before single {text}
-  { regex: /^([\w-]+)\{\{(.+?)\}\}/, shape: "hexagon" },
+  { regex: /^((?:\w|-(?![-.>]))+)\{\{(.+?)\}\}/, shape: "hexagon" },
   // A{{text}}
   // Single-char delimiters (last — most common, least specific)
-  { regex: /^([\w-]+)\[(.+?)\]/, shape: "rectangle" },
+  { regex: /^((?:\w|-(?![-.>]))+)\[(.+?)\]/, shape: "rectangle" },
   // A[text]
-  { regex: /^([\w-]+)\((.+?)\)/, shape: "rounded" },
+  { regex: /^((?:\w|-(?![-.>]))+)\((.+?)\)/, shape: "rounded" },
   // A(text)
-  { regex: /^([\w-]+)\{(.+?)\}/, shape: "diamond" }
+  { regex: /^((?:\w|-(?![-.>]))+)\{(.+?)\}/, shape: "diamond" }
   // A{text}
 ];
-var BARE_NODE_REGEX = /^([\w-]+)/;
-var CLASS_SHORTHAND_REGEX = /^:::([\w][\w-]*)/;
+var BARE_NODE_REGEX = /^((?:\w|-(?![-.>]))+)/;
+var CLASS_SHORTHAND_REGEX = /^:::(\w(?:\w|-(?![-.>]))*)/;
 function parseEdgeLine(line, graph, subgraphStack) {
   let remaining = line.trim();
   const firstGroup = consumeNodeGroup(remaining, graph, subgraphStack);
@@ -93122,13 +93122,13 @@ function parseEdgeLine(line, graph, subgraphStack) {
     let edgeLabel;
     const arrowMatch = remaining.match(ARROW_REGEX);
     if (arrowMatch) {
-      hasArrowStart = Boolean(arrowMatch[1]);
+      hasArrowStart = arrowMatch[1] === "o" ? "circle" : arrowMatch[1] === "x" ? "cross" : Boolean(arrowMatch[1]);
       const arrowOp = arrowMatch[2];
       const rawEdgeLabel = arrowMatch[3]?.trim();
       edgeLabel = rawEdgeLabel ? normalizeBrTags(rawEdgeLabel) : void 0;
       remaining = remaining.slice(arrowMatch[0].length).trim();
       style = arrowStyleFromOp(arrowOp);
-      hasArrowEnd = arrowOp.endsWith(">");
+      hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;
     } else {
       const textMatch = remaining.match(TEXT_ARROW_REGEX);
       if (!textMatch) break;
@@ -93220,6 +93220,9 @@ function trackInSubgraph(subgraphStack, nodeId) {
   }
 }
 function arrowStyleFromOp(op) {
+  if (/^~{3,}$/.test(op)) return "invisible";
+  op = op.replace(/[ox]$/, ">");
+  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\.+->$/, "-.->").replace(/^-\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");
   if (op === "-.->") return "dotted";
   if (op === "-.-") return "dotted";
   if (op === "==>") return "thick";
@@ -93227,6 +93230,7 @@ function arrowStyleFromOp(op) {
   return "solid";
 }
 function textArrowStyleFromOps(openOp, closeOp) {
+  closeOp = closeOp.replace(/^\.+->$/, ".->").replace(/^-\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===").replace(/^-\.+->$/, ".->").replace(/^\.+-$/, "-.-");
   if (openOp === "-." || closeOp === ".->" || closeOp === "-.-") return "dotted";
   if (openOp === "==" || closeOp === "==>" || closeOp === "===") return "thick";
   return "solid";
@@ -94006,26 +94010,26 @@ function directionToElk(dir) {
 }
 function estimateNodeSize(id, label, shape) {
   const metrics = measureMultilineText(label, FONT_SIZES.nodeLabel, FONT_WEIGHTS.nodeLabel);
-  let width = metrics.width + NODE_PADDING.horizontal * 2;
+  let width2 = metrics.width + NODE_PADDING.horizontal * 2;
   let height = metrics.height + NODE_PADDING.vertical * 2;
   if (shape === "diamond") {
-    const side = Math.max(width, height) + NODE_PADDING.diamondExtra;
-    width = side;
+    const side = Math.max(width2, height) + NODE_PADDING.diamondExtra;
+    width2 = side;
     height = side;
   }
   if (shape === "circle" || shape === "doublecircle") {
-    const diameter = Math.ceil(Math.sqrt(width * width + height * height)) + 8;
-    width = shape === "doublecircle" ? diameter + 12 : diameter;
-    height = width;
+    const diameter = Math.ceil(Math.sqrt(width2 * width2 + height * height)) + 8;
+    width2 = shape === "doublecircle" ? diameter + 12 : diameter;
+    height = width2;
   }
   if (shape === "hexagon") {
-    width += NODE_PADDING.horizontal;
+    width2 += NODE_PADDING.horizontal;
   }
   if (shape === "trapezoid" || shape === "trapezoid-alt") {
-    width += NODE_PADDING.horizontal;
+    width2 += NODE_PADDING.horizontal;
   }
   if (shape === "asymmetric") {
-    width += 12;
+    width2 += 12;
   }
   if (shape === "cylinder") {
     height += 14;
@@ -94033,9 +94037,9 @@ function estimateNodeSize(id, label, shape) {
   if (shape === "state-start" || shape === "state-end") {
     return { width: 28, height: 28 };
   }
-  width = Math.max(width, 60);
+  width2 = Math.max(width2, 60);
   height = Math.max(height, 36);
-  return { width, height };
+  return { width: width2, height };
 }
 function mermaidToElk(graph, opts) {
   const subgraphNodeIds = /* @__PURE__ */ new Set();
@@ -94312,22 +94316,22 @@ function elkToPositioned(elkResult, graph, mergeEdges = false) {
       edge.points = clipEdgeToShape(edge.points, targetNode, false);
     }
   }
-  let width = elkResult.width ?? 800;
+  let width2 = elkResult.width ?? 800;
   let height = elkResult.height ?? 600;
   const arrowMargin = ARROW_HEAD.width;
   const padding = DEFAULTS2.padding;
   for (const edge of edges) {
     for (const p of edge.points) {
-      width = Math.max(width, p.x + arrowMargin + padding);
+      width2 = Math.max(width2, p.x + arrowMargin + padding);
       height = Math.max(height, p.y + arrowMargin + padding);
     }
     if (edge.labelPosition) {
-      width = Math.max(width, edge.labelPosition.x + 60 + padding);
+      width2 = Math.max(width2, edge.labelPosition.x + 60 + padding);
       height = Math.max(height, edge.labelPosition.y + 20 + padding);
     }
   }
   return {
-    width,
+    width: width2,
     height,
     nodes,
     edges,
@@ -94339,7 +94343,7 @@ function extractNodesAndGroups(elkNode, graph, subgraphIds, nodes, groups, offse
   for (const child of elkNode.children) {
     const x = (child.x ?? 0) + offsetX;
     const y = (child.y ?? 0) + offsetY;
-    const width = child.width ?? 0;
+    const width2 = child.width ?? 0;
     const height = child.height ?? 0;
     if (subgraphIds.has(child.id)) {
       const childGroups = [];
@@ -94350,7 +94354,7 @@ function extractNodesAndGroups(elkNode, graph, subgraphIds, nodes, groups, offse
         label: mermaidSg?.label ?? "",
         x,
         y,
-        width,
+        width: width2,
         height,
         children: childGroups
       });
@@ -94364,7 +94368,7 @@ function extractNodesAndGroups(elkNode, graph, subgraphIds, nodes, groups, offse
           shape: mNode.shape,
           x,
           y,
-          width,
+          width: width2,
           height,
           inlineStyle
         });
@@ -94832,12 +94836,13 @@ function layoutGraphSync(graph, options = {}) {
   const result = elkLayoutSync(elkGraph);
   return elkToPositioned(result, graph, DEFAULTS2.mergeEdges);
 }
-function renderSvg(graph, colors2, font = "Inter", transparent = false) {
+function renderSvg(graph, colors, font = "Inter", transparent = false) {
   const parts = [];
-  parts.push(svgOpenTag(graph.width, graph.height, colors2, transparent));
+  parts.push(svgOpenTag(graph.width, graph.height, colors, transparent));
   parts.push(buildStyleBlock(font, false));
   parts.push("<defs>");
   parts.push(arrowMarkerDefs());
+  parts.push(`<marker id="circlehead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker><marker id="circlehead-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker><marker id="crosshead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker><marker id="crosshead-start" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker>`);
   const customStrokeColors = /* @__PURE__ */ new Set();
   for (const edge of graph.edges) {
     if (edge.inlineStyle?.stroke) {
@@ -94855,7 +94860,7 @@ function renderSvg(graph, colors2, font = "Inter", transparent = false) {
     parts.push(renderEdge(edge));
   }
   for (const edge of graph.edges) {
-    if (edge.label) {
+    if (edge.label && edge.style !== "invisible") {
       parts.push(renderEdgeLabel(edge, font));
     }
   }
@@ -94875,8 +94880,8 @@ function arrowMarkerDefs() {
     `  <marker id="arrowhead" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto">
     <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>
-  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">
-    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />
+  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">
+    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>`
   );
 }
@@ -94890,8 +94895,8 @@ function arrowMarkerDefsForColor(color) {
   return `  <marker id="arrowhead-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto">
     <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>
-  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">
-    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />
+  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">
+    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />
   </marker>`;
 }
 function markerSuffix(color) {
@@ -94925,7 +94930,7 @@ function renderGroup(group, font) {
   return parts.join("\n");
 }
 function renderEdge(edge) {
-  if (edge.points.length < 2) return "";
+  if (edge.points.length < 2 || edge.style === "invisible") return "";
   const pathData = pointsToPolylinePath(edge.points);
   const dashArray = edge.style === "dotted" ? ' stroke-dasharray="4 4"' : "";
   const baseStrokeWidth = edge.style === "thick" ? STROKE_WIDTHS.connector * 2 : STROKE_WIDTHS.connector;
@@ -94933,8 +94938,8 @@ function renderEdge(edge) {
   const strokeWidth = escapeAttr(edge.inlineStyle?.["stroke-width"] ?? String(baseStrokeWidth));
   const suffix = edge.inlineStyle?.stroke ? `-${markerSuffix(edge.inlineStyle.stroke)}` : "";
   let markers = "";
-  if (edge.hasArrowEnd) markers += ` marker-end="url(#arrowhead${suffix})"`;
-  if (edge.hasArrowStart) markers += ` marker-start="url(#arrowhead-start${suffix})"`;
+  if (edge.hasArrowEnd) markers += edge.hasArrowEnd === true ? ` marker-end="url(#arrowhead${suffix})"` : ` marker-end="url(#${edge.hasArrowEnd}head)"`;
+  if (edge.hasArrowStart) markers += edge.hasArrowStart === true ? ` marker-start="url(#arrowhead-start${suffix})"` : ` marker-start="url(#${edge.hasArrowStart}head-start)"`;
   const dataAttrs = [
     'class="edge"',
     `data-from="${escapeAttr(edge.source)}"`,
@@ -95012,40 +95017,40 @@ function renderNode(node, font) {
   return parts.join("\n");
 }
 function renderNodeShape(node) {
-  const { x, y, width, height, shape, inlineStyle } = node;
+  const { x, y, width: width2, height, shape, inlineStyle } = node;
   const fill = escapeAttr(inlineStyle?.fill ?? "var(--_node-fill)");
   const stroke = escapeAttr(inlineStyle?.stroke ?? "var(--_node-stroke)");
   const sw = escapeAttr(inlineStyle?.["stroke-width"] ?? String(STROKE_WIDTHS.innerBox));
   switch (shape) {
     case "diamond":
-      return renderDiamond(x, y, width, height, fill, stroke, sw);
+      return renderDiamond(x, y, width2, height, fill, stroke, sw);
     case "rounded":
-      return renderRoundedRect(x, y, width, height, fill, stroke, sw);
+      return renderRoundedRect(x, y, width2, height, fill, stroke, sw);
     case "stadium":
-      return renderStadium(x, y, width, height, fill, stroke, sw);
+      return renderStadium(x, y, width2, height, fill, stroke, sw);
     case "circle":
-      return renderCircle(x, y, width, height, fill, stroke, sw);
+      return renderCircle(x, y, width2, height, fill, stroke, sw);
     case "subroutine":
-      return renderSubroutine(x, y, width, height, fill, stroke, sw);
+      return renderSubroutine(x, y, width2, height, fill, stroke, sw);
     case "doublecircle":
-      return renderDoubleCircle(x, y, width, height, fill, stroke, sw);
+      return renderDoubleCircle(x, y, width2, height, fill, stroke, sw);
     case "hexagon":
-      return renderHexagon(x, y, width, height, fill, stroke, sw);
+      return renderHexagon(x, y, width2, height, fill, stroke, sw);
     case "cylinder":
-      return renderCylinder(x, y, width, height, fill, stroke, sw);
+      return renderCylinder(x, y, width2, height, fill, stroke, sw);
     case "asymmetric":
-      return renderAsymmetric(x, y, width, height, fill, stroke, sw);
+      return renderAsymmetric(x, y, width2, height, fill, stroke, sw);
     case "trapezoid":
-      return renderTrapezoid(x, y, width, height, fill, stroke, sw);
+      return renderTrapezoid(x, y, width2, height, fill, stroke, sw);
     case "trapezoid-alt":
-      return renderTrapezoidAlt(x, y, width, height, fill, stroke, sw);
+      return renderTrapezoidAlt(x, y, width2, height, fill, stroke, sw);
     case "state-start":
-      return renderStateStart(x, y, width, height);
+      return renderStateStart(x, y, width2, height);
     case "state-end":
-      return renderStateEnd(x, y, width, height);
+      return renderStateEnd(x, y, width2, height);
     case "rectangle":
     default:
-      return renderRect(x, y, width, height, fill, stroke, sw);
+      return renderRect(x, y, width2, height, fill, stroke, sw);
   }
 }
 function renderRect(x, y, w, h, fill, stroke, sw) {
@@ -95487,9 +95492,9 @@ function layoutSequenceDiagram(diagram, _options = {}) {
     notes
   };
 }
-function renderSequenceSvg(diagram, colors2, font = "Inter", transparent = false) {
+function renderSequenceSvg(diagram, colors, font = "Inter", transparent = false) {
   const parts = [];
-  parts.push(svgOpenTag(diagram.width, diagram.height, colors2, transparent));
+  parts.push(svgOpenTag(diagram.width, diagram.height, colors, transparent));
   parts.push(buildStyleBlock(font, false));
   parts.push("<defs>");
   parts.push(arrowMarkerDefs2());
@@ -95526,7 +95531,7 @@ function arrowMarkerDefs2() {
   </marker>`;
 }
 function renderActor(actor) {
-  const { id, x, y, width, height, label, type } = actor;
+  const { id, x, y, width: width2, height, label, type } = actor;
   const parts = [];
   parts.push(
     `<g class="actor" data-id="${escapeAttr2(id)}" data-label="${escapeAttr2(label)}" data-type="${type}">`
@@ -95554,9 +95559,9 @@ function renderActor(actor) {
       )
     );
   } else {
-    const boxX = x - width / 2;
+    const boxX = x - width2 / 2;
     parts.push(
-      `  <rect x="${boxX}" y="${y}" width="${width}" height="${height}" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
+      `  <rect x="${boxX}" y="${y}" width="${width2}" height="${height}" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
     );
     parts.push(
       "  " + renderMultilineText(
@@ -95712,9 +95717,9 @@ function buildClassElkGraph(diagram, _options) {
     const headerTextW = estimateTextWidth(cls.label, FONT_SIZES.nodeLabel, FONT_WEIGHTS.nodeLabel);
     const maxAttrW = maxMemberWidth(cls.attributes);
     const maxMethodW = maxMemberWidth(cls.methods);
-    const width = Math.max(CLS.minWidth, headerTextW + CLS.boxPadX * 2, maxAttrW + CLS.boxPadX * 2, maxMethodW + CLS.boxPadX * 2);
+    const width2 = Math.max(CLS.minWidth, headerTextW + CLS.boxPadX * 2, maxAttrW + CLS.boxPadX * 2, maxMethodW + CLS.boxPadX * 2);
     const height = headerHeight + attrHeight + methodHeight;
-    classSizes.set(cls.id, { width, height, headerHeight, attrHeight, methodHeight });
+    classSizes.set(cls.id, { width: width2, height, headerHeight, attrHeight, methodHeight });
   }
   const elkGraph = {
     id: "root",
@@ -95843,9 +95848,9 @@ var CLS_FONT = {
   annotationSize: 10,
   annotationWeight: 500
 };
-function renderClassSvg(diagram, colors2, font = "Inter", transparent = false) {
+function renderClassSvg(diagram, colors, font = "Inter", transparent = false) {
   const parts = [];
-  parts.push(svgOpenTag(diagram.width, diagram.height, colors2, transparent));
+  parts.push(svgOpenTag(diagram.width, diagram.height, colors, transparent));
   parts.push(buildStyleBlock(font, true));
   parts.push("<defs>");
   parts.push(relationshipMarkerDefs());
@@ -95880,30 +95885,30 @@ function relationshipMarkerDefs() {
   );
 }
 function renderClassBox(cls) {
-  const { x, y, width, height, headerHeight, attrHeight, methodHeight } = cls;
+  const { x, y, width: width2, height, headerHeight, attrHeight, methodHeight } = cls;
   const parts = [];
   const annotationAttr = cls.annotation ? ` data-annotation="${escapeAttr3(cls.annotation)}"` : "";
   parts.push(
     `<g class="class-node" data-id="${escapeAttr3(cls.id)}" data-label="${escapeAttr3(cls.label)}"${annotationAttr}>`
   );
   parts.push(
-    `  <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
+    `  <rect x="${x}" y="${y}" width="${width2}" height="${height}" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
   );
   parts.push(
-    `  <rect x="${x}" y="${y}" width="${width}" height="${headerHeight}" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
+    `  <rect x="${x}" y="${y}" width="${width2}" height="${headerHeight}" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
   );
   let nameY = y + headerHeight / 2;
   if (cls.annotation) {
     const annotY = y + 12;
     parts.push(
-      `  <text x="${x + width / 2}" y="${annotY}" text-anchor="middle" dy="${TEXT_BASELINE_SHIFT}" font-size="${CLS_FONT.annotationSize}" font-weight="${CLS_FONT.annotationWeight}" font-style="italic" fill="var(--_text-muted)">&lt;&lt;${escapeXml3(cls.annotation)}&gt;&gt;</text>`
+      `  <text x="${x + width2 / 2}" y="${annotY}" text-anchor="middle" dy="${TEXT_BASELINE_SHIFT}" font-size="${CLS_FONT.annotationSize}" font-weight="${CLS_FONT.annotationWeight}" font-style="italic" fill="var(--_text-muted)">&lt;&lt;${escapeXml3(cls.annotation)}&gt;&gt;</text>`
     );
     nameY = y + headerHeight / 2 + 6;
   }
   parts.push(
     "  " + renderMultilineText(
       cls.label,
-      x + width / 2,
+      x + width2 / 2,
       nameY,
       FONT_SIZES.nodeLabel,
       `text-anchor="middle" font-size="${FONT_SIZES.nodeLabel}" font-weight="700" fill="var(--_text)"`
@@ -95911,7 +95916,7 @@ function renderClassBox(cls) {
   );
   const attrTop = y + headerHeight;
   parts.push(
-    `  <line x1="${x}" y1="${attrTop}" x2="${x + width}" y2="${attrTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
+    `  <line x1="${x}" y1="${attrTop}" x2="${x + width2}" y2="${attrTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
   );
   const memberRowH = 20;
   for (let i = 0; i < cls.attributes.length; i++) {
@@ -95921,7 +95926,7 @@ function renderClassBox(cls) {
   }
   const methodTop = attrTop + attrHeight;
   parts.push(
-    `  <line x1="${x}" y1="${methodTop}" x2="${x + width}" y2="${methodTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
+    `  <line x1="${x}" y1="${methodTop}" x2="${x + width2}" y2="${methodTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
   );
   for (let i = 0; i < cls.methods.length; i++) {
     const member = cls.methods[i];
@@ -96079,9 +96084,9 @@ function buildErElkGraph(diagram, _options) {
       const w = estimateMonoTextWidth(attrText, ER.attrFontSize);
       if (w > maxAttrW) maxAttrW = w;
     }
-    const width = Math.max(ER.minWidth, headerTextW + ER.boxPadX * 2, maxAttrW + ER.boxPadX * 2);
+    const width2 = Math.max(ER.minWidth, headerTextW + ER.boxPadX * 2, maxAttrW + ER.boxPadX * 2);
     const height = ER.headerHeight + Math.max(entity.attributes.length, 1) * ER.rowHeight;
-    entitySizes.set(entity.id, { width, height });
+    entitySizes.set(entity.id, { width: width2, height });
   }
   const elkGraph = {
     id: "root",
@@ -96178,9 +96183,9 @@ var ER_FONT = {
   keySize: 9,
   keyWeight: 600
 };
-function renderErSvg(diagram, colors2, font = "Inter", transparent = false) {
+function renderErSvg(diagram, colors, font = "Inter", transparent = false) {
   const parts = [];
-  parts.push(svgOpenTag(diagram.width, diagram.height, colors2, transparent));
+  parts.push(svgOpenTag(diagram.width, diagram.height, colors, transparent));
   parts.push(buildStyleBlock(font, true));
   parts.push("<defs>");
   parts.push("</defs>");
@@ -96200,21 +96205,21 @@ function renderErSvg(diagram, colors2, font = "Inter", transparent = false) {
   return parts.join("\n");
 }
 function renderEntityBox(entity) {
-  const { id, x, y, width, height, headerHeight, rowHeight, label, attributes } = entity;
+  const { id, x, y, width: width2, height, headerHeight, rowHeight, label, attributes } = entity;
   const parts = [];
   parts.push(
     `<g class="entity" data-id="${escapeAttr4(id)}" data-label="${escapeAttr4(label)}">`
   );
   parts.push(
-    `  <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
+    `  <rect x="${x}" y="${y}" width="${width2}" height="${height}" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
   );
   parts.push(
-    `  <rect x="${x}" y="${y}" width="${width}" height="${headerHeight}" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
+    `  <rect x="${x}" y="${y}" width="${width2}" height="${headerHeight}" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.outerBox}" />`
   );
   parts.push(
     "  " + renderMultilineText(
       label,
-      x + width / 2,
+      x + width2 / 2,
       y + headerHeight / 2,
       FONT_SIZES.nodeLabel,
       `text-anchor="middle" font-size="${FONT_SIZES.nodeLabel}" font-weight="700" fill="var(--_text)"`
@@ -96222,16 +96227,16 @@ function renderEntityBox(entity) {
   );
   const attrTop = y + headerHeight;
   parts.push(
-    `  <line x1="${x}" y1="${attrTop}" x2="${x + width}" y2="${attrTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
+    `  <line x1="${x}" y1="${attrTop}" x2="${x + width2}" y2="${attrTop}" stroke="var(--_node-stroke)" stroke-width="${STROKE_WIDTHS.innerBox}" />`
   );
   for (let i = 0; i < attributes.length; i++) {
     const attr = attributes[i];
     const rowY = attrTop + i * rowHeight + rowHeight / 2;
-    parts.push("  " + renderAttribute(attr, x, rowY, width).replace(/\n/g, "\n  "));
+    parts.push("  " + renderAttribute(attr, x, rowY, width2).replace(/\n/g, "\n  "));
   }
   if (attributes.length === 0) {
     parts.push(
-      `  <text x="${x + width / 2}" y="${attrTop + rowHeight / 2}" text-anchor="middle" dy="${TEXT_BASELINE_SHIFT}" font-size="${ER_FONT.attrSize}" fill="var(--_text-faint)" font-style="italic">(no attributes)</text>`
+      `  <text x="${x + width2 / 2}" y="${attrTop + rowHeight / 2}" text-anchor="middle" dy="${TEXT_BASELINE_SHIFT}" font-size="${ER_FONT.attrSize}" fill="var(--_text-faint)" font-style="italic">(no attributes)</text>`
     );
   }
   parts.push("</g>");
@@ -96318,7 +96323,7 @@ function renderCrowsFoot(point, toward, cardinality) {
   if (len === 0) return "";
   const ux = dx / len;
   const uy = dy / len;
-  const px = -uy;
+  const px3 = -uy;
   const py = ux;
   const tipX = point.x - ux * 4;
   const tipY = point.y - uy * 4;
@@ -96330,12 +96335,12 @@ function renderCrowsFoot(point, toward, cardinality) {
   if (hasOneLine) {
     const halfW = 6;
     parts.push(
-      `<line x1="${tipX + px * halfW}" y1="${tipY + py * halfW}" x2="${tipX - px * halfW}" y2="${tipY - py * halfW}" stroke="var(--_line)" stroke-width="${sw}" />`
+      `<line x1="${tipX + px3 * halfW}" y1="${tipY + py * halfW}" x2="${tipX - px3 * halfW}" y2="${tipY - py * halfW}" stroke="var(--_line)" stroke-width="${sw}" />`
     );
     const line2X = tipX - ux * 4;
     const line2Y = tipY - uy * 4;
     parts.push(
-      `<line x1="${line2X + px * halfW}" y1="${line2Y + py * halfW}" x2="${line2X - px * halfW}" y2="${line2Y - py * halfW}" stroke="var(--_line)" stroke-width="${sw}" />`
+      `<line x1="${line2X + px3 * halfW}" y1="${line2Y + py * halfW}" x2="${line2X - px3 * halfW}" y2="${line2Y - py * halfW}" stroke="var(--_line)" stroke-width="${sw}" />`
     );
   }
   if (hasCrowsFoot) {
@@ -96344,7 +96349,7 @@ function renderCrowsFoot(point, toward, cardinality) {
     const cfTipY = tipY;
     parts.push(
       // Top fan line
-      `<line x1="${cfTipX + px * fanW}" y1="${cfTipY + py * fanW}" x2="${backX}" y2="${backY}" stroke="var(--_line)" stroke-width="${sw}" />`
+      `<line x1="${cfTipX + px3 * fanW}" y1="${cfTipY + py * fanW}" x2="${backX}" y2="${backY}" stroke="var(--_line)" stroke-width="${sw}" />`
     );
     parts.push(
       // Center line
@@ -96352,7 +96357,7 @@ function renderCrowsFoot(point, toward, cardinality) {
     );
     parts.push(
       // Bottom fan line
-      `<line x1="${cfTipX - px * fanW}" y1="${cfTipY - py * fanW}" x2="${backX}" y2="${backY}" stroke="var(--_line)" stroke-width="${sw}" />`
+      `<line x1="${cfTipX - px3 * fanW}" y1="${cfTipY - py * fanW}" x2="${backX}" y2="${backY}" stroke="var(--_line)" stroke-width="${sw}" />`
     );
   }
   if (hasCircle) {
@@ -96764,15 +96769,15 @@ var TIP = {
   minY: 4,
   pointerSize: 6
 };
-function renderXYChartSvg(chart, colors2, font = "Inter", transparent = false, interactive = false) {
+function renderXYChartSvg(chart, colors, font = "Inter", transparent = false, interactive = false) {
   const parts = [];
   const maxColorIdx = Math.max(0, ...chart.bars.map((b) => b.colorIndex), ...chart.lines.map((l) => l.colorIndex));
-  const svgTag = svgOpenTag(chart.width, chart.height, colors2, transparent).replace("<svg ", `<svg data-xychart-colors="${maxColorIdx}" `);
+  const svgTag = svgOpenTag(chart.width, chart.height, colors, transparent).replace("<svg ", `<svg data-xychart-colors="${maxColorIdx}" `);
   parts.push(svgTag);
   parts.push(buildStyleBlock(font, false));
   const maxLinePoints = Math.max(...chart.lines.map((l) => l.points.length), 0);
   const sparse = maxLinePoints > 0 && maxLinePoints <= 12;
-  const { style: chartCss, defs: chartDefs } = chartStyles(chart, interactive, sparse, colors2.accent, colors2.bg);
+  const { style: chartCss, defs: chartDefs } = chartStyles(chart, interactive, sparse, colors.accent, colors.bg);
   parts.push(chartCss);
   if (chartDefs) parts.push(chartDefs);
   const { plotArea } = chart;
@@ -97139,7 +97144,7 @@ function buildColors(options) {
 }
 function renderMermaidSVG(text, options = {}) {
   text = decodeXML(text);
-  const colors2 = buildColors(options);
+  const colors = buildColors(options);
   const font = options.font ?? "Inter";
   const transparent = options.transparent ?? false;
   const diagramType = detectDiagramType2(text);
@@ -97148,28 +97153,28 @@ function renderMermaidSVG(text, options = {}) {
     case "sequence": {
       const diagram = parseSequenceDiagram(lines);
       const positioned = layoutSequenceDiagram(diagram, options);
-      return renderSequenceSvg(positioned, colors2, font, transparent);
+      return renderSequenceSvg(positioned, colors, font, transparent);
     }
     case "class": {
       const diagram = parseClassDiagram(lines);
       const positioned = layoutClassDiagramSync(diagram, options);
-      return renderClassSvg(positioned, colors2, font, transparent);
+      return renderClassSvg(positioned, colors, font, transparent);
     }
     case "er": {
       const diagram = parseErDiagram(lines);
       const positioned = layoutErDiagramSync(diagram, options);
-      return renderErSvg(positioned, colors2, font, transparent);
+      return renderErSvg(positioned, colors, font, transparent);
     }
     case "xychart": {
       const chart = parseXYChart(lines);
       const positioned = layoutXYChart(chart, options);
-      return renderXYChartSvg(positioned, colors2, font, transparent, options.interactive ?? false);
+      return renderXYChartSvg(positioned, colors, font, transparent, options.interactive ?? false);
     }
     case "flowchart":
     default: {
       const graph = parseMermaid(text);
       const positioned = layoutGraphSync(graph, options);
-      return renderSvg(positioned, colors2, font, transparent);
+      return renderSvg(positioned, colors, font, transparent);
     }
   }
 }
@@ -97283,6 +97288,9 @@ var trimBlank = (lines) => {
   while (b > a && !lines[b - 1].trim()) b--;
   return lines.slice(a, b).join("\n");
 };
+var PICTURES = /* @__PURE__ */ new Set(["mermaid", "figure"]);
+var blockId = (kind, source) => hashText(kind === "figure" ? `figure
+${source}` : source);
 function splitSegments(text) {
   const out2 = [];
   let md = [];
@@ -97306,10 +97314,11 @@ function splitSegments(text) {
       md.push(...lines.slice(i));
       break;
     }
-    if (m[2].toLowerCase() === "mermaid") {
+    const kind = m[2].toLowerCase();
+    if (PICTURES.has(kind)) {
       flush();
       const source = lines.slice(i + 1, j).join("\n").replace(/\s+$/, "");
-      out2.push({ kind: "mermaid", source, id: hashText(source) });
+      out2.push({ kind, source, id: blockId(kind, source) });
     } else {
       md.push(...lines.slice(i, j + 1));
     }
@@ -97318,9 +97327,11 @@ function splitSegments(text) {
   flush();
   return out2;
 }
-var mermaidBlocks = (text) => splitSegments(text).filter((s) => s.kind === "mermaid").map((s) => s.source);
+var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
+var LOOK_VERSION = 10;
+var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;
 var TMP_MAX_AGE_MS = 36e5;
@@ -97341,6 +97352,433 @@ function cacheToPrune(files, nowMs, { maxAgeMs = CACHE_MAX_AGE_MS, maxCount = CA
   keep.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const f of keep.slice(maxCount)) out2.push(f.name);
   return out2.sort();
+}
+
+// src/shared/render/paint.js
+var TINT = 0.18;
+var BAR_TINT = 0.35;
+var LABEL_SIZE = 12;
+var LABEL_GAP = 6;
+var MIN_CONTRAST = 3;
+var NODE_OPEN = /<g class="(?:node|class-node|entity|actor)" data-id="([^"]*)"[^>]*>/g;
+function mermaidColors(t) {
+  return {
+    bg: t.background,
+    fg: t.foreground,
+    line: mix(t.foreground, 0.5, t.background),
+    accent: t.accent,
+    muted: t.muted,
+    surface: mix(t.foreground, t.dark ? 0.06 : 0.04, t.background),
+    border: t.border,
+    font: "sans-serif"
+  };
+}
+var isHex = (c) => typeof c === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim());
+var channels = (hex) => {
+  const h = hex.trim().slice(1);
+  const full = h.length === 3 ? [...h].map((x) => x + x).join("") : h;
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+};
+var luminance = (hex) => {
+  const [r2, g, b] = channels(hex).map((v) => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r2 + 0.7152 * g + 0.0722 * b;
+};
+var contrast = (a, b) => {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+function nodePalette(theme) {
+  const t = theme ?? {};
+  const seen = /* @__PURE__ */ new Set();
+  const out2 = [];
+  for (const c of [t.ansi4, t.ansi6, t.ansi2, t.ansi5, t.ansi3, t.accent]) {
+    if (!isHex(c) || seen.has(c.toLowerCase())) continue;
+    seen.add(c.toLowerCase());
+    if (isHex(t.background) && contrast(c, t.background) < MIN_CONTRAST) continue;
+    out2.push(c);
+  }
+  if (out2.length) return out2;
+  return isHex(t.accent) ? [t.accent] : [];
+}
+function idBefore(text) {
+  let end = text.length;
+  const close = { "]": "[", ")": "(", "}": "{" };
+  if (close[text[end - 1]]) {
+    let depth = 0;
+    for (let i = end - 1; i >= 0; i--) {
+      const ch = text[i];
+      if (close[ch]) depth++;
+      else if (Object.values(close).includes(ch) && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const token = /([\w.=-]+)\s*$/.exec(text.slice(0, end))?.[1];
+  return token?.split(/(?:-(?=[-.>])[-.]*|={2,})[ox]?/).pop() || null;
+}
+function styledIds(source) {
+  const lines = String(source ?? "").split("\n");
+  const kind = lines.map((l) => l.trim()).find((l) => l && !l.startsWith("%%")) ?? "";
+  const classDiagram = /^classDiagram\b/.test(kind);
+  const ids = /* @__PURE__ */ new Set();
+  let all = false;
+  const addList = (list) => {
+    for (const id of list.split(",")) if (id.trim()) ids.add(id.trim());
+  };
+  for (const raw of lines) {
+    const line = raw.trim();
+    let m;
+    if (/^classDef\s+default\b/.test(line)) all = true;
+    if (m = /^style\s+([^\s]+)/.exec(line)) addList(m[1]);
+    if (!classDiagram && (m = /^class\s+([^\s]+)\s+\S/.exec(line))) addList(m[1]);
+    if (m = /^cssClass\s+"([^"]+)"/.exec(line)) addList(m[1]);
+    for (let at = line.indexOf(":::"); at >= 0; at = line.indexOf(":::", at + 3)) {
+      const id = idBefore(line.slice(0, at));
+      if (id) ids.add(id);
+    }
+  }
+  return { all, ids };
+}
+var unxml = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+var escText = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+var px = (n) => Math.round(n * 100) / 100;
+function replaceNodeGroups(svg, fn) {
+  let out2 = "", at = 0;
+  for (const m of svg.matchAll(NODE_OPEN)) {
+    if (m.index < at) continue;
+    const bodyStart = m.index + m[0].length;
+    const tags = /<g\b|<\/g>/g;
+    tags.lastIndex = bodyStart;
+    let depth = 1, close = -1, t;
+    while (t = tags.exec(svg)) {
+      if (t[0] !== "</g>") depth++;
+      else if (--depth === 0) {
+        close = t.index;
+        break;
+      }
+    }
+    if (close < 0) break;
+    out2 += svg.slice(at, m.index) + fn(m[0], m[1], svg.slice(bodyStart, close), "</g>");
+    at = close + "</g>".length;
+  }
+  return out2 + svg.slice(at);
+}
+function paintNodes(svg, palette, styled) {
+  if (!palette.length || styled.all) return svg;
+  const colourOf = /* @__PURE__ */ new Map();
+  return replaceNodeGroups(svg, (open, rawId, body, close) => {
+    const id = unxml(rawId);
+    if (/^_(start|end)/.test(id) || styled.ids.has(id)) return open + body + close;
+    if (!colourOf.has(id)) colourOf.set(id, palette[colourOf.size % palette.length]);
+    const c = colourOf.get(id);
+    const painted = body.replace(/(<(?:text|tspan)\b[^>]*?\bfill=")#[0-9a-f]{3,8}(")/gi, `$1${c}$2`).replace(/(<(?!text\b|tspan\b)[a-z]+\b[^>]*?\bfill=")(#[0-9a-f]{6}|#[0-9a-f]{3})(")/gi, (_m, a, fill, b) => `${a}${mix(c, TINT, fill)}${b}`).replace(/(\bstroke=")#[0-9a-f]{3,8}(")/gi, `$1${c}$2`);
+    return open + painted + close;
+  });
+}
+function restyle(tag, css) {
+  if (/\sstyle="/.test(tag)) return tag.replace(/\sstyle="([^"]*)"/, (_m, s) => ` style="${s.replace(/;?\s*$/, ";")}${css}"`);
+  return tag.replace(/\s*(\/?)>$/, ` style="${css}"$1>`);
+}
+var attrOf = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
+var classesOf = (tag) => (attrOf(tag, "class") ?? "").split(/\s+/);
+function paintSeries(svg, palette, theme) {
+  if (!palette.length) return svg;
+  return svg.replace(/<([a-z]+)\b[^>]*>/g, (tag, name) => {
+    const cls = classesOf(tag);
+    const n = cls.map((k) => /^xychart-color-(\d+)$/.exec(k)?.[1]).find((x) => x !== void 0);
+    if (n === void 0) return tag;
+    const c = palette[Number(n) % palette.length];
+    if (cls.includes("xychart-bar")) return restyle(tag, `fill:${mix(c, BAR_TINT, theme.background)};stroke:${c}`);
+    if (name === "circle") return restyle(tag, `fill:${c}`);
+    if (name === "path" || name === "line" || name === "polyline") return restyle(tag, `stroke:${c}`);
+    return tag;
+  });
+}
+function barBox(tag) {
+  const d = attrOf(tag, "d");
+  if (d) {
+    const n = (d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi) ?? []).map(Number);
+    const xs = n.filter((_, i) => i % 2 === 0), ys = n.filter((_, i) => i % 2 === 1);
+    return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
+  }
+  const x = Number(attrOf(tag, "x")), y = Number(attrOf(tag, "y"));
+  return { left: x, right: x + Number(attrOf(tag, "width")), top: y, bottom: y + Number(attrOf(tag, "height")) };
+}
+function labelBars(svg, theme) {
+  const accent = theme.accent ?? theme.foreground, muted = theme.muted ?? theme.foreground;
+  const bars = [...svg.matchAll(/<[a-z]+\b[^>]*>/g)].map((m) => m[0]).filter((tag) => classesOf(tag).includes("xychart-bar") && attrOf(tag, "data-value") !== void 0);
+  if (!bars.length) return svg;
+  const values = bars.map((tag) => Number(attrOf(tag, "data-value")));
+  const highlight = Math.max(...values.filter(Number.isFinite).map(Math.abs));
+  const labels = [];
+  let out2 = svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
+    const i = bars.indexOf(tag);
+    if (i < 0) return tag;
+    const c = Math.abs(values[i]) === highlight ? accent : muted;
+    const box = barBox(tag);
+    if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) throw new Error("bar without a box");
+    const y = values[i] < 0 ? box.bottom + LABEL_GAP + LABEL_SIZE : box.top - LABEL_GAP;
+    labels.push({ x: (box.left + box.right) / 2, y, text: attrOf(tag, "data-value") });
+    return restyle(tag, `fill:${mix(c, BAR_TINT, theme.background)};stroke:${c}`);
+  });
+  out2 = out2.replace(/<\/svg>\s*$/, `${labels.map((l) => `<text x="${px(l.x)}" y="${px(l.y)}" text-anchor="middle" font-size="${LABEL_SIZE}" fill="${muted}" class="render-bar-value">${escText(l.text)}</text>`).join("\n")}
+</svg>
+`);
+  const root = /<svg\b[^>]*>/.exec(out2)[0];
+  const vb = attrOf(root, "viewBox")?.trim().split(/\s+/).map(Number);
+  const top = Math.min(...labels.map((l) => l.y - LABEL_SIZE));
+  if (vb?.length === 4 && top < vb[1]) {
+    const grow = Math.ceil(vb[1] - top) + 4;
+    const nvb = [vb[0], vb[1] - grow, vb[2], vb[3] + grow];
+    let nroot = root.replace(/\sviewBox="[^"]*"/, ` viewBox="${nvb.join(" ")}"`);
+    const h = Number(attrOf(root, "height"));
+    if (h > 0) nroot = nroot.replace(/\sheight="[^"]*"/, ` height="${px(h * nvb[3] / vb[3])}"`);
+    out2 = out2.replace(root, nroot).replace(`<rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}"`, `<rect x="${nvb[0]}" y="${nvb[1]}" width="${nvb[2]}" height="${nvb[3]}"`);
+  }
+  return out2;
+}
+function paintDiagram(svg, source, theme) {
+  try {
+    if (typeof svg !== "string" || !/<svg\b/.test(svg)) return svg;
+    const t = theme ?? {};
+    const palette = nodePalette(t);
+    let out2 = paintNodes(svg, palette, styledIds(source));
+    const src = String(source ?? "");
+    if (/^\s*xychart(-beta)?\b/m.test(src)) {
+      const series = [...src.matchAll(/^\s*(bar|line)\b/gm)].map((m) => m[1]);
+      if (series.length >= 2) {
+        if (palette.length >= 2) out2 = paintSeries(out2, palette, t);
+      } else if (series[0] === "bar" && !/^\s*xychart(-beta)?\s+horizontal/m.test(src)) out2 = labelBars(out2, t);
+    }
+    if (!/<svg\b/.test(out2) || /var\(|color-mix|<foreignObject/i.test(out2)) return svg;
+    return out2;
+  } catch {
+    return svg;
+  }
+}
+
+// src/shared/render/figure.js
+var FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
+var FIGURE_MAX_COLUMNS = 100;
+var FIGURE_MAX_LINES = 80;
+var FIGURE_FONT = 13;
+var FIGURE_CELL = 7.8;
+var FIGURE_LINE = 18;
+var FIGURE_PAD = 10;
+var RAW_MAX_LINE = FIGURE_MAX_COLUMNS * 4;
+var LISTED_GLYPHS = 8;
+var WIDE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3FFFD}\u20e3]|\p{Emoji_Presentation}|\p{Extended_Pictographic}\ufe0f/u;
+var segmenter = new Intl.Segmenter();
+var graphemes = (s) => [...segmenter.segment(s)].map((g) => g.segment);
+var width = (s) => /^[ -~]*$/.test(s) ? s.length : s.length === 1 ? /\p{M}/u.test(s) ? 0 : WIDE.test(s) ? 2 : 1 : graphemes(s).reduce((w, g) => /^\p{M}+$/u.test(g) ? w : w + (WIDE.test(g) ? 2 : 1), 0);
+var MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")}):([^{}]*)\\}`, "g");
+var MARKER = /\{([A-Za-z][\w-]*):/g;
+var TEXT_FORMS = { "\u25B6": "\u25BA", "\u25C0": "\u25C4" };
+var EMOJI_CAPABLE = /\p{Extended_Pictographic}/u;
+var CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
+var DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+var INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
+var NONCHARACTER = /[\uFFFE\uFFFF]|\p{Cs}/u;
+var isRole = (name) => FIGURE_ROLES.includes(name);
+var textForm = (text) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
+function figureRuns(line) {
+  const runs = [];
+  let at = 0;
+  for (const match of line.matchAll(MARKUP)) {
+    const [whole, role, text = ""] = match;
+    if (match.index > at) runs.push({ text: textForm(line.slice(at, match.index)) });
+    if (text && isRole(role)) runs.push({ text: textForm(text), role });
+    at = match.index + whole.length;
+  }
+  if (at < line.length) runs.push({ text: textForm(line.slice(at)) });
+  return runs;
+}
+var figureText = (line) => figureRuns(line).map((run2) => run2.text).join("");
+var swapsTwoLetters = (name, role) => {
+  if (name.length !== role.length) return false;
+  const differ = [...name].flatMap((letter, i) => letter === role[i] ? [] : [i]);
+  const [first = -1, second = -1] = differ;
+  return differ.length === 2 && second === first + 1 && name[first] === role[second] && name[second] === role[first];
+};
+var markupMessage = (marker, drawn, lastClose) => {
+  const [written, name = ""] = marker;
+  if (drawn.has(marker.index)) return void 0;
+  const lower = name.toLowerCase();
+  const role = FIGURE_ROLES.find((candidate) => candidate === lower || swapsTwoLetters(lower, candidate));
+  if (!role) return void 0;
+  if (name !== role) return `"${written}" is not a role, roles are ${FIGURE_ROLES.join(", ")} in lower case`;
+  if (lastClose < marker.index + written.length) return `"${written}" is not closed, end it with }`;
+  return `"${written}" holds braces, markup does not nest`;
+};
+var markupMessages = (line) => {
+  const drawn = new Set([...line.matchAll(MARKUP)].map((match) => match.index));
+  const lastClose = line.lastIndexOf("}");
+  return [...line.matchAll(MARKER)].flatMap((marker) => markupMessage(marker, drawn, lastClose) ?? []);
+};
+var quoted = (glyphs) => {
+  const distinct = [...new Set(glyphs)];
+  const listed = distinct.slice(0, LISTED_GLYPHS).map((glyph) => `"${glyph}"`).join(", ");
+  return distinct.length > LISTED_GLYPHS ? `${listed} and ${distinct.length - LISTED_GLYPHS} more` : listed;
+};
+var lineMessages = (line) => {
+  const text = figureText(line);
+  const glyphs = graphemes(text);
+  const emoji = glyphs.filter((glyph) => EMOJI_CAPABLE.test(glyph));
+  const wide = glyphs.filter((glyph) => !EMOJI_CAPABLE.test(glyph) && width(glyph) === 2);
+  const columns = width(text);
+  return [
+    ...columns > FIGURE_MAX_COLUMNS ? [`${columns} columns wide, at most ${FIGURE_MAX_COLUMNS}`] : [],
+    ...text.includes("	") ? ["tab, use spaces"] : [],
+    ...CONTROL.test(text) ? ["control character, use plain text"] : [],
+    ...DIRECTION_MARK.test(text) ? ["direction mark, use plain text"] : [],
+    ...INVISIBLE.test(text) ? ["invisible character, use plain text"] : [],
+    ...NONCHARACTER.test(text) ? ["noncharacter, use plain text"] : [],
+    ...emoji.length ? [`${quoted(emoji)} may draw as an emoji, use a text glyph`] : [],
+    ...wide.length ? [`${quoted(wide)} take two columns, use one-column glyphs`] : [],
+    ...markupMessages(line)
+  ];
+};
+var checkFigure = (lines, first = 0) => lines.flatMap((line, index) => lineMessages(line).map((message) => ({ line: first + index + 1, message })));
+var leadingBlanks = (lines) => {
+  const start = lines.findIndex((line) => line.trim());
+  return start < 0 ? lines.length : start;
+};
+var withoutTrailingBlanks = (lines) => {
+  let end = lines.length;
+  while (end > 0 && !lines[end - 1]?.trim()) end--;
+  return lines.slice(0, end);
+};
+function decideFigure(source) {
+  const raw = String(source ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const tooLong = raw.findIndex((line) => line.length > RAW_MAX_LINE);
+  if (tooLong >= 0) return { note: `figure line ${tooLong + 1} is ${raw[tooLong].length} characters long` };
+  if (raw.length > FIGURE_MAX_LINES * 2) return { note: `figure has ${raw.length} lines, at most ${FIGURE_MAX_LINES}` };
+  const first = leadingBlanks(raw);
+  const lines = withoutTrailingBlanks(raw.slice(first));
+  if (!lines.length) return { note: "figure is empty" };
+  if (lines.length > FIGURE_MAX_LINES) return { note: `figure has ${lines.length} lines, at most ${FIGURE_MAX_LINES}` };
+  const [finding] = checkFigure(lines, first);
+  return finding ? { note: `figure line ${finding.line}: ${finding.message}` } : { lines };
+}
+var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var px2 = (n) => Math.round(n * 100) / 100;
+var BOX = {};
+var SHAPES = ["0101", "1010", "0110", "0011", "1100", "1001", "1110", "1011", "0111", "1101", "1111", "0110", "0011", "1001", "1100"];
+for (const [chars, weight] of [["\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u256D\u256E\u256F\u2570", 1], ["\u2501\u2503\u250F\u2513\u2517\u251B\u2523\u252B\u2533\u253B\u254B", 2], ["\u2550\u2551\u2554\u2557\u255A\u255D\u2560\u2563\u2566\u2569\u256C", 3]]) {
+  [...chars].forEach((ch, i) => {
+    BOX[ch] = [...SHAPES[i]].map((arm) => arm === "1" ? weight : 0);
+  });
+}
+var DOUBLE_GAP = 1.5;
+function boxPath(arms, left, top, colour) {
+  const width2 = Math.max(...arms) === 2 ? 2 : 1;
+  const cx = left + FIGURE_CELL / 2, cy = top + FIGURE_LINE / 2;
+  const ends = [[cx, top], [left + FIGURE_CELL, cy], [cx, top + FIGURE_LINE], [left, cy]];
+  const back = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+  const d = arms.flatMap((weight, i) => {
+    if (!weight) return [];
+    const [ex, ey] = ends[i];
+    const [bx, by] = back[i].map((v) => v * (width2 / 2));
+    const vertical = i % 2 === 0;
+    return (weight === 3 ? [-DOUBLE_GAP, DOUBLE_GAP] : [0]).map((o) => {
+      const [dx, dy] = vertical ? [o, 0] : [0, o];
+      return `M${px2(cx + bx + dx)} ${px2(cy + by + dy)}L${px2(ex + dx)} ${px2(ey + dy)}`;
+    });
+  }).join("");
+  return `<path d="${d}" stroke="${colour}" stroke-width="${width2}" fill="none"/>`;
+}
+var isHex2 = (c) => typeof c === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim());
+var readable = (c, theme) => isHex2(c) && (!isHex2(theme.background) || contrast(c, theme.background) >= 3);
+function roleStyle(role, theme) {
+  const fg = theme.foreground;
+  switch (role) {
+    case "accent":
+      return { fill: theme.accent ?? fg };
+    case "warn":
+      return readable(theme.ansi1, theme) ? { fill: theme.ansi1 } : { fill: fg, bold: true };
+    case "ok":
+      return { fill: readable(theme.ansi2, theme) ? theme.ansi2 : fg };
+    case "note":
+      return { fill: readable(theme.ansi3, theme) ? theme.ansi3 : fg };
+    case "dim":
+      return { fill: theme.dim ?? theme.muted ?? fg };
+    case "strong":
+      return { fill: fg, bold: true };
+    default:
+      return { fill: fg };
+  }
+}
+function figureSvg(lines, theme) {
+  const parts = [];
+  const blocks = /* @__PURE__ */ new Map();
+  let columns = 0;
+  lines.forEach((line, row) => {
+    const top = FIGURE_PAD + row * FIGURE_LINE;
+    const baseline = px2(top + FIGURE_FONT);
+    let col = 0;
+    let block = null;
+    const endBlock = () => {
+      if (block) {
+        const w2 = px2((block.end - block.start) * FIGURE_CELL);
+        if (!blocks.has(block.fill)) blocks.set(block.fill, []);
+        blocks.get(block.fill).push(`M${px2(FIGURE_PAD + block.start * FIGURE_CELL)} ${px2(top)}h${w2}v${FIGURE_LINE}h-${w2}z`);
+      }
+      block = null;
+    };
+    for (const run2 of figureRuns(line)) {
+      const style = roleStyle(run2.role, theme);
+      const attrs = `font-family="monospace" font-size="${FIGURE_FONT}" fill="${style.fill}"${style.bold ? ' font-weight="bold"' : ""}`;
+      let chars = [];
+      let xs = [];
+      const flush = () => {
+        if (chars.length) parts.push(`<text x="${xs.join(" ")}" y="${baseline}" ${attrs}>${esc(chars.join(""))}</text>`);
+        chars = [];
+        xs = [];
+      };
+      for (const g of graphemes(run2.text)) {
+        const x = px2(FIGURE_PAD + col * FIGURE_CELL);
+        if (g === "\u2588") {
+          flush();
+          if (block && block.fill === style.fill && block.end === col) block.end = col + 1;
+          else {
+            endBlock();
+            block = { start: col, end: col + 1, fill: style.fill };
+          }
+          col += 1;
+          continue;
+        }
+        endBlock();
+        if (BOX[g]) {
+          flush();
+          parts.push(boxPath(BOX[g], FIGURE_PAD + col * FIGURE_CELL, top, style.fill));
+          col += 1;
+          continue;
+        }
+        if (g === " ") flush();
+        else if (g.length > 1) {
+          flush();
+          parts.push(`<text x="${x}" y="${baseline}" ${attrs}>${esc(g)}</text>`);
+        } else {
+          chars.push(g);
+          xs.push(x);
+        }
+        col += Math.max(1, width(g));
+      }
+      flush();
+    }
+    endBlock();
+    columns = Math.max(columns, col);
+  });
+  for (const [fill, rects] of blocks) parts.push(`<path d="${rects.join("")}" fill="${fill}"/>`);
+  const w = px2(FIGURE_PAD * 2 + columns * FIGURE_CELL);
+  const h = px2(FIGURE_PAD * 2 + lines.length * FIGURE_LINE);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+<rect x="0" y="0" width="${w}" height="${h}" fill="${theme.background}"/>
+${parts.join("\n")}
+</svg>
+`;
+  return { svg, w, h };
 }
 
 // src/shared/render/transcript.js
@@ -97366,10 +97804,10 @@ function fold(events) {
       continue;
     }
     parts.push(e);
-    for (const source of mermaidBlocks(e.text)) {
-      const id = hashText(source);
+    for (const { kind, source } of pictureBlocks(e.text)) {
+      const id = blockId(kind, source);
       diagrams.delete(id);
-      diagrams.set(id, { source, id, at: e.at });
+      diagrams.set(id, { kind, source, id, at: e.at });
     }
   }
   return {
@@ -97437,22 +97875,19 @@ function readText(path, max) {
   const buf = readFileSync(path);
   return buf.subarray(buf.length - max).toString("utf8");
 }
-function colors(t) {
-  return {
-    bg: t.background,
-    fg: t.foreground,
-    line: mix(t.foreground, 0.5, t.background),
-    accent: t.accent,
-    muted: t.muted,
-    surface: mix(t.foreground, t.dark ? 0.06 : 0.04, t.background),
-    border: t.border,
-    font: "sans-serif"
-  };
+function draw(seg, theme) {
+  if (seg.kind === "figure") {
+    const d = decideFigure(seg.source);
+    if (d.note) throw new Error(d.note);
+    return figureSvg(d.lines, theme).svg;
+  }
+  return paintDiagram(flattenSvg(renderMermaidSVG(seg.source, mermaidColors(theme)), theme.background), seg.source, theme);
 }
-function render(source, req, themeId) {
+function render(seg, req, themeId) {
+  const { source } = seg;
   try {
-    if (source.length > MAX_SOURCE) throw new Error(`diagram too large (${Math.round(source.length / 1024)} KiB)`);
-    const name = `${hashText(source)}-${themeId}.svg`;
+    if (source.length > MAX_SOURCE) throw new Error(`${seg.kind === "figure" ? "figure" : "diagram"} too large (${Math.round(source.length / 1024)} KiB)`);
+    const name = `${seg.id}-${themeId}.svg`;
     const file = join(req.cacheDir, name);
     if (existsSync(file)) {
       try {
@@ -97461,7 +97896,7 @@ function render(source, req, themeId) {
       } catch {
       }
     } else {
-      const svg = flattenSvg(renderMermaidSVG(source, colors(req.theme)), req.theme.background);
+      const svg = draw(seg, req.theme);
       mkdirSync(req.cacheDir, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, svg);
@@ -97475,17 +97910,17 @@ function render(source, req, themeId) {
   }
 }
 function segments(text, req, themeId) {
-  return splitSegments(text).map((s) => s.kind === "mermaid" ? { ...s, ...render(s.source, req, themeId) } : s);
+  return splitSegments(text).map((s) => s.kind === "md" ? s : { ...s, ...render(s, req, themeId) });
 }
 function fromLog(read, lines, req, extra) {
-  const themeId = hashText(JSON.stringify(req.theme));
+  const themeId = themeKey(req.theme);
   const r2 = read(lines);
   return {
     ok: true,
     ...extra,
     prompt: r2.prompt,
     answer: r2.answer ? { at: r2.answer.at, segments: segments(r2.answer.text, req, themeId) } : null,
-    diagrams: r2.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d.source, req, themeId) }))
+    diagrams: r2.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d, req, themeId) }))
   };
 }
 function codexRollouts(codexHome, now) {
@@ -97565,7 +98000,7 @@ function run(req) {
       return { ok: false, error: "no Codex session started in this folder in the last two weeks" };
     }
     case "file": {
-      const themeId = hashText(JSON.stringify(req.theme));
+      const themeId = themeKey(req.theme);
       return { ok: true, path: req.path, segments: segments(readText(req.path, MAX_FILE), req, themeId) };
     }
     case "list":

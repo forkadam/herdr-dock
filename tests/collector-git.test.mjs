@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCollector } from "../src/shared/collector.js";
+import { removeRepoPaths, skipAfterRemove } from "../src/mods/dock-git/view.js";
 
 const ok = (stdout) => ({ code: 0, stdout, stderr: "" });
 const wtList = (...wts) =>
@@ -37,7 +38,7 @@ function fakeIo({ table = {}, repos = [], panes = [], spaces = [], platform = "w
     async exec(cmd, args, opts) {
       if (cmd !== "git") throw new Error(`spawn ${cmd} ENOENT`); // no glab/gh here: CI shows "not logged in"
       const key = `${opts?.on ?? ""} ${args.join(" ")}`;
-      io.calls.push({ key, on: opts?.on });
+      io.calls.push({ key, on: opts?.on, timeout: opts?.timeout });
       io.active++;
       io.maxActive = Math.max(io.maxActive, io.active);
       await new Promise((r) => setTimeout(r, 1));
@@ -648,4 +649,259 @@ test("deleteWorktree: git's refusal (uncommitted changes) comes back as the erro
   assert.equal(notes.length, 1);
   assert.equal(notes[0].level, "error");
   assert.match(notes[0].body, /modified or untracked files/);
+});
+
+// --- git calls that never answer (docs/superpowers/plans/2026-11-23-git-call-deadline.md) ---
+// A tick waiting on a lost call never ends, so these tests don't await tick(): tickAt runs it at fake time t and
+// lets its git calls (1 ms each in fakeIo) and the follow-up work settle.
+const lost = () => new Promise(() => {});
+async function tickAt(io, c, t) {
+  io.t = t;
+  c.tick();
+  await new Promise((r) => setTimeout(r, 20));
+}
+const oneSpace = [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }];
+const LOCAL_TOOL = {
+  " -C /w/tool remote get-url origin": NO_ORIGIN,
+  " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": status("main"),
+};
+
+test("lost git call (a): gives up after 30 s and frees its slot, so the call queued behind it runs", async () => {
+  const dead = ["/w/l1", "/w/l2", "/w/l3", "/w/l4"];
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace,
+    panes: [...dead, "/w/tool"].map((cwd, i) => ({ pane: `p${i}`, tab: "t1", cwd })),
+    table: { ...Object.fromEntries(dead.map((d) => [` -C ${d} ${RP}`, lost])), [` -C /w/tool ${RP}`]: ok("/w/tool\n/w/tool/.git\n"), ...LOCAL_TOOL },
+  });
+  const c = createCollector(io);
+  for (let t = 0; t <= 29000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 0, "queued behind the four lost calls");
+  assert.deepEqual(c.state().repos, []);
+  await tickAt(io, c, 30000);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"], "its own 30 s start when it runs, not when queued");
+  for (const call of io.calls) assert.equal(call.timeout, 30000, call.key);
+});
+
+test("lost git call (b): a rev-parse that gave up is tried again, not cached as 'not a repo'", async () => {
+  let n = 0;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: { [` -C /w/tool ${RP}`]: () => (n++ ? ok("/w/tool\n/w/tool/.git\n") : lost()), ...LOCAL_TOOL },
+  });
+  const logs = [];
+  io.log = (m) => logs.push(m);
+  const c = createCollector(io);
+  for (let t = 0; t <= 31000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 2);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"]);
+  assert.ok(logs.some((m) => m.includes("/w/tool") && m.includes("timeout")), logs.join("\n"));
+});
+
+test("lost git call (c): a slow answer inside 30 s is used, never given up", async () => {
+  let answer;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: { [` -C /w/tool ${RP}`]: () => new Promise((r) => { answer = r; }), ...LOCAL_TOOL },
+  });
+  const logs = [];
+  io.log = (m) => logs.push(m);
+  const c = createCollector(io);
+  for (let t = 0; t <= 20000; t += 1000) await tickAt(io, c, t);
+  answer(ok("/w/tool\n/w/tool/.git\n"));
+  for (let t = 21000; t <= 45000; t += 1000) await tickAt(io, c, t);
+  assert.deepEqual(c.state().repos.map((r) => r.name), ["tool"]);
+  assert.equal(callsTo(io, "/w/tool rev-parse"), 1);
+  assert.equal(logs.some((m) => m.includes("timeout")), false, logs.join("\n"));
+});
+
+test("lost git call (d): a status poll that gave up is polled again, and its worktree updates", async () => {
+  let s = 0;
+  const io = fakeIo({
+    platform: "linux", spaces: oneSpace, panes: [{ pane: "p1", tab: "t1", cwd: "/w/tool" }],
+    table: {
+      ...LOCAL_TOOL,
+      [` -C /w/tool ${RP}`]: ok("/w/tool\n/w/tool/.git\n"),
+      " --no-optional-locks -C /w/tool status --porcelain=v2 --branch": () => (s++ ? status("main", { ab: "+1 -0" }) : lost()),
+    },
+  });
+  const c = createCollector(io);
+  for (let t = 0; t <= 29000; t += 1000) await tickAt(io, c, t);
+  assert.equal(c.state().repos[0].worktrees[0].branch, null, "no status yet");
+  for (let t = 30000; t <= 31000; t += 1000) await tickAt(io, c, t);
+  assert.equal(callsTo(io, "/w/tool status"), 2);
+  assert.equal(c.state().repos[0].worktrees[0].branch, "main");
+  assert.equal(c.state().repos[0].worktrees[0].ahead, 1);
+});
+
+test("lost git call (e): a worktree delete that never answers ends in an error notification after 30 s", async () => {
+  const io = fakeIo({ repos: [{ path: "D:/work/api", machine: null }], table: { ...API, " -C D:/work/api worktree remove D:/work/api-login": lost } });
+  const notes = [];
+  io.notify = (n) => notes.push(n);
+  const c = createCollector(io);
+  await c.tick();
+  const done = c.deleteWorktree("|d:/work/api-login");
+  await new Promise((r) => setTimeout(r, 5)); // the limiter starts the call (and its 30 s) at t = 0
+  for (let t = 1000; t <= 30000; t += 1000) await tickAt(io, c, t);
+  const r = await Promise.race([done, new Promise((res) => setTimeout(() => res("still waiting"), 100))]);
+  assert.deepEqual(r, { ok: false, error: "timeout" });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].body, "timeout");
+});
+
+// --- auto-add never appends a path already listed (docs/superpowers/plans/2026-11-23-auto-add-no-duplicates.md) ---
+const refused = () => { throw new Error("ssh: connection refused"); };
+const ticks = async (io, c, n) => { for (let i = 0; i < n; i++) { io.t = i * 1000; await c.tick(); } };
+
+test("auto-add (a): a repo whose listing keeps failing isn't appended again every tick", async () => {
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }],
+    table: {
+      [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": refused,
+      " -C /w/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 11);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/api", machine: null }]);
+});
+
+test("auto-add (b): on Windows, an added path in another case counts as listed", async () => {
+  const io = fakeIo({
+    platform: "windows", autoAdd: true, spaces: oneSpace, repos: [{ path: "D:/Work/Api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "D:/work/api" }],
+    table: {
+      [` -C D:/Work/Api ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      [` -C D:/work/api ${RP}`]: ok("D:/work/api\nD:/work/api/.git\n"),
+      " -C D:/work/api worktree list --porcelain": refused,
+      " -C D:/work/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C D:/work/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 5);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "D:/Work/Api", machine: null }]);
+});
+
+test("auto-add (c): the same path on another machine is a different repo, still added once", async () => {
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, repos: [{ path: "/w/api", machine: null }],
+    spaces: [{ id: "s1", name: "a", machine: "devbox", tabs: [{ id: "t1" }] }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }],
+    table: {
+      [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": refused,
+      [`devbox -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+      "devbox -C /w/api worktree list --porcelain": refused,
+      "devbox -C /w/api remote get-url origin": NO_ORIGIN,
+      "devbox --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 5);
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/api", machine: null }, { path: "/w/api", machine: "devbox" }]);
+});
+
+test("auto-add (d): a tick that read the list before another tick's auto-add doesn't append the same path again", async () => {
+  let slow = false;
+  let release;
+  const yList = wtList(["/w/y", "main"]);
+  const panes = [];
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, panes, repos: [{ path: "/w/y", machine: null }],
+    table: {
+      [` -C /w/y ${RP}`]: ok("/w/y\n/w/y/.git\n"),
+      " -C /w/y worktree list --porcelain": () => (slow ? new Promise((r) => { release = () => r(yList); }) : yList),
+      [` -C /w/x ${RP}`]: ok("/w/x\n/w/x/.git\n"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick(); // t = 0: /w/y is listed
+  io.t = 60000;
+  slow = true;
+  panes.push({ pane: "p1", tab: "t1", cwd: "/w/x" }); // a terminal opens in a repo nobody added
+  const a = c.tick(); // A: its 60 s re-list of /w/y waits; /w/x resolves
+  await new Promise((r) => setTimeout(r, 30));
+  io.t = 61000;
+  await c.tick(); // B: auto-adds /w/x
+  release();
+  await a; // A ends with the list it read before B's append
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/y", machine: null }, { path: "/w/x", machine: null }]);
+});
+
+const failingApi = (state) => ({
+  [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+  " -C /w/api worktree list --porcelain": () => (state.refusing ? refused() : wtList(["/w/api", "main"])),
+  " -C /w/api remote get-url origin": NO_ORIGIN,
+  " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+});
+
+test("auto-add (e): a repo whose listing fails shares one row with its terminal, and keeps its id when it recovers", async () => {
+  const state = { refusing: true };
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }], table: failingApi(state),
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 3);
+  let rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.added]), [["|/w/api/.git", true]]);
+  assert.match(rows[0].error, /connection refused/);
+  assert.deepEqual(rows[0].worktrees.map((w) => [w.path, w.open]), [["/w/api", true]]);
+  state.refusing = false;
+  io.t = 60000;
+  await c.tick();
+  rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
+});
+
+test("auto-add (f): Remove on a failing repo with a terminal in it sticks until the terminal leaves", async () => {
+  const panes = [{ pane: "p1", tab: "t1", cwd: "/w/api" }];
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes, table: failingApi({ refusing: true }),
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 3);
+  const row = c.state().repos.find((r) => r.error); // the row with the red Remove button
+  // What dock-git's Remove does (src/mods/dock-git/main.js, removeRepo).
+  io.setShared("dock.git.repos", removeRepoPaths(io.shared("dock.git.repos"), row, "linux"));
+  const skipped = skipAfterRemove(io.shared("dock.git.skipped"), row);
+  if (skipped) io.setShared("dock.git.skipped", skipped);
+  for (let t = 3000; t <= 6000; t += 1000) { io.t = t; await c.tick(); }
+  assert.deepEqual(io.shared("dock.git.repos"), []);
+  assert.deepEqual(c.state().repos, []);
+  panes.length = 0; // the terminal leaves
+  io.t = 7000;
+  await c.tick();
+  assert.deepEqual(io.shared("dock.git.skipped"), []);
+});
+
+test("rev-parse failing after a good listing: the error row is keyed by its path, not the old common dir", async () => {
+  const state = { gone: false };
+  const io = fakeIo({
+    platform: "linux", repos: [{ path: "/w/api", machine: null }],
+    table: {
+      [` -C /w/api ${RP}`]: () =>
+        state.gone ? { code: 128, stdout: "", stderr: "fatal: not a git repository" } : ok("/w/api\n/w/api/.git\n"),
+      " -C /w/api worktree list --porcelain": wtList(["/w/api", "main"]),
+      " -C /w/api remote get-url origin": NO_ORIGIN,
+      " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.deepEqual(c.state().repos.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
+  state.gone = true; // the folder is deleted
+  io.t = 60000;
+  await c.tick();
+  const rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.added]), [["|/w/api", true]]);
+  assert.match(rows[0].error, /not a git repository/);
+  state.gone = false; // it comes back
+  io.t = 120000;
+  await c.tick();
+  assert.deepEqual(c.state().repos.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
 });

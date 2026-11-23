@@ -12,6 +12,9 @@ import { gitCommandName } from "./gitcmd.js";
 import { slashPath } from "./path.js";
 
 const GIT_LIMIT = 4; // git processes at once
+// How long a git call may take before it is given up (Herdr's own exec default). A call Herdr never answers would
+// otherwise keep its GIT_LIMIT slot for good, and every later git call would wait behind it.
+const GIT_TIMEOUT = 30000;
 // Absolute paths (git >= 2.31): without it the common dir comes back relative to the -C folder.
 const REV_PARSE = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"];
 const LIST_EVERY = 60000; // re-run `worktree list` for added repos
@@ -42,15 +45,28 @@ export function createCollector(io) {
     machine == null ? io.platform : /^[A-Za-z]:\//.test(slashPath(path)) ? "windows" : "linux";
   const idOf = (machine, path) => worktreeId(machine, path, platformOf(machine, path));
 
-  // One git process via the limiter. A rejected exec (no git, machine unreachable) becomes code -1.
+  // Git calls running now, each { deadline, giveUp }: tick() gives up every one past its deadline (sweepGit).
+  const gitCalls = new Set();
+
+  // One git process via the limiter. A rejected exec (no git, machine unreachable) becomes code -1, and so does a
+  // call with no answer after GIT_TIMEOUT (stderr "timeout"). Its deadline starts when it runs, not while it waits
+  // for a slot, and giving up frees the slot.
   const run = (machine, args) =>
-    git(async () => {
-      try {
-        return await io.exec("git", args, { on: machine ?? undefined });
-      } catch (e) {
-        return { code: -1, stdout: "", stderr: String(e?.message ?? e) };
-      }
+    git(() => {
+      const call = { deadline: io.now() + GIT_TIMEOUT, giveUp: null };
+      const given = new Promise((resolve) => {
+        call.giveUp = () => resolve({ code: -1, stdout: "", stderr: "timeout" });
+      });
+      gitCalls.add(call);
+      const ran = Promise.resolve()
+        .then(() => io.exec("git", args, { on: machine ?? undefined, timeout: GIT_TIMEOUT }))
+        .catch((e) => ({ code: -1, stdout: "", stderr: String(e?.message ?? e) }));
+      return Promise.race([ran, given]).finally(() => gitCalls.delete(call));
     });
+
+  const sweepGit = (now) => {
+    for (const call of gitCalls) if (now >= call.deadline) call.giveUp();
+  };
 
   // --- internal state ---------------------------------------------------------------------------
   // Added repos, by `${machine}|${path}`: { machine, path, at, busy, done, error, commonDir, list }.
@@ -99,13 +115,15 @@ export function createCollector(io) {
     try {
       const rp = await run(e.machine, ["-C", e.path, ...REV_PARSE]);
       if (rp.code !== 0) {
-        Object.assign(e, { error: errText(rp), list: [] });
+        Object.assign(e, { error: errText(rp), commonDir: null, list: [] });
         return;
       }
       const { top, commonDir } = parseRevParse(rp.stdout, e.path);
       const wl = await run(e.machine, ["-C", top, "worktree", "list", "--porcelain"]);
       if (wl.code !== 0) {
-        Object.assign(e, { error: errText(wl), list: [] });
+        // Keep the common dir rev-parse found: buildView keys the error row by it, so it is the same row as a
+        // terminal in this repo (and Remove sees that terminal).
+        Object.assign(e, { error: errText(wl), commonDir, list: [] });
         return;
       }
       Object.assign(e, { error: null, commonDir, list: parseWorktrees(wl.stdout).filter((w) => !w.bare) });
@@ -292,7 +310,10 @@ export function createCollector(io) {
       const e = added.get(`${a.machine ?? ""}|${a.path}`);
       if (!e?.done) continue;
       if (e.error) {
-        const bad = repoFor(idOf(a.machine, a.path), a.machine, a.path);
+        // Keyed by its common dir when rev-parse found one, else by its path (not a repo, machine unreachable).
+        const bad = e.commonDir
+          ? repoFor(idOf(a.machine, e.commonDir), a.machine, mainFromCommonDir(e.commonDir))
+          : repoFor(idOf(a.machine, a.path), a.machine, a.path);
         Object.assign(bad, { added: true, error: e.error });
         bad.addedPaths.push({ path: a.path, machine: a.machine });
         continue;
@@ -349,11 +370,15 @@ export function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return; // tests of other behaviour can turn it off; on in the app
     if (resolving) return;
+    // An added entry whose rev-parse failed is keyed by its path, not its common dir, so its terminal's row looks
+    // un-added: never append a path that is already listed (the same check as the panel's Add repo). Read the
+    // live list, not this tick's addedList: a tick that started earlier can end after another tick appended.
+    const listed = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
       const w = [...r.wts.values()].find((x) => x.open);
-      if (w) extra.push({ path: w.path, machine: r.machine ?? null });
+      if (w && !listed.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...(io.shared(REPOS_KEY) ?? []), ...extra]);
   }
@@ -444,6 +469,7 @@ export function createCollector(io) {
     const gen = ++tickGen;
     const now = io.now();
     client.sweep(now); // time out requests past their 15 s
+    sweepGit(now); // and git calls past their 30 s
     const addedList = readAdded();
     const paneList = readPanes();
 

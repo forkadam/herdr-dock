@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HIDDEN_EVERY_MS, RETRY_AFTER_MS, SHOWN_EVERY_MS, badgeFor, countText, filterList, pageState, pickFilter, pollDue } from "../src/shared/jira/page.js";
+import { HIDDEN_EVERY_MS, RETRY_AFTER_MS, SHOWN_EVERY_MS, badgeFor, countText, filterList, keyColumnWidth, pageState, pickFilter, pollDue } from "../src/shared/jira/page.js";
 
 test("filterList: built-ins, favourites, own; stable ids; junk skipped", () => {
   const list = filterList(
@@ -30,6 +30,18 @@ test("pollDue", () => {
   assert.equal(pollDue({ shown: true, lastAt: now - RETRY_AFTER_MS, failed: true, now }), true);
 });
 
+test("pollDue: never while the shown tab is still loading, its first load (never polled) included", () => {
+  const now = 1e9;
+  assert.equal(pollDue({ shown: true, lastAt: undefined, loading: true, now }), false); // Today's first load: no poll on top
+  assert.equal(pollDue({ shown: false, lastAt: undefined, loading: true, now }), false);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS, loading: true, now }), false);
+  assert.equal(pollDue({ shown: true, lastAt: now - RETRY_AFTER_MS, failed: true, loading: true, now }), false);
+  // Loaded (or left out): as before.
+  assert.equal(pollDue({ shown: true, lastAt: undefined, loading: false, now }), true);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS, loading: false, now }), true);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS + 1, loading: false, now }), false);
+});
+
 test("pageState", () => {
   const ok = { settings: { baseUrl: "https://j" }, token: "t" };
   assert.equal(pageState({ settings: { baseUrl: "" }, token: "t" }), "setup");
@@ -48,6 +60,15 @@ test("badgeFor and countText", () => {
   assert.equal(countText(1, 1), "1 issue");
   assert.equal(countText(50, 120), "50 of 120");
   assert.equal(countText(0, undefined), "");
+});
+
+test("keyColumnWidth: fits the longest key, within 56–132 px", () => {
+  assert.equal(keyColumnWidth([]), 56);
+  assert.equal(keyColumnWidth(["WEB-1"]), 56);
+  assert.equal(keyColumnWidth(["WEB-1", "ABCDEFGH-861"]), 96);   // 12 chars
+  assert.equal(keyColumnWidth(["ABCDEFGH-19211"]), 111);         // 14 chars
+  assert.equal(keyColumnWidth(["A".repeat(30)]), 132);
+  assert.equal(keyColumnWidth([null, undefined, "WEB-12"]), 56);
 });
 
 // ---- Task 6: actions ----
@@ -193,7 +214,7 @@ test("dragStarted: a press becomes a drag only once the pointer has moved a few 
 });
 
 // ---- Board columns from the projects' workflows ----
-import { boardProjects, unionStatuses } from "../src/shared/jira/page.js";
+import { boardProjects, unionStatuses, workflowStatuses } from "../src/shared/jira/page.js";
 
 test("boardProjects: the project keys on the board, from the issue keys", () => {
   assert.deepEqual(boardProjects([{ key: "WEB-1" }, { key: "API-3" }, { key: "WEB-9" }]), ["WEB", "API"]);
@@ -204,6 +225,14 @@ test("unionStatuses: each status once, in the order the projects list them", () 
   const web = [{ name: "To Do", category: "new" }, { name: "Done", category: "done" }];
   const api = [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }, { name: "Done", category: "done" }];
   assert.deepEqual(unionStatuses([web, api, "loading", null]).map((x) => x.name), ["To Do", "Done", "QA"]);
+});
+
+test("workflowStatuses: a project's whole workflow only when every row is from that project", () => {
+  const m = new Map([["WEB", [{ name: "To Do", category: "new" }, { name: "QA", category: "indeterminate" }]], ["OPS", "loading"]]);
+  assert.deepEqual(workflowStatuses([{ key: "WEB-1" }, { key: "WEB-2" }], m).map((s) => s.name), ["To Do", "QA"]);
+  assert.deepEqual(workflowStatuses([{ key: "WEB-1" }, { key: "OPS-3" }], m), []);
+  assert.deepEqual(workflowStatuses([{ key: "OPS-3" }], m), []); // still loading
+  assert.deepEqual(workflowStatuses([], m), []);
 });
 
 // ---- Drop feedback where the card was dropped ----
@@ -243,4 +272,87 @@ test("keepMoved: a card just moved stays on the board in its new status until th
   const moved = new Map([["A-1", { key: "A-1", status: "Done", category: "done" }], ["A-9", { key: "A-9", status: "Done", category: "done" }]]);
   assert.deepEqual(keepMoved(rows, moved).map((r) => `${r.key}:${r.status}`), ["A-1:Done", "A-2:To Do", "A-9:Done"]);
   assert.equal(keepMoved(rows, new Map()), rows);
+});
+
+// ---- A hidden tab's count that failed ----
+import { countFailure } from "../src/shared/jira/page.js";
+
+test("countFailure: only a rejected or forbidden token takes the page; anything else marks the tab's count", () => {
+  assert.equal(countFailure("auth"), "page");
+  assert.equal(countFailure("forbidden"), "page");
+  for (const kind of ["invalid", "notfound", "offline", "tls", "timeout", "server", "nocurl", "unknown"]) assert.equal(countFailure(kind), "tab", kind);
+});
+
+// ---- A failed request of Today's ----
+import { todayFailure } from "../src/shared/jira/page.js";
+
+test("todayFailure: Today shown, only a connection-level failure takes the page; a slow or failing search stays on Today", () => {
+  for (const kind of ["auth", "offline", "tls", "nocurl", "forbidden"]) assert.equal(todayFailure(kind, { shown: true }), "page", kind);
+  for (const kind of ["timeout", "server", "unknown", "invalid", "notfound"]) assert.equal(todayFailure(kind, { shown: true }), "today", kind);
+  assert.equal(todayFailure("forbidden", { shown: true, agile: false }), "page"); // Jira's own REST API: the token can't
+});
+
+test("todayFailure: any failure of the agile API (boards, sprints) is Today's own, a 403 without a Jira Software licence included", () => {
+  for (const kind of ["forbidden", "auth", "offline", "tls", "nocurl", "timeout", "server", "unknown", "notfound"]) {
+    assert.equal(todayFailure(kind, { shown: true, agile: true }), "today", kind);
+    assert.equal(todayFailure(kind, { shown: false, agile: true }), "today", `hidden ${kind}`);
+  }
+});
+
+test("todayFailure: Today hidden (the badge's refresh), only a rejected or forbidden token takes the page, as a hidden count", () => {
+  assert.equal(todayFailure("auth", { shown: false }), "page");
+  assert.equal(todayFailure("forbidden", { shown: false }), "page");
+  for (const kind of ["offline", "tls", "nocurl", "timeout", "server", "unknown", "invalid"]) assert.equal(todayFailure(kind, { shown: false }), "today", kind);
+  assert.equal(todayFailure("timeout"), "today"); // nothing said: hidden, not agile
+});
+
+// ---- Start and Finish per flow ----
+import { finishWork, startTemplate, tabButtonWork } from "../src/shared/jira/page.js";
+
+const FLOW_RULES = [
+  { project: "SEC", type: "Bug", start: "/triage {key}", finish: "/close-bug {key}" },
+  { project: "SEC", start: "/triage {key}" },
+  { subtask: true, parentType: ["Story"], finish: "/report {key}" },
+];
+
+test("startTemplate: the first matching rule's start, else the settings' own message", () => {
+  assert.equal(startTemplate(FLOW_RULES, { key: "SEC-1", project: "SEC", type: "Task" }, "/own {key}"), "/triage {key}");
+  // A rule with no start (the third) leaves Start on the settings' message, and so does no rule at all.
+  assert.equal(startTemplate(FLOW_RULES, { key: "WEB-2", project: "WEB", type: "Sub-task", subtask: true, parent: { type: "Story" } }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate(FLOW_RULES, { key: "WEB-3", project: "WEB", type: "Bug" }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate([], { key: "WEB-3" }, "/own {key}"), "/own {key}");
+  assert.equal(startTemplate(undefined, { key: "WEB-3" }, "/own {key}"), "/own {key}");
+  // The settings' message may be empty: startTask then falls back to its default, as before rules existed.
+  assert.equal(startTemplate([], { key: "WEB-3" }, ""), "");
+  assert.equal(startWork({ key: "WEB-3", summary: "s", url: "u" }, startTemplate([], { key: "WEB-3" }, "")).args.task, "Work on Jira issue WEB-3: s\nu");
+});
+
+test("startTemplate: a flow's start that uses the description still asks for the detail (needsDetail on the chosen template)", () => {
+  const rules = [{ type: "Bug", start: "/fix {key}\n{description}" }];
+  const row = { key: "WEB-3", type: "Bug", summary: "s", url: "u" };
+  assert.equal(needsDetail(startTemplate(rules, row, "/own {key}")), true);
+  assert.equal(needsDetail(startTemplate(rules, { ...row, type: "Task" }, "/own {key}")), false);
+  assert.match(previewTask(row, startTemplate(rules, row, "")), /\(its description, fetched when you start\)/);
+});
+
+test("finishWork: a Claude tab named '<key> finish' with the matched finish message; none without one", () => {
+  const bug = { key: "SEC-9", project: "SEC", type: "Bug", summary: "Leak", url: "https://j/browse/SEC-9", description: "d" };
+  assert.deepEqual(finishWork(bug, FLOW_RULES), { command: "tab.new", args: { name: "SEC-9 finish", argv: ["claude"], task: "/close-bug SEC-9" } });
+  // A sub-task under a story: only the third rule gives a finish.
+  const sub = { key: "WEB-4", project: "WEB", type: "Sub-task", subtask: true, parent: { key: "WEB-1", type: "Story" } };
+  assert.equal(finishWork(sub, FLOW_RULES).args.task, "/report WEB-4");
+  // Start only (the second rule), no rule, no rules, no issue: no Finish.
+  assert.equal(finishWork({ key: "SEC-2", project: "SEC", type: "Task" }, FLOW_RULES), null);
+  assert.equal(finishWork({ key: "WEB-3", project: "WEB", type: "Bug" }, FLOW_RULES), null);
+  assert.equal(finishWork(bug, []), null);
+  assert.equal(finishWork(bug, undefined), null);
+  assert.equal(finishWork(null, FLOW_RULES), null);
+  // The same placeholders as Start work, filled from the issue.
+  assert.equal(finishWork(bug, [{ finish: "{key} {summary} {type} {description}" }]).args.task, "SEC-9 Leak Bug d");
+});
+
+test("tabButtonWork: a Claude tab named after the label", () => {
+  assert.deepEqual(tabButtonWork({ label: "Triage all", task: "/triage\\nall of them" }),
+    { command: "tab.new", args: { name: "Triage all", argv: ["claude"], task: "/triage\nall of them" } });
+  assert.equal(tabButtonWork(null), null);
 });

@@ -2,8 +2,27 @@ import { build } from "esbuild";
 import { readdirSync, readFileSync, mkdirSync, copyFileSync, rmSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { patchMermaidIds } from "../src/shared/render/mermaid-patch.js";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// beautiful-mermaid's node ids, made arrow-aware as it is bundled, so `A-->B` is two nodes
+// (src/shared/render/mermaid-patch.js). check() after the build fails it when the hook never ran: an upgrade that
+// moved the code out of dist/index.js would otherwise ship the bug back unnoticed (deploy doesn't run the tests).
+export function mermaidIdsPlugin() {
+  let patched = 0;
+  return {
+    plugin: { name: "beautiful-mermaid-ids", setup(b) {
+      b.onLoad({ filter: /beautiful-mermaid[\\/]dist[\\/]index\.js$/ }, (a) => {
+        patched++;
+        return { contents: patchMermaidIds(readFileSync(a.path, "utf8")), loader: "js" };
+      });
+    } },
+    check() {
+      if (!patched) throw new Error("beautiful-mermaid's dist/index.js wasn't bundled: its node-id patch didn't apply");
+    },
+  };
+}
 
 // Builds every src/mods/dock-* into <distDir>/mods (dist/ by default; build:app passes a temp folder).
 export async function buildAll(distDir = join(ROOT, "dist")) {
@@ -32,11 +51,14 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
     if (!existsSync(join(dest, manifest.icon))) throw new Error(`${name}: icon ${manifest.icon} not found`);
     if (name === "dock-render") {
       // The Render panel's helper, with beautiful-mermaid (and its elkjs) bundled in: nothing to install.
+      const mermaidIds = mermaidIdsPlugin();
       await build({
         entryPoints: [join(ROOT, "src/app/render-helper.js")], outfile: join(dest, "herdr-render.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
         banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+        plugins: [mermaidIds.plugin],
       });
+      mermaidIds.check();
     }
     if (name === "dock-browser") {
       // The browse command agents run (node browse.mjs ...): one file, nothing to install.

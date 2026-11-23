@@ -1,6 +1,6 @@
 // Agents' session logs -> the latest answer and every diagram (pure; no host imports). Lines are the log's JSONL lines;
 // a line that isn't JSON is skipped (a log being written can end mid-line).
-import { hashText, mermaidBlocks } from "./markdown.js";
+import { blockId, pictureBlocks } from "./markdown.js";
 
 const parse = (line) => { try { return JSON.parse(line); } catch { return null; } };
 const time = (s) => { const t = Date.parse(s ?? ""); return Number.isFinite(t) ? t : null; };
@@ -12,14 +12,14 @@ export const claudeSlug = (cwd) => String(cwd ?? "").replace(/[^A-Za-z0-9]/g, "-
 function fold(events) {
   let parts = [];
   let prompt = null;
-  const diagrams = new Map(); // id -> { source, id, at } (newest kept)
+  const diagrams = new Map(); // id -> { kind, source, id, at } (newest kept): Mermaid diagrams and figures
   for (const e of events) {
     if (e.role === "user") { parts = []; prompt = e.text; continue; }
     parts.push(e);
-    for (const source of mermaidBlocks(e.text)) {
-      const id = hashText(source);
+    for (const { kind, source } of pictureBlocks(e.text)) {
+      const id = blockId(kind, source);
       diagrams.delete(id);
-      diagrams.set(id, { source, id, at: e.at });
+      diagrams.set(id, { kind, source, id, at: e.at });
     }
   }
   return {

@@ -1,4 +1,5 @@
 // The Jira page's decisions (pure; no host imports): which filters it offers, when it polls, what it shows.
+import { matchAction } from "./actions.js";
 import { BUILTIN_FILTERS } from "./jql.js";
 import { DEFAULT_START_TASK, startTask, wikiToText } from "./model.js";
 
@@ -24,8 +25,10 @@ export function filterList(favourites, own) {
 export const pickFilter = (filters, id) => filters.find((f) => f.id === id) ?? filters[0];
 
 // Whether a poll is due: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge); after a
-// failure no sooner than 5 minutes. A manual refresh doesn't ask.
-export function pollDue({ shown, lastAt, failed, now }) {
+// failure no sooner than 5 minutes; never while the shown tab is still `loading` (its first load has no `lastAt` yet,
+// and a poll then would start that load over and over). A manual refresh doesn't ask.
+export function pollDue({ shown, lastAt, failed, now, loading = false }) {
+  if (loading) return false;
   if (!Number.isFinite(lastAt)) return true;
   const every = failed ? Math.max(RETRY_AFTER_MS, shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS) : shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS;
   return now - lastAt >= every;
@@ -54,6 +57,13 @@ export function countText(shown, total) {
   if (!Number.isFinite(total)) return "";
   if (shown >= total) return `${total} issue${total === 1 ? "" : "s"}`;
   return `${shown} of ${total}`;
+}
+
+// The key column's width in px: the longest key at 12 px (about 7.5 px a character) and a little air, within
+// 56–132, so a key such as "ABCDEFGH-19211" fits on one line and short keys do not leave a wide gap.
+export function keyColumnWidth(keys) {
+  const longest = (keys ?? []).reduce((n, k) => (k == null ? n : Math.max(n, String(k).length)), 0);
+  return Math.min(132, Math.max(56, Math.ceil(longest * 7.5) + 6));
 }
 
 // ---- Actions ----
@@ -94,6 +104,26 @@ export function startWork(issue, template) {
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
 }
 
+// The Herdr command a tab's button runs: a tab named after the button's label, running Claude, whose first message is
+// its `task` (a typed "\n" is a line break, as in Start work's template; no placeholders: it isn't about one issue).
+// Null without a button.
+export function tabButtonWork(button) {
+  if (!button) return null;
+  return { command: "tab.new", args: { name: button.label, argv: ["claude"], task: button.task.replace(/\\n/g, "\n") } };
+}
+
+// The template Start work sends for this issue: the `start` of the first action rule that matches it, else the
+// fallback (the settings' own Start-work message, which may be empty: startTask then uses its default).
+export const startTemplate = (rules, issue, fallback) => matchAction(rules, issue).start ?? fallback;
+
+// The Herdr command Finish runs: as Start work, a Claude tab (named "<key> finish") whose first message is the
+// matched rule's `finish`. Null when no rule gives one (the page then shows no Finish). Changes nothing in Jira.
+export function finishWork(issue, rules) {
+  const finish = matchAction(rules, issue).finish;
+  if (!issue?.key || !finish) return null;
+  return { command: "tab.new", args: { name: `${issue.key} finish`, argv: ["claude"], task: startTask(finish, issue) } };
+}
+
 // Whether Start work needs the full issue first: a list row has no description, so a template that uses it would
 // otherwise send it empty (the detail's button already has it).
 export function needsDetail(template) {
@@ -109,6 +139,27 @@ export function needsDetail(template) {
 export function afterProblem(kind) {
   const token = kind === "auth" || kind === "forbidden";
   return { connected: !token, clearBadge: token, pause: token };
+}
+
+// A hidden tab's count-only search that failed: "page" when the token was rejected or forbidden (afterProblem then
+// pauses polling and clears the badge), else "tab": only that tab's count is marked ("!"). The shown tab's own search
+// is what tells whether Jira can be reached at all.
+export const countFailure = (kind) => (kind === "auth" || kind === "forbidden" ? "page" : "tab");
+
+// Failures that mean Jira can't be talked to at all with this token, from this computer.
+const CONNECTION = ["auth", "forbidden", "offline", "tls", "nocurl"];
+
+// A failed request of Today's (its board or its brief): "page" when it takes the whole page (the problem view, which
+// hides the tabs), else "today": Today says it on its board or brief and as "!" on its tab, and the other tabs stay
+// usable. Shown, a connection-level failure takes the page (a rejected token, offline, an untrusted certificate, no
+// curl, and a forbidden answer from Jira's own REST API); hidden, only a rejected or forbidden token does (as a hidden
+// tab's count: countFailure). A slow or failing search (timeout, server, unknown) is Today's own, and so is any failure
+// of Jira Software's agile API (`agile`: boards and sprints), a 403 included: Jira without a Jira Software licence
+// forbids it while the token is fine.
+export function todayFailure(kind, { shown = false, agile = false } = {}) {
+  if (agile) return "today";
+  if (!shown) return countFailure(kind) === "page" ? "page" : "today";
+  return CONNECTION.includes(kind) ? "page" : "today";
 }
 
 // The Start-work message for a preview or a tooltip: as it will be sent, except that a list row's missing
@@ -180,6 +231,14 @@ export function unionStatuses(lists) {
   const seen = new Map();
   for (const list of lists ?? []) if (Array.isArray(list)) for (const st of list) if (st?.name && !seen.has(st.name)) seen.set(st.name, st);
   return [...seen.values()];
+}
+
+// The empty workflow columns of the board: one project's whole workflow when every issue is from that project, else
+// none (14 projects' workflows would run the board off the screen; a drag still adds what its card can reach).
+// `statusesByProject` maps a project key to its statuses, or "loading" while they are being asked.
+export function workflowStatuses(rows, statusesByProject) {
+  const projects = boardProjects(rows);
+  return projects.length === 1 ? unionStatuses([statusesByProject?.get(projects[0])]) : [];
 }
 
 // Said in the column a card was dropped on when its workflow has no move there (the drop did nothing, on purpose).
