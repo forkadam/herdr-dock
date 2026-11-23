@@ -48,3 +48,24 @@ test("the built Render helper draws an arrow without spaces as two nodes and an 
     assert.match(readFileSync(join(h, JSON.parse(r.stdout).segments[5].svg), "utf8"), /data-id="my-node"/);
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
+
+// ---- The build hook fails the build when it never patched anything (deploy ships without running tests) ----
+import { build } from "esbuild";
+import { mermaidIdsPlugin } from "../scripts/build.mjs";
+
+test("the build's beautiful-mermaid hook: a build it never applied to fails its check; one it did passes", async () => {
+  const h = mkdtempSync(join(tmpdir(), "render-ids-build-"));
+  const opts = { bundle: true, platform: "node", format: "esm", logLevel: "silent", nodePaths: [join(import.meta.dirname, "..", "node_modules")] };
+  try {
+    writeFileSync(join(h, "none.js"), "export const x = 1;\n");
+    const missed = mermaidIdsPlugin();
+    await build({ ...opts, entryPoints: [join(h, "none.js")], outfile: join(h, "none.out.mjs"), plugins: [missed.plugin] });
+    assert.throws(() => missed.check(), /node-id patch didn't apply/);
+
+    writeFileSync(join(h, "bm.js"), 'export { renderMermaidSVG } from "beautiful-mermaid";\n');
+    const hit = mermaidIdsPlugin();
+    await build({ ...opts, entryPoints: [join(h, "bm.js")], outfile: join(h, "bm.out.mjs"), plugins: [hit.plugin] });
+    hit.check();
+    assert.ok(readFileSync(join(h, "bm.out.mjs"), "utf8").includes(NODE_ID_BEFORE_ARROW));
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
