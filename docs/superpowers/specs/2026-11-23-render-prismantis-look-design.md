@@ -174,3 +174,12 @@ On branch `render-prismantis-look`, cut from `main`, merged back by fast-forward
   amount.
 - The readability threshold that drops a palette colour.
 - How the figure SVG is split into `<text>` elements, and the new modules' exact names.
+
+## Addendum (2026-11-23): the id before `:::`, after an open link
+
+`styledIds` reads the node before `:::` as the last `[\w.-]+` of the text before it. An open link written without spaces
+(`---`, `-.-`) is made of those characters, so `A:::hot---B:::cold` gave `hot---B`, `A---B:::cold` gave `A---B` and
+`A[x]---B:::cold` gave `---B`: B wasn't seen as styled and was painted over, losing its class colour. Since the Mermaid
+arrow fixes (`A-->B`, `A:::hot-->B`) these diagrams draw two nodes, so the gap shows. The id is now cut at its last
+arrow-starting hyphen run (a hyphen followed by `-`, `.` or `>`, the rule the patched parser uses): `hot---B` → `B`,
+`my-node` stays `my-node`. `LOOK_VERSION` 5 → 6.
