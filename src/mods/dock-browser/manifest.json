@@ -1,0 +1,1 @@
+{ "id": "dock-browser", "name": "Browser", "icon": "icon.svg", "regions": ["right"], "settings": {} }

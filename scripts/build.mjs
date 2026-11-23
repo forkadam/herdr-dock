@@ -38,6 +38,13 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
         banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
       });
     }
+    if (name === "dock-browser") {
+      // The browse command agents run (node browse.mjs ...): one file, nothing to install.
+      await build({
+        entryPoints: [join(ROOT, "src/app/browse.js")], outfile: join(dest, "browse.mjs"),
+        bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
+      });
+    }
     if (name === "dock-quotas") {
       // The status-line writer Claude Code runs, and the setup that puts it in ~/.claude/settings.json (one file,
       // run with node from the installed mod: the Quotas panel's Set up button, the app install, deploy).

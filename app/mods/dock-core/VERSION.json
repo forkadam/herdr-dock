@@ -1,11 +1,12 @@
 {
   "repo": "forkadam/herdr-dock",
   "branch": "main",
-  "version": "d80aeb58456f",
-  "source": "fc27caa",
+  "version": "3d3c8f88b554",
+  "source": "ae0892e",
   "mods": [
     "dock-agents",
     "dock-attention",
+    "dock-browser",
     "dock-changes",
     "dock-config",
     "dock-core",

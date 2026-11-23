@@ -136,7 +136,7 @@ test("deploy writes the hostname into source.json and leaves no temp folders", a
     const src = JSON.parse(readFileSync(join(tmp, "mods/dock-core/source.json"), "utf8"));
     assert.equal(src.hostname, hostname().toLowerCase());
     assert.deepEqual(readdirSync(tmp).sort(), ["keys.json", "layouts", "mods"]);
-    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-attention", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-jira", "dock-limits", "dock-notifications", "dock-overview", "dock-pages", "dock-pipelines", "dock-quotas", "dock-rail", "dock-render", "dock-spaces", "dock-system", "dock-tabs", "dock-toast", "dock-warnings", "dock-where"]);
+    assert.deepEqual(readdirSync(join(tmp, "mods")).sort(), ["dock-agents", "dock-attention", "dock-browser", "dock-changes", "dock-config", "dock-core", "dock-files", "dock-footer", "dock-git", "dock-git-delete", "dock-header", "dock-jira", "dock-limits", "dock-notifications", "dock-overview", "dock-pages", "dock-pipelines", "dock-quotas", "dock-rail", "dock-render", "dock-spaces", "dock-system", "dock-tabs", "dock-toast", "dock-warnings", "dock-where"]);
     assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
