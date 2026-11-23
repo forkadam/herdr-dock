@@ -1,0 +1,243 @@
+// The brief model (src/shared/jira/brief.js): what Today's brief asks Jira, which description edits and sprint
+// arrivals are new, the read marks, the badge and the "check against my work" message. Times in the message are
+// local, so pin the zone.
+process.env.TZ = "UTC";
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { DEFAULT_CHECK_TASK } from "../src/shared/jira/settings.js";
+import {
+  briefBadge, bugsSearch, changedItem, changedSearches, checkMessage, descriptionEdits, isUnread, newInSprintItem,
+  pruneBugs, sinceMinutes, withRead,
+} from "../src/shared/jira/brief.js";
+
+const me = "me";
+const edit = (author, created, from, to) => ({ author: { name: author }, created, items: [{ field: "description", fromString: from, toString: to }] });
+const issue = { key: "WEB-40", fields: { summary: "Story" }, changelog: { histories: [
+  edit("ana", "2026-11-12T10:00:00.000+0000", "v1", "v2"),
+  edit(me, "2026-11-13T10:00:00.000+0000", "v2", "v3"),
+  edit("ana", "2026-11-19T15:46:00.000+0000", "v3", "v4"),
+  edit("ana", "2026-11-19T15:54:00.000+0000", "v4", "v5"),
+] } };
+
+// ---- what it asks Jira ----
+
+test("sinceMinutes: minutes since the sprint started, else 14 days", () => {
+  const now = Date.parse("2026-11-19T12:00:00Z");
+  assert.equal(sinceMinutes({ id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") }, now), 3 * 24 * 60 + 12 * 60);
+  assert.equal(sinceMinutes({ id: 42, startMs: now - 90_000 }, now), 2); // a started minute counts: never short
+  assert.equal(sinceMinutes(null, now), 14 * 24 * 60);
+  assert.equal(sinceMinutes({ id: 42, startMs: null }, now), 14 * 24 * 60);
+  assert.equal(sinceMinutes({ id: 42, startMs: now + 1000 }, now), 14 * 24 * 60); // not started yet
+});
+
+test("changedSearches: parents split by 50", () => {
+  const keys = Array.from({ length: 120 }, (_, i) => `WEB-${i}`);
+  const q = changedSearches({ since: 10080, parentKeys: keys });
+  assert.equal(q.length, 4);
+  assert.equal(q[0], "assignee = currentUser() AND resolution = Unresolved AND updated >= -10080m");
+  assert.ok(q[3].startsWith("key in (WEB-100,"));
+});
+
+test("changedSearches: no parents is one search; 50 parents fit one", () => {
+  assert.deepEqual(changedSearches({ since: 60, parentKeys: [] }), ["assignee = currentUser() AND resolution = Unresolved AND updated >= -60m"]);
+  const keys = Array.from({ length: 50 }, (_, i) => `WEB-${i}`);
+  assert.equal(changedSearches({ since: 60, parentKeys: keys }).length, 2);
+  assert.equal(changedSearches({ since: 60, parentKeys: [...keys, "WEB-50"] }).length, 3);
+  assert.equal(changedSearches({ since: 60, parentKeys: ["WEB-1", "WEB-2"] })[1], "key in (WEB-1,WEB-2) AND updated >= -60m");
+});
+
+test("bugsSearch keeps ORDER BY last", () => {
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug ORDER BY updated DESC", highPriorities: ["P0", "P1"] }),
+    'issuetype = Bug AND priority in ("P0", "P1") ORDER BY updated DESC');
+});
+
+test("bugsSearch: no ORDER BY, none to narrow with, quotes inside a name", () => {
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug", highPriorities: ["High"] }), 'issuetype = Bug AND priority in ("High")');
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug ORDER BY updated DESC", highPriorities: [] }), "issuetype = Bug ORDER BY updated DESC");
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug", highPriorities: ['P"0'] }), 'issuetype = Bug AND priority in ("P\\"0")');
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug order  by updated", highPriorities: ["P0"] }), 'issuetype = Bug AND priority in ("P0") order  by updated');
+});
+
+test("bugsSearch: an OR in the bugs query is grouped so the priority still narrows all of it", () => {
+  assert.equal(bugsSearch({ briefBugs: "issuetype = Bug OR labels = urgent ORDER BY rank", highPriorities: ["P0"] }),
+    '(issuetype = Bug OR labels = urgent) AND priority in ("P0") ORDER BY rank');
+  // "order by" and "or" inside a quoted value are text, not clauses
+  assert.equal(bugsSearch({ briefBugs: 'summary ~ "order by or" AND issuetype = Bug', highPriorities: ["P0"] }),
+    'summary ~ "order by or" AND issuetype = Bug AND priority in ("P0")');
+});
+
+// ---- Changed ----
+
+test("descriptionEdits: only description items by someone else, oldest first", () => {
+  const mixed = { key: "WEB-1", fields: {}, changelog: { histories: [
+    { author: { name: "bo", displayName: "Bo Lin" }, created: "2026-11-19T10:00:00.000+0000", items: [{ field: "description", fromString: "b", toString: "c" }] },
+    { author: { name: "ana" }, created: "2026-11-18T10:00:00.000+0000", items: [{ field: "status", fromString: "Open", toString: "Done" }] },
+    { author: { name: "ana" }, created: "2026-11-17T10:00:00.000+0000", items: [{ field: "description", fromString: null, toString: "b" }] },
+    { author: { name: me }, created: "2026-11-16T10:00:00.000+0000", items: [{ field: "description", fromString: "a", toString: "b" }] },
+  ] } };
+  assert.deepEqual(descriptionEdits(mixed, { me }), [
+    { at: Date.parse("2026-11-17T10:00:00Z"), author: "ana", from: "", to: "b" },
+    { at: Date.parse("2026-11-19T10:00:00Z"), author: "Bo Lin", from: "b", to: "c" },
+  ]);
+  assert.deepEqual(descriptionEdits({ key: "WEB-1", fields: {} }, { me }), []);
+});
+
+test("changedItem: others' edits since the window or the read mark", () => {
+  const c = changedItem(issue, { me, sinceMs: Date.parse("2026-11-16T00:00:00Z"), marks: {} });
+  assert.equal(c.edits.length, 2);
+  assert.equal(c.before, "v3");
+  assert.equal(c.after, "v5");
+  const read = withRead({}, "changed", c);
+  assert.equal(changedItem(issue, { me, sinceMs: 0, marks: read }), null);
+});
+
+test("changedItem: the item's shape, and a newer edit after a read mark is unread again", () => {
+  const c = changedItem(issue, { me, sinceMs: 0, marks: {} });
+  assert.deepEqual(Object.keys(c).sort(), ["after", "at", "before", "edits", "key", "summary"]);
+  assert.equal(c.key, "WEB-40");
+  assert.equal(c.summary, "Story");
+  assert.equal(c.edits.length, 3); // from the window: Nov 12 and both Nov 19 edits (the Nov 13 one is yours)
+  assert.equal(c.at, Date.parse("2026-11-19T15:54:00Z"));
+  // the mark covers the first Nov 19 edit only: the later one is what's left
+  const partly = changedItem(issue, { me, sinceMs: 0, marks: { "WEB-40": { changed: Date.parse("2026-11-19T15:46:00Z") } } });
+  assert.deepEqual([partly.edits.length, partly.before, partly.after], [1, "v4", "v5"]);
+  // the window can start later than the mark
+  assert.equal(changedItem(issue, { me, sinceMs: Date.parse("2026-11-19T15:50:00Z"), marks: { "WEB-40": { changed: 1 } } }).edits.length, 1);
+});
+
+test("changedItem: null without a changelog or without description edits by others", () => {
+  assert.equal(changedItem({ key: "WEB-1", fields: { summary: "s" } }, { me, sinceMs: 0, marks: {} }), null);
+  const mine = { key: "WEB-1", fields: { summary: "s" }, changelog: { histories: [edit(me, "2026-11-19T10:00:00.000+0000", "a", "b")] } };
+  assert.equal(changedItem(mine, { me, sinceMs: 0, marks: {} }), null);
+  assert.equal(changedItem({ key: "WEB-1", fields: {}, changelog: { histories: [] } }, { me, sinceMs: 0, marks: {} }), null);
+});
+
+// ---- New in sprint ----
+
+test("newInSprintItem: added, carried over, created, assigned", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const before = "2026-11-01T00:00:00.000+0000", after = "2026-11-18T00:00:00.000+0000";
+  const h = (at, items, created = before) => ({ key: "WEB-1", fields: { summary: "s", created }, changelog: { histories: [{ author: { name: "lead" }, created: at, items }] } });
+  const added = newInSprintItem(h(after, [{ field: "Sprint", from: "", to: "42" }]), { sprint, me });
+  assert.deepEqual([added.why, added.sprintId], ["added", 42]);
+  assert.equal(newInSprintItem(h(after, [{ field: "Sprint", from: "41", to: "41, 42" }]), { sprint, me }), null);
+  assert.equal(newInSprintItem(h(after, [{ field: "assignee", to: me }]), { sprint, me }).why, "assigned");
+  assert.equal(newInSprintItem(h(after, [], after), { sprint, me }).why, "created");
+  assert.equal(newInSprintItem(h(before, [{ field: "Sprint", from: "", to: "42" }]), { sprint, me }), null); // before the start
+});
+
+test("newInSprintItem: the item's shape and when it happened", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const at = "2026-11-18T09:30:00.000+0000";
+  const mk = (items, created = "2026-11-01T00:00:00.000+0000") => ({ key: "WEB-1", fields: { summary: "Do it", created }, changelog: { histories: [{ author: { name: "lead" }, created: at, items }] } });
+  assert.deepEqual(newInSprintItem(mk([{ field: "Sprint", from: "", to: "42" }]), { sprint, me }),
+    { key: "WEB-1", summary: "Do it", why: "added", at: Date.parse(at), sprintId: 42 });
+  assert.deepEqual(newInSprintItem(mk([{ field: "assignee", to: me }]), { sprint, me }),
+    { key: "WEB-1", summary: "Do it", why: "assigned", at: Date.parse(at), sprintId: 42 });
+  const made = { key: "WEB-2", fields: { summary: "New", created: at } };
+  assert.deepEqual(newInSprintItem(made, { sprint, me }), { key: "WEB-2", summary: "New", why: "created", at: Date.parse(at), sprintId: 42 }); // no changelog needed
+});
+
+test("newInSprintItem: sprint ids are a comma list compared as text; other sprints, assignees and no start are not new", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const mk = (items, created = "2026-11-01T00:00:00.000+0000") => ({ key: "WEB-1", fields: { summary: "s", created }, changelog: { histories: [{ author: { name: "lead" }, created: "2026-11-18T00:00:00.000+0000", items }] } });
+  assert.equal(newInSprintItem(mk([{ field: "Sprint", from: "", to: "43,42" }]), { sprint, me }).why, "added");
+  assert.equal(newInSprintItem(mk([{ field: "Sprint", from: null, to: "42 , 43" }]), { sprint, me }).why, "added");
+  assert.equal(newInSprintItem(mk([{ field: "Sprint", from: "", to: "142" }]), { sprint, me }), null); // 142 is not 42
+  assert.equal(newInSprintItem(mk([{ field: "Sprint", from: "", to: "43" }]), { sprint, me }), null);
+  assert.equal(newInSprintItem(mk([{ field: "assignee", to: "ana" }]), { sprint, me }), null);
+  assert.equal(newInSprintItem(mk([{ field: "Sprint", from: "", to: "42" }]), { sprint: { id: 42, startMs: null }, me }), null);
+  assert.equal(newInSprintItem({ key: "WEB-1", fields: { summary: "s" } }, { sprint, me }), null);
+});
+
+test("newInSprintItem: a carry-over does not hide a later assignment to you; added wins over assigned", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const h = (created, items) => ({ author: { name: "lead" }, created, items });
+  const carried = h("2026-11-16T00:00:01.000+0000", [{ field: "Sprint", from: "41", to: "41, 42" }]);
+  const assigned = h("2026-11-18T00:00:00.000+0000", [{ field: "assignee", to: me }]);
+  const added = h("2026-11-17T00:00:00.000+0000", [{ field: "Sprint", from: "", to: "42" }]);
+  const mk = (...histories) => ({ key: "WEB-1", fields: { summary: "s", created: "2026-11-01T00:00:00.000+0000" }, changelog: { histories } });
+  const a = newInSprintItem(mk(carried, assigned), { sprint, me });
+  assert.deepEqual([a.why, a.at], ["assigned", Date.parse("2026-11-18T00:00:00Z")]);
+  assert.equal(newInSprintItem(mk(added, assigned), { sprint, me }).why, "added");
+});
+
+// ---- the read marks and the badge ----
+
+test("isUnread: each kind has its own mark", () => {
+  assert.equal(isUnread("changed", { key: "WEB-7", at: 5 }, {}), true);
+  assert.equal(isUnread("changed", { key: "WEB-7", at: 5 }, { "WEB-7": { changed: 4 } }), true);
+  assert.equal(isUnread("changed", { key: "WEB-7", at: 5 }, { "WEB-7": { changed: 5 } }), false);
+  assert.equal(isUnread("changed", { key: "WEB-7", at: 5 }, { "WEB-7": { changed: 9 } }), false);
+  assert.equal(isUnread("sprint", { key: "WEB-7", sprintId: 42 }, {}), true);
+  assert.equal(isUnread("sprint", { key: "WEB-7", sprintId: 42 }, { "WEB-7": { sprint: 41 } }), true); // the next sprint's arrival is new again
+  assert.equal(isUnread("sprint", { key: "WEB-7", sprintId: 42 }, { "WEB-7": { sprint: 42 } }), false);
+  assert.equal(isUnread("bug", { key: "WEB-7" }, {}), true);
+  assert.equal(isUnread("bug", { key: "WEB-7" }, { "WEB-7": { bug: true } }), false);
+  assert.equal(isUnread("bug", { key: "WEB-7" }, { "WEB-7": { changed: 3 } }), true); // another kind's mark doesn't count
+  assert.equal(isUnread("bug", { key: "WEB-7" }, null), true);
+});
+
+test("withRead: a new marks object that keeps the key's other marks", () => {
+  const marks = { "WEB-7": { changed: 3 }, "WEB-8": { bug: true } };
+  const bug = withRead(marks, "bug", { key: "WEB-7" });
+  assert.deepEqual(bug, { "WEB-7": { changed: 3, bug: true }, "WEB-8": { bug: true } });
+  assert.deepEqual(marks, { "WEB-7": { changed: 3 }, "WEB-8": { bug: true } }); // not changed in place
+  assert.deepEqual(withRead({}, "changed", { key: "WEB-7", at: 8 }), { "WEB-7": { changed: 8 } });
+  assert.deepEqual(withRead({}, "sprint", { key: "WEB-7", sprintId: 42 }), { "WEB-7": { sprint: 42 } });
+  assert.deepEqual(withRead({ "WEB-7": { sprint: 41, bug: true } }, "sprint", { key: "WEB-7", sprintId: 42 }), { "WEB-7": { sprint: 42, bug: true } });
+  assert.equal(isUnread("changed", { key: "WEB-7", at: 8 }, withRead({}, "changed", { key: "WEB-7", at: 8 })), false);
+});
+
+test("briefBadge: unread only; warn when a bug is unread", () => {
+  const items = { changed: [{ key: "WEB-40", at: 5 }], sprint: [], bugs: [{ key: "WEB-7" }] };
+  assert.deepEqual(briefBadge(items, {}), { count: 2, tone: "warn" });
+  assert.deepEqual(briefBadge(items, { "WEB-7": { bug: true } }), { count: 1, tone: "info" });
+  assert.equal(briefBadge({ changed: [], sprint: [], bugs: [] }, {}), null);
+  assert.deepEqual(pruneBugs({ "WEB-7": { bug: true, changed: 3 } }, []), { "WEB-7": { changed: 3 } });
+});
+
+test("briefBadge: counts the three lists by their own marks; read everything is no badge", () => {
+  const items = { changed: [{ key: "WEB-40", at: 5 }, { key: "WEB-41", at: 6 }], sprint: [{ key: "WEB-42", sprintId: 42 }], bugs: [{ key: "WEB-7" }, { key: "WEB-8" }] };
+  const marks = { "WEB-40": { changed: 5 }, "WEB-42": { sprint: 42 }, "WEB-7": { bug: true } };
+  assert.deepEqual(briefBadge(items, marks), { count: 2, tone: "warn" }); // WEB-41 changed, WEB-8 bug
+  assert.deepEqual(briefBadge({ ...items, bugs: [{ key: "WEB-7" }] }, marks), { count: 1, tone: "info" });
+  assert.deepEqual(briefBadge({ changed: [], sprint: [{ key: "WEB-42", sprintId: 42 }], bugs: [] }, {}), { count: 1, tone: "info" });
+  assert.equal(briefBadge({ ...items, changed: [items.changed[0]], bugs: [{ key: "WEB-7" }] }, marks), null);
+});
+
+test("pruneBugs: drops the mark of a bug that left the list, and an entry left empty", () => {
+  const marks = { "WEB-7": { bug: true }, "WEB-8": { bug: true }, "WEB-9": { bug: true, sprint: 42 }, "WEB-10": { changed: 4 } };
+  assert.deepEqual(pruneBugs(marks, ["WEB-8"]), { "WEB-8": { bug: true }, "WEB-9": { sprint: 42 }, "WEB-10": { changed: 4 } });
+  assert.deepEqual(marks["WEB-7"], { bug: true }); // not changed in place
+});
+
+// ---- the message ----
+
+test("checkMessage never carries description text", () => {
+  const c = changedItem(issue, { me, sinceMs: 0, marks: {} });
+  const msg = checkMessage(DEFAULT_CHECK_TASK, { key: c.key, summary: "Story", edits: c.edits, mine: ["WEB-41", "WEB-42"] });
+  assert.ok(msg.includes("WEB-41, WEB-42"));
+  for (const v of ["v2", "v4", "v5"]) assert.ok(!msg.includes(v), v);
+});
+
+test("checkMessage: {when} is the span of the edits", () => {
+  const at = (s) => ({ at: Date.parse(s), author: "ana", from: "a", to: "b" });
+  const msg = (edits) => checkMessage("{key} ({summary}) {when} on {mine}", { key: "WEB-40", summary: "Story", edits, mine: ["WEB-41"] });
+  assert.equal(msg([at("2026-11-19T15:46:00Z"), at("2026-11-19T15:54:00Z")]), "WEB-40 (Story) Nov 19 15:46–15:54 on WEB-41");
+  assert.equal(msg([at("2026-11-19T15:46:00Z")]), "WEB-40 (Story) Nov 19 15:46 on WEB-41");
+  assert.equal(msg([at("2026-11-19T15:46:10Z"), at("2026-11-19T15:46:50Z")]), "WEB-40 (Story) Nov 19 15:46 on WEB-41"); // the same minute twice is one time
+  assert.equal(msg([at("2026-11-12T10:00:00Z"), at("2026-11-19T15:54:00Z")]), "WEB-40 (Story) Nov 12 – Nov 19 on WEB-41");
+  assert.equal(msg([at("2026-11-19T23:50:00Z"), at("2026-11-20T00:05:00Z")]), "WEB-40 (Story) Nov 19 – Nov 20 on WEB-41"); // across midnight is two days
+  assert.equal(msg([at("2026-11-19T00:05:00Z")]), "WEB-40 (Story) Nov 19 00:05 on WEB-41"); // 24-hour clock: 00:05, not 24:05
+  assert.equal(msg([at("2026-11-19T09:05:00Z")]), "WEB-40 (Story) Nov 19 09:05 on WEB-41"); // two digits
+  assert.equal(msg([at("2026-11-19T15:54:00Z"), at("2026-11-19T15:46:00Z")]), "WEB-40 (Story) Nov 19 15:46–15:54 on WEB-41"); // the order of the edits doesn't matter
+});
+
+test("checkMessage: unknown placeholders stay, and a value's braces are not filled in again", () => {
+  const edits = [{ at: Date.parse("2026-11-19T15:46:00Z"), author: "ana", from: "a", to: "b" }];
+  assert.equal(checkMessage("{key} {who} {when}", { key: "WEB-40", summary: "s", edits, mine: [] }), "WEB-40 {who} Nov 19 15:46");
+  assert.equal(checkMessage("{summary} / {key}", { key: "WEB-40", summary: "see {key}", edits, mine: [] }), "see {key} / WEB-40");
+  assert.equal(checkMessage("{key} {key}", { key: "WEB-40", summary: "s", edits, mine: [] }), "WEB-40 WEB-40");
+});
