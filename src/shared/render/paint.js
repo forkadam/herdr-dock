@@ -119,17 +119,19 @@ function restyle(tag, css) {
 const attrOf = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
 const classesOf = (tag) => (attrOf(tag, "class") ?? "").split(/\s+/);
 
-// A multi-series chart: series N's bars, lines and dots take palette colour N.
+// A multi-series chart: everything of series N (bars, lines, their shadows, dots, legend swatches) takes palette
+// colour N, the way beautiful-mermaid colours them: a bar its fill and stroke, a circle its fill, a path or line its
+// stroke. Leaving any out would make the legend point at the wrong series.
 function paintSeries(svg, palette, theme) {
   if (!palette.length) return svg;
-  return svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
+  return svg.replace(/<([a-z]+)\b[^>]*>/g, (tag, name) => {
     const cls = classesOf(tag);
     const n = cls.map((k) => /^xychart-color-(\d+)$/.exec(k)?.[1]).find((x) => x !== undefined);
     if (n === undefined) return tag;
     const c = palette[Number(n) % palette.length];
     if (cls.includes("xychart-bar")) return restyle(tag, `fill:${mix(c, BAR_TINT, theme.background)};stroke:${c}`);
-    if (cls.includes("xychart-line")) return restyle(tag, `stroke:${c}`);
-    if (cls.includes("xychart-dot")) return restyle(tag, `fill:${c}`);
+    if (name === "circle") return restyle(tag, `fill:${c}`);
+    if (name === "path" || name === "line" || name === "polyline") return restyle(tag, `stroke:${c}`);
     return tag;
   });
 }

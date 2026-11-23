@@ -102,3 +102,16 @@ test("paintDiagram: anything unexpected gives the SVG back unchanged", () => {
   const src = "flowchart LR\n  A-->B";
   assert.equal(typeof paintDiagram(draw(src), src, {}), "string");
 });
+
+test("paintDiagram: a chart's legend, line shadows and dots take their series' colour too", () => {
+  const src = "xychart-beta\n  x-axis [a, b, c]\n  line [10, 30, 20]\n  line [25, 15, 35]";
+  const out = paintDiagram(draw(src), src, THEME);
+  const tags = [...out.matchAll(/<([a-z]+)\b[^>]*>/g)].map((m) => ({ tag: m[1], ...attrs(m[0]) }))
+    .filter((a) => /\bxychart-color-\d+\b/.test(a.class ?? ""));
+  assert.ok(tags.some((a) => (a.class ?? "").includes("xychart-legend-line")), "the chart has legend swatches");
+  for (const a of tags) {
+    const n = Number(/xychart-color-(\d+)/.exec(a.class)[1]);
+    const want = a.tag === "circle" ? `fill:${pal[n]}` : `stroke:${pal[n]}`;
+    assert.ok((a.style ?? "").includes(want), `${a.tag}.${a.class} has ${want}`);
+  }
+});

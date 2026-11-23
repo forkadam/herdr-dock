@@ -78,3 +78,30 @@ test("figureSvg: a bar of blocks is one rect per colour, even across runs; a gap
   assert.deepEqual(rects("{ok:██}{ok:█} █"), [[THEME.ansi2, X(0), 3 * FIGURE_CELL], [THEME.foreground, X(4), FIGURE_CELL]]);
   assert.deepEqual(rects("{accent:█}{ok:█}"), [[THEME.accent, X(0), FIGURE_CELL], [THEME.ansi2, X(1), FIGURE_CELL]]);
 });
+
+test("figureSvg: box-drawing characters are lines on the cell grid, so a box's sides meet from row to row", () => {
+  const { svg } = figureSvg(["┌─┐", "│ │", "└─┘"], THEME);
+  assert.ok(!texts(svg).some((t) => /[─│┌┐└┘]/.test(t.content)), "no box character is left to the font");
+  const segs = [...svg.matchAll(/M([\d.]+) ([\d.]+)L([\d.]+) ([\d.]+)/g)].map((m) => m.slice(1).map(Number));
+  const cx = X(0) + FIGURE_CELL / 2;
+  const vertical = segs.filter(([x1, , x2]) => near(x1, cx) && near(x2, cx));
+  const covered = (y) => vertical.some(([, y1, , y2]) => Math.min(y1, y2) - 0.01 <= y && y <= Math.max(y1, y2) + 0.01);
+  for (let y = FIGURE_PAD + FIGURE_LINE / 2; y <= FIGURE_PAD + 2.5 * FIGURE_LINE; y += 1) assert.ok(covered(y), `left side at y=${y}`);
+});
+
+test("figureSvg: box lines take their run's colour; a double line is two parallel lines", () => {
+  const { svg } = figureSvg(["{warn:═}"], THEME);
+  const paths = [...svg.matchAll(/<path\b([^>]*)\/>/g)].map((m) => attrs(m[1]));
+  assert.equal(paths.length, 1);
+  assert.equal(paths[0].stroke, THEME.ansi1);
+  const ys = new Set([...paths[0].d.matchAll(/M[\d.]+ ([\d.]+)L[\d.]+ ([\d.]+)/g)].flatMap((m) => [m[1], m[2]]));
+  assert.equal(ys.size, 2, "two horizontal lines");
+});
+
+test("figureSvg: box lines end exactly on their cell's edge, with butt caps, so neighbouring cells never overlap", () => {
+  const { svg } = figureSvg(["│", "│"], THEME);
+  const paths = [...svg.matchAll(/<path\b([^>]*)\/>/g)].map((m) => attrs(m[1]));
+  assert.ok(paths.every((p) => (p["stroke-linecap"] ?? "butt") === "butt"));
+  const ys = paths.flatMap((p) => [...p.d.matchAll(/M[\d.]+ ([\d.]+)L[\d.]+ ([\d.]+)/g)].flatMap((m) => [Number(m[1]), Number(m[2])]));
+  assert.ok(near(Math.min(...ys), FIGURE_PAD) && near(Math.max(...ys), FIGURE_PAD + 2 * FIGURE_LINE), "from the top edge of row 0 to the bottom of row 1");
+});

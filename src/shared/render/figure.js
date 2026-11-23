@@ -132,6 +132,37 @@ export function decideFigure(source) {
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const px = (n) => Math.round(n * 100) / 100;
 
+// Box drawing, drawn as lines on the cell grid rather than left to the font: a font's box glyphs are shorter than a
+// row, so a box's sides would come out dashed. Each character: its arms [up, right, down, left], from the cell's
+// centre to that edge; 1 light, 2 heavy, 3 double (two parallel lines). Rounded corners draw as square ones.
+const BOX = {};
+const SHAPES = ["0101", "1010", "0110", "0011", "1100", "1001", "1110", "1011", "0111", "1101", "1111", "0110", "0011", "1001", "1100"];
+for (const [chars, weight] of [["─│┌┐└┘├┤┬┴┼╭╮╯╰", 1], ["━┃┏┓┗┛┣┫┳┻╋", 2], ["═║╔╗╚╝╠╣╦╩╬", 3]]) {
+  [...chars].forEach((ch, i) => { BOX[ch] = [...SHAPES[i]].map((arm) => (arm === "1" ? weight : 0)); });
+}
+const DOUBLE_GAP = 1.5; // each line of a double one sits this far from the centre
+
+// One box character as one path. Each arm runs from just past the centre (half a line width, so a corner closes) to
+// exactly its cell's edge, with butt caps: arms overlap only inside their own path, never into a neighbouring cell,
+// where a second, overlapping stroke would show as a darker dot at every cell boundary.
+function boxPath(arms, left, top, colour) {
+  const width = Math.max(...arms) === 2 ? 2 : 1;
+  const cx = left + FIGURE_CELL / 2, cy = top + FIGURE_LINE / 2;
+  const ends = [[cx, top], [left + FIGURE_CELL, cy], [cx, top + FIGURE_LINE], [left, cy]];
+  const back = [[0, 1], [-1, 0], [0, -1], [1, 0]]; // the direction opposite each arm
+  const d = arms.flatMap((weight, i) => {
+    if (!weight) return [];
+    const [ex, ey] = ends[i];
+    const [bx, by] = back[i].map((v) => v * (width / 2));
+    const vertical = i % 2 === 0;
+    return (weight === 3 ? [-DOUBLE_GAP, DOUBLE_GAP] : [0]).map((o) => {
+      const [dx, dy] = vertical ? [o, 0] : [0, o];
+      return `M${px(cx + bx + dx)} ${px(cy + by + dy)}L${px(ex + dx)} ${px(ey + dy)}`;
+    });
+  }).join("");
+  return `<path d="${d}" stroke="${colour}" stroke-width="${width}" fill="none"/>`;
+}
+
 // A role's colour (and boldness) from the panel's theme; a theme without that colour falls back as prismantis does.
 function roleStyle(role, theme) {
   const fg = theme.foreground;
@@ -181,6 +212,12 @@ export function figureSvg(lines, theme) {
           continue;
         }
         endBlock();
+        if (BOX[g]) {
+          flush();
+          parts.push(boxPath(BOX[g], FIGURE_PAD + col * FIGURE_CELL, top, style.fill));
+          col += 1;
+          continue;
+        }
         if (g === " ") flush();
         else if (g.length > 1) {
           // A cluster (a letter and its marks) is placed as one: an x list counts characters, not clusters.

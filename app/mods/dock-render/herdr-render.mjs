@@ -97325,7 +97325,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 2;
+var LOOK_VERSION = 3;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;
@@ -97457,14 +97457,14 @@ var attrOf = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
 var classesOf = (tag) => (attrOf(tag, "class") ?? "").split(/\s+/);
 function paintSeries(svg, palette, theme) {
   if (!palette.length) return svg;
-  return svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
+  return svg.replace(/<([a-z]+)\b[^>]*>/g, (tag, name) => {
     const cls = classesOf(tag);
     const n = cls.map((k) => /^xychart-color-(\d+)$/.exec(k)?.[1]).find((x) => x !== void 0);
     if (n === void 0) return tag;
     const c = palette[Number(n) % palette.length];
     if (cls.includes("xychart-bar")) return restyle(tag, `fill:${mix(c, BAR_TINT, theme.background)};stroke:${c}`);
-    if (cls.includes("xychart-line")) return restyle(tag, `stroke:${c}`);
-    if (cls.includes("xychart-dot")) return restyle(tag, `fill:${c}`);
+    if (name === "circle") return restyle(tag, `fill:${c}`);
+    if (name === "path" || name === "line" || name === "polyline") return restyle(tag, `stroke:${c}`);
     return tag;
   });
 }
@@ -97633,6 +97633,31 @@ function decideFigure(source) {
 }
 var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 var px2 = (n) => Math.round(n * 100) / 100;
+var BOX = {};
+var SHAPES = ["0101", "1010", "0110", "0011", "1100", "1001", "1110", "1011", "0111", "1101", "1111", "0110", "0011", "1001", "1100"];
+for (const [chars, weight] of [["\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u256D\u256E\u256F\u2570", 1], ["\u2501\u2503\u250F\u2513\u2517\u251B\u2523\u252B\u2533\u253B\u254B", 2], ["\u2550\u2551\u2554\u2557\u255A\u255D\u2560\u2563\u2566\u2569\u256C", 3]]) {
+  [...chars].forEach((ch, i) => {
+    BOX[ch] = [...SHAPES[i]].map((arm) => arm === "1" ? weight : 0);
+  });
+}
+var DOUBLE_GAP = 1.5;
+function boxPath(arms, left, top, colour) {
+  const width2 = Math.max(...arms) === 2 ? 2 : 1;
+  const cx = left + FIGURE_CELL / 2, cy = top + FIGURE_LINE / 2;
+  const ends = [[cx, top], [left + FIGURE_CELL, cy], [cx, top + FIGURE_LINE], [left, cy]];
+  const back = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+  const d = arms.flatMap((weight, i) => {
+    if (!weight) return [];
+    const [ex, ey] = ends[i];
+    const [bx, by] = back[i].map((v) => v * (width2 / 2));
+    const vertical = i % 2 === 0;
+    return (weight === 3 ? [-DOUBLE_GAP, DOUBLE_GAP] : [0]).map((o) => {
+      const [dx, dy] = vertical ? [o, 0] : [0, o];
+      return `M${px2(cx + bx + dx)} ${px2(cy + by + dy)}L${px2(ex + dx)} ${px2(ey + dy)}`;
+    });
+  }).join("");
+  return `<path d="${d}" stroke="${colour}" stroke-width="${width2}" fill="none"/>`;
+}
 function roleStyle(role, theme) {
   const fg = theme.foreground;
   switch (role) {
@@ -97687,6 +97712,12 @@ function figureSvg(lines, theme) {
           continue;
         }
         endBlock();
+        if (BOX[g]) {
+          flush();
+          parts.push(boxPath(BOX[g], FIGURE_PAD + col * FIGURE_CELL, top, style.fill));
+          col += 1;
+          continue;
+        }
         if (g === " ") flush();
         else if (g.length > 1) {
           flush();
