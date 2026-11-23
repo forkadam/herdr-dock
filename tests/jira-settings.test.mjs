@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { DEFAULT_SETTINGS, formatSettings, jiraPaths, normalizeBaseUrl, parseSettings, siteName, validateToken } from "../src/shared/jira/settings.js";
+import { DEFAULT_BRIEF_BUGS, DEFAULT_CHECK_TASK, DEFAULT_SETTINGS, formatSettings, jiraOptions, jiraPaths, normalizeBaseUrl, parseSettings, siteName, validateToken } from "../src/shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../src/shared/jira/store.js";
 import { curlConfig } from "../src/shared/jira/transport.js";
 
@@ -70,6 +70,36 @@ test("parseSettings: defaults for junk, types checked, unknown keys kept", () =>
   const text = formatSettings({ ...s.settings, token: "secret" });
   assert.ok(!text.includes("secret"));
   assert.deepEqual(parseSettings(text).settings, s.settings);
+});
+
+test("jiraOptions: defaults when nothing is set", () => {
+  const o = jiraOptions(parseSettings("").settings);
+  assert.deepEqual(o, { board: null, highPriorities: ["Highest", "High"], briefBugs: DEFAULT_BRIEF_BUGS, views: [], actions: [], checkTask: DEFAULT_CHECK_TASK, warnings: [] });
+});
+
+test("jiraOptions: views, actions, board and priorities, bad entries skipped with a warning each", () => {
+  const o = jiraOptions({ board: "12", highPriorities: ["P0", "P1"], views: [
+    { id: "sec", name: "Security", jql: "project = SEC", group: "type" },
+    { id: "today", name: "Mine", jql: "x" },
+    { id: "bugs", name: "Bugs" },
+    { id: "sec", name: "Again", jql: "y" },
+  ], actions: [{ project: "SEC", start: "/triage {key}" }, { subtask: true, parentType: "Story", finish: "/close {key}" }, { project: "X" }] });
+  assert.equal(o.board, 12);
+  assert.deepEqual(o.highPriorities, ["P0", "P1"]);
+  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }]);
+  assert.deepEqual(o.actions[1], { subtask: true, parentType: ["Story"], finish: "/close {key}" });
+  assert.equal(o.actions.length, 2);
+  assert.deepEqual(o.warnings, [
+    'views[1]: "today" is the Today tab\'s id',
+    "views[2]: needs a name and a jql",
+    'views[3]: the id "sec" is already used',
+    "actions[2]: needs a start or a finish",
+  ]);
+});
+
+test("formatSettings never writes option defaults", () => {
+  const text = formatSettings(parseSettings('{"baseUrl":"https://j"}').settings);
+  for (const k of ["views", "actions", "board", "highPriorities", "briefBugs", "checkTask"]) assert.ok(!text.includes(`"${k}"`), k);
 });
 
 // ---- the store, on real files ----
