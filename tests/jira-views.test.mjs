@@ -86,3 +86,34 @@ test("tabCountText: the edges", () => {
   assert.equal(tabCountText({ total: 9, loading: true }), "9");
   assert.equal(tabCountText({ loading: true }), "");
 });
+
+// ---- Tabs on the page ----
+import { countsDue, tabFilters, tabLayout } from "../src/shared/jira/views.js";
+import { HIDDEN_EVERY_MS } from "../src/shared/jira/page.js";
+
+test("countsDue: every searching tab but the shown one, every HIDDEN_EVERY_MS (at once the first time)", () => {
+  const tabs = tabList(views, { today: true });
+  const now = 1_000_000_000;
+  assert.deepEqual(countsDue(tabs, "sec", undefined, now).map((t) => t.id), ["mine", "all"]);
+  assert.deepEqual(countsDue(tabs, "mine", now - HIDDEN_EVERY_MS + 1, now), []);
+  assert.deepEqual(countsDue(tabs, "mine", now - HIDDEN_EVERY_MS, now).map((t) => t.id), ["sec", "all"]);
+  assert.deepEqual(countsDue(tabList([], { today: false }), "gone", null, now).map((t) => t.id), ["mine", "all"]);
+});
+
+test("tabLayout: the tab's own choice, else the layout before tabs, else the list", () => {
+  assert.equal(tabLayout("board", "list"), "board");
+  assert.equal(tabLayout("list", "board"), "list");
+  assert.equal(tabLayout(undefined, "board"), "board");
+  assert.equal(tabLayout(null, undefined), "list");
+  assert.equal(tabLayout("junk", "board"), "board");
+  assert.equal(tabLayout(undefined, "junk"), "list");
+});
+
+test("tabFilters: the All tab's own search first, then the page's filters", () => {
+  const list = [{ id: "mine", name: "Assigned to me", jql: BUILTIN_FILTERS[0].jql, source: "builtin" }];
+  const all = tabList([], { today: false })[1];
+  assert.deepEqual(tabFilters(all, list), [{ id: "all", name: "All my issues", jql: ALL_JQL, source: "builtin" }, ...list]);
+  // A view that replaces All: its search, under its name.
+  const replaced = tabList(views, { today: false }).find((t) => t.id === "all");
+  assert.deepEqual(tabFilters(replaced, list)[0], { id: "all", name: "Everything", jql: "assignee = currentUser()", source: "builtin" });
+});

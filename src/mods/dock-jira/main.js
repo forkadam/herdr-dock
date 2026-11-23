@@ -8,19 +8,23 @@ import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShar
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
 import { withSearch } from "../../shared/jira/jql.js";
-import { ago, boardColumns, groupByCategory, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
+import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, badgeFor, canAssignToMe, commentReady, countText, filterList, needsDetail,
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, refreshSize, startWork, withComment,
 } from "../../shared/jira/page.js";
-import { normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
+import { jiraOptions, normalizeBaseUrl, siteName } from "../../shared/jira/settings.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
+import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
+import { tabBar } from "./tabs.js";
 
 const MOD = "dock-jira";
 const BADGE_KEY = `dock.page.badge.${MOD}`;
-const VIEW_KEY = "dock.jira.view";
+const VIEW_KEY = "dock.jira.view"; // the List / Board choice before tabs: a tab without its own choice starts from it
+const TAB_KEY = "dock.jira.tab";
+const LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 const FILTER_KEY = "dock.jira.filter";
 const TICK_MS = 30000;
 const DETAIL_W = 420;
@@ -43,21 +47,20 @@ export default class Jira extends View {
     this.favourites = [];
     this.statusOrder = []; // Jira's statuses in its own order (board columns)
     this.projectStatuses = new Map(); // project key -> its workflow's statuses [{ name, category }], or "loading"
-    this.query = "";
-    this.rows = [];
-    this.total = undefined;
-    this.listLoading = false;
-    this.listProblem = null; // about this filter only (bad JQL)
-    this.fetchedAt = null;
+    // Tabs: jiraOptions(settings) (views, warnings…, refreshed on every load()), the shown tab's id (remembered in
+    // TAB_KEY), each tab's list (state(id)), and the count on each tab.
+    this.options = jiraOptions({});
+    this.tabId = null;
+    this.states = new Map();
+    this.counts = new Map(); // tab id -> { total?, problem?, loading? }
+    this.countsAt = undefined; // when the hidden tabs were last counted
     this.lastPollAt = undefined;
     this.pollFailed = false;
     this.paused = false; // after a rejected token: no polling until the user acts (afterProblem)
-    this.selected = null;
     this.detail = null;
     this.detailLoading = false;
     this.detailProblem = null;
     this.filterOpen = false;
-    this.seq = latestOnly();
     this.detailSeq = latestOnly();
     // Actions on the open issue.
     this.transOpen = false;
@@ -70,10 +73,9 @@ export default class Jira extends View {
     this.dropChoice = null; // { row, status, transitions }: shown in the column dropped on
     this.dropNote = null; // { status, text }: why a drop on a dimmed column did nothing, in that column
     this.pendingStep = null; // { key, tr, field, url }: a move waiting for a value (Resolution), in the detail pane
-    this.moved = new Map(); // key -> the row as moved: kept on the board in its new status until the filter changes
 
     this.searchInput = InputState.new({ placeholder: "Search this filter…" });
-    this.searchInput.on("submit", (_e, cx) => { this.query = this.searchInput.value().trim(); this.moved = new Map(); this.refresh(cx); });
+    this.searchInput.on("submit", (_e, cx) => { const s = this.shown(); s.query = this.searchInput.value().trim(); s.moved = new Map(); this.refresh(cx); });
     this.urlInput = InputState.new({ placeholder: "https://jira.example.com" });
     this.tokenInput = InputState.new({ placeholder: "Personal access token" });
     this.tokenInput.set_masked(true);
@@ -103,14 +105,17 @@ export default class Jira extends View {
     });
   }
 
-  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, and on
-  // the open issue: status (its status menu), assign (to me), comment (the cursor into the comment box), start (Start work).
+  // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, the tabs
+  // (tab-next, tab-prev, tab-<id>), and on the open issue: status (its status menu), assign (to me), comment (the
+  // cursor into the comment box), start (Start work).
   command(c, cx) {
     if (c === "status") { if (this.detail) this.openTransitions(!this.transOpen, cx); return; }
     if (c === "assign") { if (canAssignToMe(this.detail, this.me)) this.assignMe(cx); return; }
     if (c === "comment") { if (this.detail) this.commentInput.focus(); return; }
     if (c === "start") { if (this.detail) this.startWork(this.detail, cx); return; }
-    if (c === "list" || c === "board") setShared(VIEW_KEY, c);
+    if (c === "tab-next" || c === "tab-prev") { this.showTab(stepTab(this.tabs(), this.tab().id, c === "tab-next" ? 1 : -1), cx); return; }
+    if (c.startsWith("tab-")) { const id = c.slice(4); if (this.tabs().some((x) => x.id === id)) this.showTab(id, cx); return; }
+    if (c === "list" || c === "board") setShared(LAYOUT_KEY(this.tab().id), c);
     else if (c === "refresh") cx.spawn(async (cx) => this.reload(cx));
     else if (c === "settings") this.openSettings(cx);
     else if (c === "close") { if (this.editing) { this.editing = false; this.formError = null; } else { this.selected = null; this.detail = null; } }
@@ -123,11 +128,71 @@ export default class Jira extends View {
     }
   }
 
-  // Issue keys in the order they're drawn (by group in the list, by column on the board).
+  // Issue keys in the order they're drawn (by section and group in the list, by column on the board).
   visibleOrder() {
     const rows = this.shownRows();
-    const parts = shared(VIEW_KEY) === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : groupByCategory(rows);
+    const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : sectionsFor(rows, this.tab().group).flatMap((s) => s.parts);
     return parts.flatMap((p) => p.rows.map((r) => r.key));
+  }
+
+  // ---- tabs ----
+
+  // The tabs, left to right: the user's views (settings), Mine, All. Today joins them later.
+  tabs() { return tabList(this.options.views, { today: false }); }
+  // The shown tab: the one picked, else the remembered one, else the first (a view may have left the settings).
+  tab() { return pickTab(this.tabs(), this.tabId ?? shared(TAB_KEY)); }
+
+  // A tab's list, kept while Herdr runs so switching back finds it as it was. `seq`: its newest search wins.
+  // `moved`: key -> the row as moved, kept on the board in its new status until the tab's search changes.
+  state(id) {
+    if (!this.states.has(id)) {
+      this.states.set(id, { rows: [], total: undefined, query: "", selected: null, fetchedAt: null, listProblem: null, loading: false, seq: latestOnly(), moved: new Map() });
+    }
+    return this.states.get(id);
+  }
+  shown() { return this.state(this.tab().id); }
+
+  // The open issue is the shown tab's selection.
+  get selected() { return this.shown().selected; }
+  set selected(key) { this.shown().selected = key; }
+
+  layout() { const id = this.tab().id; return tabLayout(shared(LAYOUT_KEY(id)), shared(VIEW_KEY)); }
+
+  // What a tab searches (before its search text): All's is the filter picked in its menu.
+  source(tab) { return tab.filters ? this.filter() : tab; }
+
+  // Shows a tab as it was left: its search, rows, selection and open issue. Asks Jira again when it was never loaded
+  // or its rows are older than a poll of the shown page.
+  showTab(id, cx) {
+    const before = this.selected;
+    const tab = pickTab(this.tabs(), id);
+    if (tab.id === this.tab().id) return;
+    this.tabId = tab.id;
+    setShared(TAB_KEY, tab.id);
+    this.filterOpen = false;
+    this.press = null;
+    this.drag = null;
+    this.dropChoice = null;
+    this.dropNote = null;
+    const s = this.state(tab.id);
+    this.searchInput.set_value(s.query);
+    if (s.selected !== before) this.followSelection(cx);
+    if (!s.loading && pollDue({ shown: true, lastAt: s.fetchedAt, failed: false, now: Date.now() })) cx.spawn(async (cx) => this.refresh(cx));
+    else cx.spawn(async (cx) => this.loadProjectStatuses(cx));
+    cx.notify();
+  }
+
+  // The issue pane after the tab changed: the new tab's own selection, its actions starting clean.
+  followSelection(cx) {
+    this.actionMsg = null;
+    this.pendingStep = null;
+    this.transitions = null;
+    this.transOpen = false;
+    this.commentInput.set_value("");
+    this.detail = null;
+    this.detailProblem = null;
+    const key = this.selected;
+    if (key) cx.spawn(async (cx) => this.loadDetail(cx, key));
   }
 
   // ---- data ----
@@ -138,6 +203,7 @@ export default class Jira extends View {
 
   async load() {
     this.jira = await loadJira(this.io(), this.site);
+    this.options = jiraOptions(this.jira.settings);
     const s = this.jira.settings;
     this.urlInput.set_value(s.baseUrl);
     this.taskInput.set_value(s.startTask);
@@ -154,7 +220,8 @@ export default class Jira extends View {
     });
   }
 
-  filters() { return filterList(this.favourites, this.jira?.settings.filters); }
+  // The All tab's filter menu: All my issues, then the built-ins, Jira favourites and the settings' own filters.
+  filters() { return tabFilters(this.tabs().find((x) => x.filters), filterList(this.favourites, this.jira?.settings.filters)); }
   filter() { return pickFilter(this.filters(), shared(FILTER_KEY)); }
 
   // First contact: who am I, then the favourites and the list.
@@ -187,6 +254,7 @@ export default class Jira extends View {
     const statuses = await this.client(cx).statuses();
     this.statusOrder = statuses.ok ? statuses.data.map((x) => x.name) : [];
     await this.refresh(cx);
+    await this.refreshCounts(cx);
   }
 
   // Refresh by hand: connect again when not connected (or after a problem), else the list and the open issue.
@@ -197,49 +265,78 @@ export default class Jira extends View {
     if (this.selected) await this.loadDetail(cx, this.selected);
   }
 
-  // The list for the chosen filter (and search), and the badge. The newest search wins.
+  // The shown tab's list (its search, and its search text) and its count, and the badge. The tab's newest search
+  // wins; the answer goes to the tab it was asked for, even if another is shown by then.
   async refresh(cx, { more = false } = {}) {
     if (!this.connected || !this.jira) return;
-    const seq = this.seq.next();
-    const f = this.filter();
-    const jql = withSearch(f.jql, this.query);
-    this.listLoading = true;
+    const tab = this.tab();
+    const s = this.state(tab.id);
+    const seq = s.seq.next();
+    const f = this.source(tab);
+    const jql = withSearch(f.jql, s.query);
+    s.loading = true;
+    this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: true });
     cx.notify();
     // A plain refresh asks for as many as are listed, so Load more's rows survive a poll or an action.
-    const r = await this.client(cx).search(jql, { startAt: more ? this.rows.length : 0, maxResults: more ? PAGE_SIZE : refreshSize(this.rows.length) });
-    if (!this.seq.accept(seq)) return;
-    this.listLoading = false;
+    const r = await this.client(cx).search(jql, { startAt: more ? s.rows.length : 0, maxResults: more ? PAGE_SIZE : refreshSize(s.rows.length) });
+    if (!s.seq.accept(seq)) return;
+    s.loading = false;
     this.lastPollAt = Date.now();
     this.pollFailed = !r.ok;
     if (!r.ok) {
-      if (PAGE_PROBLEMS.includes(r.problem.kind)) {
-        const effect = afterProblem(r.problem.kind);
-        this.problem = r.problem;
-        this.connected = effect.connected;
-        this.paused = effect.pause;
-        if (effect.clearBadge) setShared(BADGE_KEY, null);
-      }
-      else this.listProblem = r.problem;
+      if (this.pageProblem(r.problem)) this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: false });
+      else { s.listProblem = r.problem; this.counts.set(tab.id, { problem: r.problem }); }
       cx.notify();
       return;
     }
     const base = this.jira.settings.baseUrl;
     const rows = (r.data?.issues ?? []).map((i) => issueRow(i, base));
-    this.rows = more ? [...this.rows, ...rows] : rows;
-    this.total = r.data?.total;
-    this.fetchedAt = Date.now();
-    this.listProblem = null;
+    s.rows = more ? [...s.rows, ...rows] : rows;
+    s.total = r.data?.total;
+    s.fetchedAt = Date.now();
+    s.listProblem = null;
+    this.counts.set(tab.id, { total: s.total });
     this.problem = null;
     cx.notify();
     await this.loadProjectStatuses(cx);
-    await this.updateBadge(cx, f);
+    await this.updateBadge(cx, f, s);
+  }
+
+  // A failed search that means Jira can't be reached at all takes the whole page (true); any other (a view's bad
+  // JQL) is the tab's own (false).
+  pageProblem(problem) {
+    if (!PAGE_PROBLEMS.includes(problem.kind)) return false;
+    const effect = afterProblem(problem.kind);
+    this.problem = problem;
+    this.connected = effect.connected;
+    this.paused = effect.pause;
+    if (effect.clearBadge) setShared(BADGE_KEY, null);
+    return true;
+  }
+
+  // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time.
+  // A failed one marks its own tab ("!"); one that means Jira can't be reached takes the page, as the list's would.
+  async refreshCounts(cx) {
+    if (!this.connected || this.problem || !this.jira) return;
+    const due = countsDue(this.tabs(), this.tab().id, this.countsAt, Date.now());
+    if (!due.length) return;
+    this.countsAt = Date.now();
+    for (const tab of due) {
+      if (!this.connected || this.problem) return;
+      const r = await this.client(cx).search(withSearch(this.source(tab).jql, this.state(tab.id).query), { maxResults: 0 });
+      if (tab.id === this.tab().id) continue; // shown meanwhile: its own search counts it
+      if (r.ok) this.counts.set(tab.id, { total: r.data?.total });
+      else if (this.pageProblem(r.problem)) { cx.notify(); return; }
+      else this.counts.set(tab.id, { problem: r.problem });
+      cx.notify();
+    }
   }
 
   // The workflow statuses of the board's project, asked once per project, only when the board is one project (its
   // columns show them all, empty ones too; a mixed board has none to ask for). A failure leaves the project out: its
-  // columns then come from its issues, as before.
+  // columns then come from its issues, as before. The board is the shown tab's.
   async loadProjectStatuses(cx) {
-    const projects = boardProjects(this.rows);
+    const projects = boardProjects(this.shown().rows);
     if (projects.length !== 1) return;
     const key = projects[0];
     if (this.projectStatuses.has(key)) return;
@@ -250,18 +347,25 @@ export default class Jira extends View {
   }
 
   boardStatuses() {
-    return workflowStatuses(this.rows, this.projectStatuses);
+    return workflowStatuses(this.shown().rows, this.projectStatuses);
   }
 
-  // How many issues are assigned to me and unresolved: free when that's the filter shown, else one count query.
-  async updateBadge(cx, f) {
-    if (f.id === "mine" && !this.query) { setShared(BADGE_KEY, badgeFor(this.total)); return; }
+  // How many issues are assigned to me and unresolved: free when that's the search just made (`s`: its tab's list),
+  // else one count query.
+  async updateBadge(cx, f, s) {
+    if (f.id === "mine" && !s.query) { setShared(BADGE_KEY, badgeFor(s.total)); return; }
     const r = await this.client(cx).search(pickFilter(this.filters(), "mine").jql, { maxResults: 0 });
     if (r.ok) setShared(BADGE_KEY, badgeFor(r.data?.total));
   }
 
   tick(cx) {
-    if (!this.jira || this.editing || this.checkingNow || this.paused) return;
+    if (!this.jira || this.editing) return;
+    // The settings file edited by hand (its views, say) shows within a tick; then the hidden tabs' counts, when due.
+    cx.spawn(async (cx) => {
+      await this.reloadSettings(cx);
+      if (!this.editing && !this.checkingNow && !this.paused) await this.refreshCounts(cx);
+    });
+    if (this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
     if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now() })) return;
     cx.spawn(async (cx) => {
@@ -269,6 +373,27 @@ export default class Jira extends View {
       else await this.refresh(cx);
       if (this.selected && shown) await this.loadDetail(cx, this.selected);
     });
+  }
+
+  // Reads the settings file again (cheap) and, when its text changed, loads it and rebuilds the tabs: a tab whose
+  // search changed starts over, every tab is counted again, and the shown one (maybe another now: its view may have
+  // gone) is loaded if it never was.
+  async reloadSettings(cx) {
+    const path = this.jira?.paths.settingsPath;
+    if (!path) return;
+    const text = await readTextFile(path).catch(() => null);
+    if (text === this.jira.settingsText || this.editing) return;
+    const searches = new Map(this.tabs().map((x) => [x.id, x.jql]));
+    const before = this.selected;
+    const query = this.shown().query;
+    await this.load();
+    for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) { this.states.delete(x.id); this.counts.delete(x.id); }
+    this.countsAt = undefined;
+    if (this.selected !== before) this.followSelection(cx);
+    if (this.shown().query !== query) this.searchInput.set_value(this.shown().query);
+    cx.notify();
+    const s = this.shown();
+    if (!s.fetchedAt && !s.loading) await this.refresh(cx);
   }
 
   select(key, cx) {
@@ -351,13 +476,13 @@ export default class Jira extends View {
       async (cx, key) => {
         // Keep the card where it went, even if the filter no longer lists it (a move to Done out of "unresolved").
         const row = this.shownRows().find((r) => r.key === key);
-        if (row) this.moved.set(key, { ...row, status: tr.to?.name ?? row.status, category: tr.to?.statusCategory?.key ?? row.category });
+        if (row) this.shown().moved.set(key, { ...row, status: tr.to?.name ?? row.status, category: tr.to?.statusCategory?.key ?? row.category });
         await this.loadDetail(cx, key);
         await this.refresh(cx);
       });
   }
 
-  shownRows() { return keepMoved(this.rows, this.moved); }
+  shownRows() { const s = this.shown(); return keepMoved(s.rows, s.moved); }
 
   assignMe(cx) {
     if (!this.me?.name) return;
@@ -492,7 +617,7 @@ export default class Jira extends View {
           if (!t.ok) { this.formError = t.error; return; }
         }
         // Another Jira: forget the old one's issues, open issue and filters, so nothing asks the new site for them.
-        if (url.url !== this.jira.settings.baseUrl) { Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW))); this.projectStatuses = new Map(); this.moved = new Map(); this.connected = false; setShared(BADGE_KEY, null); }
+        if (url.url !== this.jira.settings.baseUrl) { this.clearView(); this.connected = false; setShared(BADGE_KEY, null); }
         const settings = { ...this.jira.settings, baseUrl: url.url, transport: this.transportChoice,
           startTask: this.taskInput.value(), caFile: this.caInput.value().trim() };
         const s = await saveSettings(io, this.site, settings, this.jira.settingsText ?? undefined);
@@ -514,10 +639,19 @@ export default class Jira extends View {
       const r = await clearToken(this.io(), this.site);
       if (!r.ok) this.formError = r.error;
       await this.load();
-      Object.assign(this, JSON.parse(JSON.stringify(CLEARED_VIEW)), { connected: false, problem: null, paused: false, projectStatuses: new Map(), moved: new Map() });
+      this.clearView();
+      Object.assign(this, { connected: false, problem: null, paused: false });
       setShared(BADGE_KEY, null);
       cx.notify();
     });
+  }
+
+  // A new Jira address, or Disconnect: the old site's issues (every tab's list and count), open issue and filters are
+  // forgotten. CLEARED_VIEW's list fields live in the tabs' states now, so they go with those.
+  clearView() {
+    const { rows: _r, total: _t, fetchedAt: _f, listProblem: _p, ...view } = JSON.parse(JSON.stringify(CLEARED_VIEW));
+    Object.assign(this, view, { states: new Map(), counts: new Map(), countsAt: undefined, projectStatuses: new Map() });
+    this.searchInput.set_value("");
   }
 
   useCurl(cx) {
@@ -571,6 +705,7 @@ export default class Jira extends View {
         .when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either.")))
         .child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}"))
         .child(this.preview(t))
+        .child(this.fileNote(t))
         .when(Boolean(this.formError), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.formError)))
         .child(h_flex().gap(8).pt(4)
           .child(this.button(t, "jira-save", this.formBusy ? "Connecting…" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy }))
@@ -580,9 +715,17 @@ export default class Jira extends View {
         .when(Boolean(this.jira?.problem), (el) => el.child(div().text_size(11.5).text_color(WARN).child(this.jira.problem))));
   }
 
+  // Where the tabs (views) and the other options are edited by hand, and each entry of that file the page skipped.
+  fileNote(t) {
+    const path = this.jira?.paths.settingsPath;
+    return v_flex().gap(3)
+      .when(Boolean(path), (el) => el.child(div().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`)))
+      .children(this.options.warnings.map((w) => div().text_size(11.5).text_color(WARN).child(`Skipped ${w}`)));
+  }
+
   // What Start work would send for the open issue (else the first one listed), as typed.
   preview(t) {
-    const issue = this.detail ?? this.rows[0];
+    const issue = this.detail ?? this.shown().rows[0];
     if (!issue) return div();
     const text = previewTask(issue, this.taskInput.value());
     return v_flex().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border)
@@ -604,16 +747,19 @@ export default class Jira extends View {
   }
 
   header(t) {
+    const tab = this.tab();
+    const list = this.state(tab.id);
     const f = this.filter();
     const filters = this.filters();
-    const view = shared(VIEW_KEY) === "board" ? "board" : "list";
+    const view = this.layout();
     const host = (() => { try { return new URL(this.jira.settings.baseUrl).host; } catch { return ""; } })();
     const item = (x) => h_flex().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
       .bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => { this.filterOpen = false; setShared(FILTER_KEY, x.id); this.moved = new Map(); this.selected = null; this.detail = null; cx.spawn(async (cx) => this.refresh(cx)); })
+      .on_click((_e, cx) => { this.filterOpen = false; setShared(FILTER_KEY, x.id); list.moved = new Map(); this.selected = null; this.detail = null; cx.spawn(async (cx) => this.refresh(cx)); })
       .child(div().flex_1().min_w(0).truncate().child(x.name))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
-    const picker = Popover.new("jira-filter").open(this.filterOpen)
+    // The filter menu, on the tab that has one (All).
+    const picker = tab.filters && Popover.new("jira-filter").open(this.filterOpen)
       .on_open_change((open, cx) => { this.filterOpen = open; cx.notify(); })
       .trigger(h_flex().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border)
         .cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5)
@@ -621,7 +767,7 @@ export default class Jira extends View {
       .content(v_flex().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
         .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
     const seg = (value, label) => h_flex().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer()
-      .on_click(() => setShared(VIEW_KEY, value))
+      .on_click(() => setShared(LAYOUT_KEY(tab.id), value))
       .when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground))
       .when(view !== value, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover)))
       .child(label);
@@ -631,11 +777,11 @@ export default class Jira extends View {
     return h_flex().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border)
       .child(div().text_size(16).font_semibold().child("Jira"))
       .child(div().text_size(12).text_color(t.dim).max_w(180).truncate().child(host))
-      .child(picker)
+      .when(Boolean(picker), (el) => el.child(picker))
       .child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
         .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
       .child(div().flex_1())
-      .child(div().text_size(11.5).text_color(t.dim).child(this.listLoading ? "loading…" : this.fetchedAt ? `${countText(this.rows.length, this.total)} · updated ${ago(this.fetchedAt, Date.now())}` : ""))
+      .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? `${countText(list.rows.length, list.total)} · updated ${ago(list.fetchedAt, Date.now())}` : ""))
       .child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))
       .child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx) => this.reload(cx))))
       .child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
@@ -665,21 +811,31 @@ export default class Jira extends View {
   }
 
   more(t) {
-    if (!Number.isFinite(this.total) || this.rows.length >= this.total) return null;
-    return h_flex().px(16).py(10).child(this.button(t, "jira-more", `Load more (${this.total - this.rows.length} left)`,
-      (cx) => cx.spawn(async (cx) => this.refresh(cx, { more: true })), { enabled: !this.listLoading }));
+    const s = this.shown();
+    if (!Number.isFinite(s.total) || s.rows.length >= s.total) return null;
+    return h_flex().px(16).py(10).child(this.button(t, "jira-more", `Load more (${s.total - s.rows.length} left)`,
+      (cx) => cx.spawn(async (cx) => this.refresh(cx, { more: true })), { enabled: !s.loading }));
   }
 
+  // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type.
   listView(t) {
-    const groups = groupByCategory(this.shownRows());
+    const tab = this.tab();
+    const sections = sectionsFor(this.shownRows(), tab.group);
     const more = this.more(t);
-    return v_flex().id("jira-list").flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16)
-      .children(groups.flatMap((g) => [
-        h_flex().h(30).px(16).pt(8).gap(6).flex_none().items_center()
-          .child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
-          .child(div().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
-        ...g.rows.map((r, i) => this.row(t, r, i)),
-      ]))
+    const group = (g) => [
+      h_flex().h(30).px(16).pt(8).gap(6).flex_none().items_center()
+        .child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
+        .child(div().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
+      ...g.rows.map((r, i) => this.row(t, r, i)),
+    ];
+    const section = (sec) => [
+      ...(sec.title ? [h_flex().h(38).px(16).pt(14).gap(6).flex_none().items_center()
+        .child(div().text_size(13).font_semibold().text_color(t.foreground).child(sec.title))
+        .child(div().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : []),
+      ...sec.parts.flatMap(group),
+    ];
+    return v_flex().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16)
+      .children(sections.flatMap(section))
       .when(Boolean(more), (el) => el.child(more));
   }
 
@@ -729,7 +885,7 @@ export default class Jira extends View {
     return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0)
       .on_mouse_move((e, cx) => this.pointerMoved(e, cx))
       .on_mouse_up("left", (_e, cx) => this.released(cx))
-      .child(div().id("jira-board").flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column)))
+      .child(div().id(`jira-board-${this.tab().id}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).children(cols.map(column)))
       .when(Boolean(more), (el) => el.child(more))
       .when(Boolean(d), (el) => el.child(this.dragBar(t)))
       .when(Boolean(d?.at), (el) => el.child(div().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8)
@@ -886,13 +1042,16 @@ export default class Jira extends View {
         .child(div().text_size(14).child("Connecting to Jira…"))
         .child(div().text_size(12).text_color(t.dim).child(this.jira.settings.baseUrl)));
     }
-    const view = shared(VIEW_KEY) === "board" ? "board" : "list";
-    const body = this.listProblem
-      ? v_flex().flex_1().p(24).gap(6).child(div().text_size(13).text_color(t.blocked).child(this.listProblem.message)).child(div().text_size(12).text_color(t.dim).child(this.listProblem.hint))
-      : !this.rows.length && !this.listLoading
-        ? v_flex().flex_1().items_center().justify_center().text_color(t.dim).child(this.query ? `Nothing matches "${this.query}".` : "No issues in this filter.")
-        : view === "board" ? this.boardView(t) : this.listView(t);
+    const s = this.shown();
+    const message = (text) => v_flex().flex_1().items_center().justify_center().text_color(t.dim).child(text);
+    const body = s.listProblem
+      ? v_flex().flex_1().p(24).gap(6).child(div().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div().text_size(12).text_color(t.dim).child(s.listProblem.hint))
+      : !s.fetchedAt ? message("Loading…") // a tab shown for the first time
+        : !s.rows.length && !s.loading
+          ? message(s.query ? `Nothing matches "${s.query}".` : "No issues in this filter.")
+          : this.layout() === "board" ? this.boardView(t) : this.listView(t);
     return root.child(this.header(t))
+      .child(tabBar(this, t))
       // A plain flex row (h_flex centers vertically): the list, board and detail fill the height.
       .child(div().flex().flex_row().flex_1().min_h(0).child(body).when(Boolean(this.selected), (el) => el.child(this.detailView(t))));
   }

@@ -172,7 +172,7 @@ time, for the whole window (not per space or tab), so a page is never open twice
 
 ## Jira page
 
-`dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues and filters as a list or a
+`dock-jira` is a dock page for a self-hosted Jira (Server / Data Center): your issues in tabs, each a list or a
 board, an issue's detail beside them, quick actions, and **Start work**.
 
 - **Add it** on a PC in the Dock layout dialog (Pages section). It isn't in the shared config: it is company-specific.
@@ -180,7 +180,8 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   Tokens; Jira 8.14 or later). If you use the mcp-atlassian MCP, its `JIRA_URL` and `JIRA_PERSONAL_TOKEN` are the
   two values. Paste any Jira link as the address: the page keeps only the base (a context path like `/jira` stays).
 - **Where things live** (per PC, never in git or the shared config):
-  - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters.
+  - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
+    own tabs (`views`).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -190,9 +191,31 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   so if the page says it can't reach Jira but Jira opens in your browser, the certificate is the likely cause:
   **Switch to curl**, which uses this computer's certificates (and a company CA file if you give one). The token
   reaches curl only through the private `-K` file, never on its command line.
-- **Filters**: Assigned to me (the default), Reported by me, Recently viewed (Jira's `issueHistory()`), then your Jira favourite
-  filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the settings file. The search box narrows the
-  filter (Enter). The choice and the List / Board view are remembered per PC.
+- **Tabs** under the header, each with its count: your own tabs (`views` in the settings file, in their order), then
+  **Mine** (assigned to you, unresolved) and **All** (everything assigned to you, resolved too: the place to find an
+  old ticket). Each tab keeps its own search text, rows and open issue while Herdr runs, so switching back finds it
+  as you left it; the shown tab, and each tab's List / Board choice, are remembered per PC. The shown tab refreshes as
+  below; the others' counts every 10 minutes (one count-only search each). A tab whose search Jira rejects shows `!`
+  and says why, while the other tabs carry on.
+- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"? }`. The id is lower-case
+  letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type first,
+  then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
+  For example:
+
+  ```json
+  "views": [
+    { "id": "sec", "name": "Security", "group": "type",
+      "jql": "project = SEC AND assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
+    { "id": "bugs", "name": "Bugs",
+      "jql": "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved ORDER BY priority DESC" }
+  ]
+  ```
+
+  The page reads the file again when it changes (within 30 seconds, no restart), and Settings shows where it is and
+  any entry it skipped, and why.
+- **Filters** (on the All tab): All my issues (the default), Assigned to me, Reported by me, Recently viewed (Jira's
+  `issueHistory()`), then your Jira favourite filters, then any listed under `filters` (`[{ "name", "jql" }]`) in the
+  settings file. The search box narrows the tab's search (Enter). The choice is remembered per PC.
 - **List** groups by To do / In progress / Done; **Board** has one column per status of the workflows of the projects
   on it (asked once per project, `GET /project/{key}/statuses`), empty ones too, in Jira's own order. The columns
   share the width; past 240px each, the board scrolls sideways.
@@ -214,12 +237,13 @@ board, an issue's detail beside them, quick actions, and **Start work**.
   anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
   description could try to steer the agent. Use it only for issues from people you trust, or leave it out and let
   your skill fetch the issue.
-- **Refresh**: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your open issues),
-  and no sooner than 5 minutes after a failure. A rejected token stops the polling (and clears the badge) until you
-  press **Connect again** or **Try again**. The refresh button reconnects at once. A new address forgets the old
-  site's issues.
+- **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden (for the Pages badge: your
+  open issues), and no sooner than 5 minutes after a failure. A rejected token stops the polling (and clears the
+  badge) until you press **Connect again** or **Try again**. The refresh button reconnects at once. A new address
+  forgets the old site's issues.
 - **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start` can be bound in
-  `keys.json`.
+  `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-mine`,
+  `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
   `mock-token`) with 30 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.

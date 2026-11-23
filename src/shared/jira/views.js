@@ -2,6 +2,7 @@
 // rows are split into sections, and the count written on a tab.
 import { BUILTIN_FILTERS } from "./jql.js";
 import { groupByCategory } from "./model.js";
+import { HIDDEN_EVERY_MS } from "./page.js";
 
 // What the All tab searches: everything assigned to me, resolved or not.
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
@@ -60,3 +61,20 @@ export function tabCountText({ total, problem } = {}) {
   if (!Number.isFinite(total)) return "";
   return total > 99 ? "99+" : String(total);
 }
+
+// The tabs whose counts are due: every searching tab but the shown one (its own search counts it), once
+// HIDDEN_EVERY_MS has passed since the last round, and at once when there was none.
+export function countsDue(tabs, shownId, lastAt, now) {
+  if (Number.isFinite(lastAt) && now - lastAt < HIDDEN_EVERY_MS) return [];
+  return tabs.filter((t) => t.id !== shownId && t.kind === "search");
+}
+
+// A tab's List / Board: its own choice, else the one the page had before tabs, else the list.
+export function tabLayout(own, before) {
+  const pick = own === "list" || own === "board" ? own : before;
+  return pick === "board" ? "board" : "list";
+}
+
+// The filter menu on a tab with `filters` (All): the tab's own search first ("All my issues", or the name of a view
+// that replaced it), then `list` (filterList's).
+export const tabFilters = (tab, list) => [{ id: tab.id, name: tab.jql === ALL_JQL ? "All my issues" : tab.name, jql: tab.jql, source: "builtin" }, ...list];
