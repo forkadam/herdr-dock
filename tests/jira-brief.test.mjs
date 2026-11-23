@@ -54,19 +54,26 @@ test("changedSearches: only well-formed issue keys go into key in (...)", () => 
   assert.equal(changedSearches({ since: 5, parentKeys: ["WEB-1) OR (project = X", "x y-1"] }).length, 1);
 });
 
-test("historyPlan: fetch only new or changed issues", () => {
+test("historyPlan: fetch only new or changed issues, each once", () => {
   const cache = new Map([["WEB-1", { updated: "t1", issue: {} }], ["WEB-2", { updated: "t2", issue: {} }], ["WEB-9", { updated: "t9", issue: {} }]]);
   const p = historyPlan([{ key: "WEB-1", updated: "t1" }, { key: "WEB-2", updated: "t2b" }, { key: "WEB-3", updated: "t3" }], cache);
   assert.deepEqual(p, { stale: ["WEB-2", "WEB-3"], keep: ["WEB-1"] }); // WEB-9 left the window
   assert.deepEqual(historyPlan([], cache), { stale: [], keep: [] });
+  // an issue found by two searches (yours, and a parent of yours) is planned once, in the order first found
+  const twice = historyPlan([{ key: "WEB-3", updated: "t3" }, { key: "WEB-1", updated: "t1" }, { key: "WEB-3", updated: "t3" }, { key: "WEB-1", updated: "t1" }], cache);
+  assert.deepEqual(twice, { stale: ["WEB-3"], keep: ["WEB-1"] });
 });
 
-test("keySearches: chunks of 50 well-formed keys", () => {
+test("keySearches: chunks of 50 well-formed keys, each key once", () => {
   const keys = Array.from({ length: 120 }, (_, i) => `WEB-${i}`);
   const q = keySearches([...keys, "WEB-1", "bad key)"]);
   assert.equal(q.length, 3);
   assert.ok(q[0].startsWith("key in (WEB-0,WEB-1,"));
   assert.ok(q[2].startsWith("key in (WEB-100,"));
+  assert.ok(q.every((s) => !s.includes("bad key")), "a malformed key is left out of every chunk");
+  const searched = q.flatMap((s) => s.match(/^key in \((.*)\)$/)[1].split(","));
+  assert.equal(searched.length, 120); // the repeated WEB-1 is not searched twice
+  assert.deepEqual([...searched].sort(), [...keys].sort());
   assert.deepEqual(keySearches([]), []);
 });
 
