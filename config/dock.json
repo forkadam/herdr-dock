@@ -7,5 +7,6 @@
     "right":  { "size": 360, "hidden": true, "features": [ { "mod": "dock-pipelines" }, { "mod": "dock-notifications" }, { "mod": "dock-files" }, { "mod": "dock-changes" }, { "mod": "dock-render" } ] },
     "bottom": { "size": 28,  "features": [ { "mod": "dock-where" }, { "mod": "dock-limits" }, { "mod": "dock-warnings", "size": 210 }, { "mod": "dock-system", "size": 150 }, { "mod": "dock-attention", "size": 36 } ] }
   },
+  "browser": { "enabled": false, "chrome": "", "production": [], "handoffMinutes": 15 },
   "machines": {}
 }

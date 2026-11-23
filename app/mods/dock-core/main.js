@@ -1277,19 +1277,56 @@ function leftFeatureIds(merged) {
   return merged.regions.left.features.map((f, i) => blockId("left", i, f.mod));
 }
 
+// src/shared/browser/config.js
+var DEFAULT_BROWSER = { enabled: false, chrome: "", production: [], handoffMinutes: 15 };
+var isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+var HOST_PATTERN = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/;
+function checkBrowser(value, where = "browser") {
+  if (!isObj(value)) return `${where}: must be an object`;
+  for (const [k, v] of Object.entries(value)) {
+    const at = `${where}.${k}`;
+    if (k === "enabled") {
+      if (typeof v !== "boolean") return `${at}: must be true or false`;
+    } else if (k === "chrome") {
+      if (typeof v !== "string") return `${at}: must be a string`;
+    } else if (k === "handoffMinutes") {
+      if (!(Number.isInteger(v) && v > 0)) return `${at}: must be a positive integer`;
+    } else if (k === "production") {
+      if (!Array.isArray(v)) return `${at}: must be an array`;
+      for (let i = 0; i < v.length; i++) {
+        if (typeof v[i] !== "string" || !HOST_PATTERN.test(v[i])) return `${at}[${i}]: must be a host pattern like example.com or *.example.com`;
+      }
+    } else return `${at}: unknown setting`;
+  }
+  return null;
+}
+function browserOf(merged) {
+  return { ...DEFAULT_BROWSER, ...isObj(merged?.browser) ? merged.browser : {} };
+}
+function withBrowserFeature(regions, enabled) {
+  const out = {};
+  for (const [name, r] of Object.entries(regions)) {
+    out[name] = { ...r, features: enabled ? [...r.features] : r.features.filter((f) => f.mod !== "dock-browser") };
+  }
+  if (enabled && !Object.values(out).some((r) => r.features.some((f) => f.mod === "dock-browser"))) {
+    out.right.features.push({ mod: "dock-browser" });
+  }
+  return out;
+}
+
 // src/shared/config.js
 var REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
 var LEFT_MODES = ["expanded", "icons", "hidden"];
 var LEFT_ONLY = ["dock-header", "dock-footer", "dock-spaces", "dock-agents", "dock-git", "dock-quotas", "dock-pages"];
 var PAGE_ONLY = ["dock-overview", "dock-jira"];
 var NEEDS_CORE = "dock-core draws the left-panel toggle, runs Ctrl+Alt+B and shows config errors, so it must stay in a shown top bar";
-var isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+var isObj2 = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 function checkRegions(regions, where) {
-  if (!isObj(regions)) return `${where}: must be an object`;
+  if (!isObj2(regions)) return `${where}: must be an object`;
   for (const [name, r] of Object.entries(regions)) {
     const at = `${where}.${name}`;
     if (!REGION_NAMES.includes(name)) return `${at}: unknown region`;
-    if (!isObj(r)) return `${at}: must be an object`;
+    if (!isObj2(r)) return `${at}: must be an object`;
     if (name === "pages" && "size" in r) return `${at}.size: a page fills the work area, it has no size`;
     if (name === "pages" && r.hidden === true) return `${at}.hidden: pages can't be hidden; remove them instead`;
     if ("size" in r && !(Number.isInteger(r.size) && r.size > 0)) return `${at}.size: must be a positive integer`;
@@ -1304,11 +1341,11 @@ function checkRegions(regions, where) {
       for (let i = 0; i < r.features.length; i++) {
         const f = r.features[i];
         const fa = `${at}.features[${i}]`;
-        if (!isObj(f)) return `${fa}: must be an object`;
+        if (!isObj2(f)) return `${fa}: must be an object`;
         if (typeof f.mod !== "string" || f.mod === "") return `${fa}.mod: must be a non-empty string`;
         if ("size" in f && !(Number.isInteger(f.size) && f.size > 0)) return `${fa}.size: must be a positive integer`;
         if (name === "pages" && "size" in f) return `${fa}.size: a page fills the work area, it has no size`;
-        if ("props" in f && !isObj(f.props)) return `${fa}.props: must be an object`;
+        if ("props" in f && !isObj2(f.props)) return `${fa}.props: must be an object`;
         if ("drag" in f && typeof f.drag !== "boolean") return `${fa}.drag: must be true or false`;
         if (name !== "left" && LEFT_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.left`;
         if (name !== "pages" && PAGE_ONLY.includes(f.mod)) return `${fa}.mod: ${f.mod} can only be placed in regions.pages`;
@@ -1325,23 +1362,31 @@ function parseConfig(text) {
   } catch (e) {
     return { ok: false, error: `Invalid JSON: ${e.message}` };
   }
-  if (!isObj(c)) return { ok: false, error: "config: must be an object" };
+  if (!isObj2(c)) return { ok: false, error: "config: must be an object" };
   if (c.v !== 1) return { ok: false, error: `v: unsupported version ${JSON.stringify(c.v)} (expected 1)` };
   const err = checkRegions(c.regions ?? {}, "regions");
   if (err) return { ok: false, error: err };
   if (!Array.isArray(c.regions?.top?.features)) return { ok: false, error: `regions.top.features: must include dock-core: ${NEEDS_CORE}` };
+  if ("browser" in c) {
+    const be = checkBrowser(c.browser, "browser");
+    if (be) return { ok: false, error: be };
+  }
   if ("machines" in c) {
-    if (!isObj(c.machines)) return { ok: false, error: "machines: must be an object" };
+    if (!isObj2(c.machines)) return { ok: false, error: "machines: must be an object" };
     for (const [host, m] of Object.entries(c.machines)) {
-      if (!isObj(m)) return { ok: false, error: `machines.${host}: must be an object` };
+      if (!isObj2(m)) return { ok: false, error: `machines.${host}: must be an object` };
       const e = checkRegions(m.regions ?? {}, `machines.${host}.regions`);
       if (e) return { ok: false, error: e };
+      if ("browser" in m) {
+        const be = checkBrowser(m.browser, `machines.${host}.browser`);
+        if (be) return { ok: false, error: be };
+      }
     }
   }
   return { ok: true, config: c };
 }
 function deepMerge(base, over) {
-  if (!isObj(base) || !isObj(over)) return over;
+  if (!isObj2(base) || !isObj2(over)) return over;
   const out = { ...base };
   for (const [k, v] of Object.entries(over)) out[k] = k in base ? deepMerge(base[k], v) : v;
   return out;
@@ -1354,14 +1399,14 @@ function mergeForHost(config, hostname, local = null) {
   const { machines = {}, ...base } = config;
   const key = hostKey(machines, hostname);
   let merged = key ? deepMerge(base, machines[key]) : base;
-  if (local) merged = deepMerge(merged, { regions: local.regions ?? {} });
+  if (local) merged = deepMerge(merged, { regions: local.regions ?? {}, ..."browser" in local ? { browser: local.browser } : {} });
   const regions = {};
   for (const name of REGION_NAMES) {
     const r = merged.regions?.[name] ?? {};
     regions[name] = { ...r, features: r.features ?? [], hidden: r.hidden ?? false };
     if (name === "left") regions[name].mode = r.hidden === true ? "hidden" : r.mode ?? "expanded";
   }
-  return { ...merged, regions };
+  return { ...merged, regions: withBrowserFeature(regions, browserOf(merged).enabled) };
 }
 var LOCAL_REL = "herdr-dock/local.json";
 function parseLocal(text) {
@@ -1372,28 +1417,32 @@ function parseLocal(text) {
   } catch (e) {
     return { ok: false, error: `${LOCAL_REL}: Invalid JSON: ${e.message}` };
   }
-  if (!isObj(c)) return { ok: false, error: `${LOCAL_REL}: must be an object` };
+  if (!isObj2(c)) return { ok: false, error: `${LOCAL_REL}: must be an object` };
   if (c.v !== 1) return { ok: false, error: `${LOCAL_REL}: v: unsupported version ${JSON.stringify(c.v)} (expected 1)` };
   const regions = c.regions ?? {};
   const err = checkRegions(regions, "regions");
   if (err) return { ok: false, error: `${LOCAL_REL}: ${err}` };
+  if ("browser" in c) {
+    const be = checkBrowser(c.browser, "browser");
+    if (be) return { ok: false, error: `${LOCAL_REL}: ${be}` };
+  }
   return { ok: true, local: { ...c, regions } };
 }
 function mergeWithLocal(config, hostname, local) {
-  const ok = isObj(local) && local.v === 1 && !checkRegions(local.regions ?? {}, "regions");
+  const ok = isObj2(local) && local.v === 1 && !checkRegions(local.regions ?? {}, "regions") && !("browser" in local && checkBrowser(local.browser, "browser"));
   return mergeForHost(config, hostname, ok ? local : null);
 }
 function jsonEqual(a, b) {
   if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => jsonEqual(x, b[i]));
-  if (isObj(a)) {
-    if (!isObj(b)) return false;
+  if (isObj2(a)) {
+    if (!isObj2(b)) return false;
     const ka = Object.keys(a);
     return ka.length === Object.keys(b).length && ka.every((k) => k in b && jsonEqual(a[k], b[k]));
   }
   return a === b;
 }
 function withoutEmptyMachines(c) {
-  if (!isObj(c.machines) || Object.keys(c.machines).length) return c;
+  if (!isObj2(c.machines) || Object.keys(c.machines).length) return c;
   const { machines, ...rest } = c;
   return rest;
 }
@@ -1405,9 +1454,9 @@ function migrationPlan({ configText, host, localText, headText }) {
   } catch {
     return null;
   }
-  if (!isObj(c) || !isObj(c.machines)) return null;
+  if (!isObj2(c) || !isObj2(c.machines)) return null;
   const key = hostKey(c.machines, host);
-  if (key === void 0 || !isObj(c.machines[key])) return null;
+  if (key === void 0 || !isObj2(c.machines[key])) return null;
   const { [key]: section, ...others } = c.machines;
   const rest = { ...c };
   if (Object.keys(others).length) rest.machines = others;
@@ -1420,7 +1469,7 @@ function migrationPlan({ configText, host, localText, headText }) {
   }
   return {
     localText: JSON.stringify({ v: 1, regions: section.regions ?? {} }, null, 2) + "\n",
-    configText: isObj(head) && jsonEqual(rest, withoutEmptyMachines(head)) ? headText : JSON.stringify(rest, null, 2) + "\n"
+    configText: isObj2(head) && jsonEqual(rest, withoutEmptyMachines(head)) ? headText : JSON.stringify(rest, null, 2) + "\n"
   };
 }
 async function migrateLocal({ configPath, localPath, host, read, write, headText }) {
@@ -1653,15 +1702,15 @@ var HISTORY_KEY = "dock.notify.history";
 var CAP = 200;
 var BODY_MAX = 2e3;
 var cut = (s) => typeof s === "string" && s.length > BODY_MAX ? s.slice(0, BODY_MAX) + "\u2026" : s;
-var isObj2 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+var isObj3 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 var str = (v) => typeof v === "string" ? v : null;
 function actionOf(a) {
-  if (!isObj2(a) || typeof a.name !== "string") return null;
+  if (!isObj3(a) || typeof a.name !== "string") return null;
   return a.args === void 0 ? { name: a.name } : { name: a.name, args: a.args };
 }
 function itemOf(x) {
-  if (!isObj2(x) || typeof x.id !== "string") return null;
-  const needs = isObj2(x.needs) && (x.needs.kind === "agent" && typeof x.needs.terminal === "string" || x.needs.kind === "pipeline" && typeof x.needs.worktree === "string") ? x.needs : null;
+  if (!isObj3(x) || typeof x.id !== "string") return null;
+  const needs = isObj3(x.needs) && (x.needs.kind === "agent" && typeof x.needs.terminal === "string" || x.needs.kind === "pipeline" && typeof x.needs.worktree === "string") ? x.needs : null;
   return {
     id: x.id,
     at: Number.isFinite(x.at) ? x.at : 0,
@@ -1679,7 +1728,7 @@ function historyOf(raw) {
   return Array.isArray(raw) ? raw.map(itemOf).filter(Boolean) : [];
 }
 function needsOf(n) {
-  const name = isObj2(n) && isObj2(n.action) ? n.action.name : null;
+  const name = isObj3(n) && isObj3(n.action) ? n.action.name : null;
   if (typeof name !== "string") return null;
   if (name.startsWith("dock-core.")) {
     const c = parseGitCommand(name.slice("dock-core.".length));
@@ -1690,7 +1739,7 @@ function needsOf(n) {
   return null;
 }
 function addItem(list, n, now, id) {
-  const p = isObj2(n) ? n : {};
+  const p = isObj3(n) ? n : {};
   const out = [itemOf({ ...p, body: cut(p.body), id, at: now, read: false, needs: needsOf(p), resolved: false }), ...list];
   while (out.length > CAP) {
     const i = out.findLastIndex((x) => x.resolved);
@@ -1728,7 +1777,7 @@ function resolveItems(list, { agents: agents2, gitState } = {}) {
 
 // src/shared/notifycmd.js
 var NOTIFY_DIALOG = { mod: "dock-notifications", kind: "dialog", width: 520, height: 0.7 };
-var isObj3 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+var isObj4 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 function parseNotifyCommand(c) {
   if (typeof c !== "string" || !c.startsWith("notify.")) return null;
   const rest = c.slice(7);
@@ -1744,7 +1793,7 @@ function parseNotifyCommand(c) {
   } catch {
     return null;
   }
-  return isObj3(n) ? { cmd: "add", n } : null;
+  return isObj4(n) ? { cmd: "add", n } : null;
 }
 function applyNotifyCommand(list, cmd, now, newId) {
   switch (cmd?.cmd) {

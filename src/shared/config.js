@@ -1,5 +1,6 @@
 // Config parsing and per-host merge (pure; no Node built-ins).
 import { buildLayout } from "./layout.js";
+import { checkBrowser, browserOf, withBrowserFeature } from "./browser/config.js";
 
 // "pages": mods shown one at a time in place of the terminal (dock pages), listed by dock-pages in the left panel.
 export const REGION_NAMES = ["top", "left", "right", "bottom", "pages"];
@@ -74,12 +75,20 @@ export function parseConfig(text) {
   const err = checkRegions(c.regions ?? {}, "regions");
   if (err) return { ok: false, error: err };
   if (!Array.isArray(c.regions?.top?.features)) return { ok: false, error: `regions.top.features: must include dock-core: ${NEEDS_CORE}` };
+  if ("browser" in c) {
+    const be = checkBrowser(c.browser, "browser");
+    if (be) return { ok: false, error: be };
+  }
   if ("machines" in c) {
     if (!isObj(c.machines)) return { ok: false, error: "machines: must be an object" };
     for (const [host, m] of Object.entries(c.machines)) {
       if (!isObj(m)) return { ok: false, error: `machines.${host}: must be an object` };
       const e = checkRegions(m.regions ?? {}, `machines.${host}.regions`);
       if (e) return { ok: false, error: e };
+      if ("browser" in m) {
+        const be = checkBrowser(m.browser, `machines.${host}.browser`);
+        if (be) return { ok: false, error: be };
+      }
     }
   }
   return { ok: true, config: c };
@@ -103,7 +112,7 @@ export function mergeForHost(config, hostname, local = null) {
   const { machines = {}, ...base } = config;
   const key = hostKey(machines, hostname);
   let merged = key ? deepMerge(base, machines[key]) : base;
-  if (local) merged = deepMerge(merged, { regions: local.regions ?? {} });
+  if (local) merged = deepMerge(merged, { regions: local.regions ?? {}, ...("browser" in local ? { browser: local.browser } : {}) });
   const regions = {};
   for (const name of REGION_NAMES) {
     const r = merged.regions?.[name] ?? {};
@@ -111,11 +120,11 @@ export function mergeForHost(config, hostname, local = null) {
     // left.hidden: true is the hidden mode (the mode is what dock-core applies and cycles).
     if (name === "left") regions[name].mode = r.hidden === true ? "hidden" : (r.mode ?? "expanded");
   }
-  return { ...merged, regions };
+  return { ...merged, regions: withBrowserFeature(regions, browserOf(merged).enabled) };
 }
 
 // The per-PC local file, under the app home ($HERDR_APP_HOME or ~/.config/herdr-app).
-// Shape { v: 1, regions }, the same as a machines.<host> value. Never in git.
+// Shape { v: 1, regions, browser? }, the same as a machines.<host> value. Never in git.
 export const LOCAL_REL = "herdr-dock/local.json";
 
 // null text (no local file) is { ok: true, local: null }.
@@ -132,6 +141,10 @@ export function parseLocal(text) {
   const regions = c.regions ?? {};
   const err = checkRegions(regions, "regions");
   if (err) return { ok: false, error: `${LOCAL_REL}: ${err}` };
+  if ("browser" in c) {
+    const be = checkBrowser(c.browser, "browser");
+    if (be) return { ok: false, error: `${LOCAL_REL}: ${be}` };
+  }
   return { ok: true, local: { ...c, regions } };
 }
 
@@ -139,7 +152,7 @@ export function parseLocal(text) {
 // file with parseLocal first and pass null when it's missing or invalid; an invalid local
 // object handed in anyway is ignored, never merged.
 export function mergeWithLocal(config, hostname, local) {
-  const ok = isObj(local) && local.v === 1 && !checkRegions(local.regions ?? {}, "regions");
+  const ok = isObj(local) && local.v === 1 && !checkRegions(local.regions ?? {}, "regions") && !("browser" in local && checkBrowser(local.browser, "browser"));
   return mergeForHost(config, hostname, ok ? local : null);
 }
 
