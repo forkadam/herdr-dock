@@ -443,8 +443,8 @@ export default class Jira extends View {
     if (board != null) {
       let cached = true;
       if (fresh || sprintCacheDue(this.sprint.cachedAt, Date.now())) {
-        const got = await this.readSprints(c, board);
-        if (!live()) return;
+        const got = await this.readSprints(c, board, live);
+        if (!got || !live()) return;
         if (got.ok) this.sprint = { ...this.sprint, ...got.data };
         else if (fail(got.problem, onBoard)) { done(); return; } else cached = false;
       }
@@ -613,18 +613,24 @@ export default class Jira extends View {
   }
 
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
-  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint.
-  async readSprints(c, board) {
+  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint. Once
+  // `live()` is false (a newer refresh of Today started, or the page left this board) it stops before the next
+  // request, with null.
+  async readSprints(c, board, live) {
     const conf = await c.boardConfiguration(board);
+    if (!live()) return null;
     if (!conf.ok) return conf;
     const statuses = await c.statuses();
+    if (!live()) return null;
     if (!statuses.ok) return statuses;
     const sprints = await c.sprints(board, ["active", "future", "closed"]);
+    if (!live()) return null;
     if (!sprints.ok) return sprints;
     const active = sprints.data.filter((x) => x.state === "active");
     const mine = new Map();
     for (const a of active) {
       const n = await c.search(sprintMineJql(a.id), { maxResults: 0 });
+      if (!live()) return null;
       if (!n.ok) return n;
       mine.set(a.id, Number.isFinite(n.data?.total) ? n.data.total : 0);
     }
@@ -706,7 +712,9 @@ export default class Jira extends View {
     });
     if (this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
-    if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now() })) return;
+    // Not while the shown tab is still loading (Today's first load is many requests): a poll would start it over.
+    // ⟳ still does, on purpose.
+    if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now(), loading: this.shown().loading })) return;
     cx.spawn(async (cx) => {
       if (!this.connected && this.jira.settings.baseUrl && this.jira.token) await this.connect(cx);
       else await this.refresh(cx);

@@ -25,8 +25,10 @@ export function filterList(favourites, own) {
 export const pickFilter = (filters, id) => filters.find((f) => f.id === id) ?? filters[0];
 
 // Whether a poll is due: every 2 minutes while the page shows, every 10 while hidden (for the Pages badge); after a
-// failure no sooner than 5 minutes. A manual refresh doesn't ask.
-export function pollDue({ shown, lastAt, failed, now }) {
+// failure no sooner than 5 minutes; never while the shown tab is still `loading` (its first load has no `lastAt` yet,
+// and a poll then would start that load over and over). A manual refresh doesn't ask.
+export function pollDue({ shown, lastAt, failed, now, loading = false }) {
+  if (loading) return false;
   if (!Number.isFinite(lastAt)) return true;
   const every = failed ? Math.max(RETRY_AFTER_MS, shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS) : shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS;
   return now - lastAt >= every;

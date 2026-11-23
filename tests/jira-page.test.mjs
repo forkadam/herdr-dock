@@ -30,6 +30,18 @@ test("pollDue", () => {
   assert.equal(pollDue({ shown: true, lastAt: now - RETRY_AFTER_MS, failed: true, now }), true);
 });
 
+test("pollDue: never while the shown tab is still loading, its first load (never polled) included", () => {
+  const now = 1e9;
+  assert.equal(pollDue({ shown: true, lastAt: undefined, loading: true, now }), false); // Today's first load: no poll on top
+  assert.equal(pollDue({ shown: false, lastAt: undefined, loading: true, now }), false);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS, loading: true, now }), false);
+  assert.equal(pollDue({ shown: true, lastAt: now - RETRY_AFTER_MS, failed: true, loading: true, now }), false);
+  // Loaded (or left out): as before.
+  assert.equal(pollDue({ shown: true, lastAt: undefined, loading: false, now }), true);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS, loading: false, now }), true);
+  assert.equal(pollDue({ shown: true, lastAt: now - SHOWN_EVERY_MS + 1, loading: false, now }), false);
+});
+
 test("pageState", () => {
   const ok = { settings: { baseUrl: "https://j" }, token: "t" };
   assert.equal(pageState({ settings: { baseUrl: "" }, token: "t" }), "setup");

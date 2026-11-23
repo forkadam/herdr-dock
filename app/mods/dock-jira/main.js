@@ -705,7 +705,8 @@ function filterList(favourites, own) {
   return out;
 }
 var pickFilter = (filters, id) => filters.find((f) => f.id === id) ?? filters[0];
-function pollDue({ shown, lastAt, failed, now }) {
+function pollDue({ shown, lastAt, failed, now, loading = false }) {
+  if (loading) return false;
   if (!Number.isFinite(lastAt)) return true;
   const every = failed ? Math.max(RETRY_AFTER_MS, shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS) : shown ? SHOWN_EVERY_MS : HIDDEN_EVERY_MS;
   return now - lastAt >= every;
@@ -1917,8 +1918,8 @@ var Jira = class extends View {
     if (board != null) {
       let cached = true;
       if (fresh || sprintCacheDue(this.sprint.cachedAt, Date.now())) {
-        const got = await this.readSprints(c, board);
-        if (!live()) return;
+        const got = await this.readSprints(c, board, live);
+        if (!got || !live()) return;
         if (got.ok) this.sprint = { ...this.sprint, ...got.data };
         else if (fail(got.problem, onBoard)) {
           done();
@@ -2106,18 +2107,24 @@ var Jira = class extends View {
     showTerminal();
   }
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
-  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint.
-  async readSprints(c, board) {
+  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint. Once
+  // `live()` is false (a newer refresh of Today started, or the page left this board) it stops before the next
+  // request, with null.
+  async readSprints(c, board, live) {
     const conf = await c.boardConfiguration(board);
+    if (!live()) return null;
     if (!conf.ok) return conf;
     const statuses = await c.statuses();
+    if (!live()) return null;
     if (!statuses.ok) return statuses;
     const sprints = await c.sprints(board, ["active", "future", "closed"]);
+    if (!live()) return null;
     if (!sprints.ok) return sprints;
     const active = sprints.data.filter((x) => x.state === "active");
     const mine = /* @__PURE__ */ new Map();
     for (const a of active) {
       const n = await c.search(sprintMineJql(a.id), { maxResults: 0 });
+      if (!live()) return null;
       if (!n.ok) return n;
       mine.set(a.id, Number.isFinite(n.data?.total) ? n.data.total : 0);
     }
@@ -2205,7 +2212,7 @@ var Jira = class extends View {
     });
     if (this.checkingNow || this.paused) return;
     const shown = pageShown(MOD);
-    if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now() })) return;
+    if (!pollDue({ shown, lastAt: this.lastPollAt, failed: this.pollFailed, now: Date.now(), loading: this.shown().loading })) return;
     cx.spawn(async (cx2) => {
       if (!this.connected && this.jira.settings.baseUrl && this.jira.token) await this.connect(cx2);
       else await this.refresh(cx2);
