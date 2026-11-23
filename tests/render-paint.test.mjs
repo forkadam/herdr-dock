@@ -127,3 +127,24 @@ test("styledIds: a classed node after an unspaced open link (--- or -.-) is the 
   assert.deepEqual(ids("my-node:::x --- B"), ["my-node"]);
   assert.deepEqual(ids("A --- my-node:::x"), ["my-node"]);
 });
+
+test("paintDiagram: a stick-figure actor's name takes its colour too (its group holds a nested <g>)", () => {
+  const src = "sequenceDiagram\n  actor U as User\n  participant S\n  U->>S: hi";
+  const out = paintDiagram(draw(src), src, THEME);
+  assert.match(out, new RegExp(`<text\\b[^>]*fill="${pal[0]}"[^>]*>User</text>`));
+});
+
+test("paintDiagram: with one palette colour, a chart's series keep beautiful-mermaid's colours", () => {
+  const one = { background: "#101010", foreground: "#eeeeee", muted: "#888888", border: "#3f4147", accent: "#7aa2f7", dark: true };
+  const src = "xychart-beta\n  x-axis [a, b, c]\n  bar [3, 5, 2]\n  line [1, 4, 3]";
+  const out = paintDiagram(draw(src), src, one);
+  assert.ok(tagsWith(out, "xychart-line").every((a) => !a.style), "lines unstyled");
+  assert.ok(tagsWith(out, "xychart-bar").every((a) => !a.style), "bars unstyled");
+});
+
+test("paintDiagram: in an all-negative bar chart the bar of largest magnitude takes the accent", () => {
+  const src = "xychart-beta\n  x-axis [a, b, c]\n  bar [-10, -100, -5]";
+  const bars = tagsWith(paintDiagram(draw(src), src, THEME), "xychart-bar").filter((a) => a["data-value"] !== undefined);
+  assert.match(bars.find((b) => b["data-value"] === "-100").style, new RegExp(`stroke:${THEME.accent}`));
+  assert.match(bars.find((b) => b["data-value"] === "-10").style, new RegExp(`stroke:${THEME.muted}`));
+});

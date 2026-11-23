@@ -97356,7 +97356,7 @@ var BAR_TINT = 0.35;
 var LABEL_SIZE = 12;
 var LABEL_GAP = 6;
 var MIN_CONTRAST = 3;
-var NODE_GROUP = /(<g class="(?:node|class-node|entity|actor)" data-id="([^"]*)"[^>]*>)([\s\S]*?)(<\/g>)/g;
+var NODE_OPEN = /<g class="(?:node|class-node|entity|actor)" data-id="([^"]*)"[^>]*>/g;
 function mermaidColors(t) {
   return {
     bg: t.background,
@@ -97439,12 +97439,33 @@ function styledIds(source) {
 var unxml = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 var escText = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 var px = (n) => Math.round(n * 100) / 100;
+function replaceNodeGroups(svg, fn) {
+  let out2 = "", at = 0;
+  for (const m of svg.matchAll(NODE_OPEN)) {
+    if (m.index < at) continue;
+    const bodyStart = m.index + m[0].length;
+    const tags = /<g\b|<\/g>/g;
+    tags.lastIndex = bodyStart;
+    let depth = 1, close = -1, t;
+    while (t = tags.exec(svg)) {
+      if (t[0] !== "</g>") depth++;
+      else if (--depth === 0) {
+        close = t.index;
+        break;
+      }
+    }
+    if (close < 0) break;
+    out2 += svg.slice(at, m.index) + fn(m[0], m[1], svg.slice(bodyStart, close), "</g>");
+    at = close + "</g>".length;
+  }
+  return out2 + svg.slice(at);
+}
 function paintNodes(svg, palette, styled) {
   if (!palette.length || styled.all) return svg;
   const colourOf = /* @__PURE__ */ new Map();
-  return svg.replace(NODE_GROUP, (whole, open, rawId, body, close) => {
+  return replaceNodeGroups(svg, (open, rawId, body, close) => {
     const id = unxml(rawId);
-    if (/^_(start|end)/.test(id) || styled.ids.has(id)) return whole;
+    if (/^_(start|end)/.test(id) || styled.ids.has(id)) return open + body + close;
     if (!colourOf.has(id)) colourOf.set(id, palette[colourOf.size % palette.length]);
     const c = colourOf.get(id);
     const painted = body.replace(/(<(?:text|tspan)\b[^>]*?\bfill=")#[0-9a-f]{3,8}(")/gi, `$1${c}$2`).replace(/(<(?!text\b|tspan\b)[a-z]+\b[^>]*?\bfill=")(#[0-9a-f]{6}|#[0-9a-f]{3})(")/gi, (_m, a, fill, b) => `${a}${mix(c, TINT, fill)}${b}`).replace(/(\bstroke=")#[0-9a-f]{3,8}(")/gi, `$1${c}$2`);
@@ -97485,12 +97506,12 @@ function labelBars(svg, theme) {
   const bars = [...svg.matchAll(/<[a-z]+\b[^>]*>/g)].map((m) => m[0]).filter((tag) => classesOf(tag).includes("xychart-bar") && attrOf(tag, "data-value") !== void 0);
   if (!bars.length) return svg;
   const values = bars.map((tag) => Number(attrOf(tag, "data-value")));
-  const max = Math.max(...values.filter(Number.isFinite));
+  const highlight = values.reduce((best, v, i) => Math.abs(v) > Math.abs(values[best]) ? i : best, 0);
   const labels = [];
   let out2 = svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
     const i = bars.indexOf(tag);
     if (i < 0) return tag;
-    const c = values[i] === max ? accent : muted;
+    const c = i === highlight ? accent : muted;
     const box = barBox(tag);
     if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) throw new Error("bar without a box");
     const y = values[i] < 0 ? box.bottom + LABEL_GAP + LABEL_SIZE : box.top - LABEL_GAP;
@@ -97522,8 +97543,9 @@ function paintDiagram(svg, source, theme) {
     const src = String(source ?? "");
     if (/^\s*xychart(-beta)?\b/m.test(src)) {
       const series = [...src.matchAll(/^\s*(bar|line)\b/gm)].map((m) => m[1]);
-      if (series.length >= 2) out2 = paintSeries(out2, palette, t);
-      else if (series[0] === "bar" && !/^\s*xychart(-beta)?\s+horizontal/m.test(src)) out2 = labelBars(out2, t);
+      if (series.length >= 2) {
+        if (palette.length >= 2) out2 = paintSeries(out2, palette, t);
+      } else if (series[0] === "bar" && !/^\s*xychart(-beta)?\s+horizontal/m.test(src)) out2 = labelBars(out2, t);
     }
     if (!/<svg\b/.test(out2) || /var\(|color-mix|<foreignObject/i.test(out2)) return svg;
     return out2;
