@@ -104,6 +104,14 @@ export function startWork(issue, template) {
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
 }
 
+// The Herdr command a tab's button runs: a tab named after the button's label, running Claude, whose first message is
+// its `task` (a typed "\n" is a line break, as in Start work's template; no placeholders: it isn't about one issue).
+// Null without a button.
+export function tabButtonWork(button) {
+  if (!button) return null;
+  return { command: "tab.new", args: { name: button.label, argv: ["claude"], task: button.task.replace(/\\n/g, "\n") } };
+}
+
 // The template Start work sends for this issue: the `start` of the first action rule that matches it, else the
 // fallback (the settings' own Start-work message, which may be empty: startTask then uses its default).
 export const startTemplate = (rules, issue, fallback) => matchAction(rules, issue).start ?? fallback;

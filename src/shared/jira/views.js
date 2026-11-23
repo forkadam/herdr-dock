@@ -7,21 +7,23 @@ import { HIDDEN_EVERY_MS } from "./page.js";
 // What the All tab searches: everything assigned to me, resolved or not.
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
 
-// Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|null, filters: boolean }.
+// Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|null, filters: boolean,
+// button: { label, task }|null }.
 // `filters`: whether the tab has the filter menu (All: it searches the filter picked there, tabFilters).
-const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false };
-const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false };
-const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true };
+// `button`: the one button the tab's header carries, which opens Claude with `task` (tabButtonWork); only a view gives one.
+const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null };
+const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null };
+const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null };
 
-const fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false });
+const fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null });
 
 // The tabs, left to right: Today (when `today`), the user's views, Mine, All. A view with the id `mine` or `all`
-// replaces that built-in's name, jql and group where the built-in stands; the built-in keeps its `filters`.
+// replaces that built-in's name, jql, group and button where the built-in stands; the built-in keeps its `filters`.
 export function tabList(views, { today } = {}) {
   const own = (id) => views.find((v) => v.id === id);
   const builtin = (tab) => {
     const v = own(tab.id);
-    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group } : tab;
+    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null } : tab;
   };
   return [
     ...(today ? [TODAY] : []),

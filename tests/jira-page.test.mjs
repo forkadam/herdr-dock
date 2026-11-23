@@ -307,7 +307,7 @@ test("todayFailure: Today hidden (the badge's refresh), only a rejected or forbi
 });
 
 // ---- Start and Finish per flow ----
-import { finishWork, startTemplate } from "../src/shared/jira/page.js";
+import { finishWork, startTemplate, tabButtonWork } from "../src/shared/jira/page.js";
 
 const FLOW_RULES = [
   { project: "SEC", type: "Bug", start: "/triage {key}", finish: "/close-bug {key}" },
@@ -349,4 +349,10 @@ test("finishWork: a Claude tab named '<key> finish' with the matched finish mess
   assert.equal(finishWork(null, FLOW_RULES), null);
   // The same placeholders as Start work, filled from the issue.
   assert.equal(finishWork(bug, [{ finish: "{key} {summary} {type} {description}" }]).args.task, "SEC-9 Leak Bug d");
+});
+
+test("tabButtonWork: a Claude tab named after the label", () => {
+  assert.deepEqual(tabButtonWork({ label: "Triage all", task: "/triage\\nall of them" }),
+    { command: "tab.new", args: { name: "Triage all", argv: ["claude"], task: "/triage\nall of them" } });
+  assert.equal(tabButtonWork(null), null);
 });
