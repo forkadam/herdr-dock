@@ -12,10 +12,12 @@ const count = (s, sub) => s.split(sub).length - 1;
 test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied once; nothing else changes", () => {
   const src = readFileSync(DIST, "utf8");
   const out = patchMermaidIds(src);
-  assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW), 13);
-  assert.equal(count(src, NODE_ID) - count(out, NODE_ID), 13);
+  // The line rewrites may hold these texts themselves (a class name read as [\w-]+): count what they add.
+  const added = (text) => LINE_REWRITES.reduce((n, { from, to }) => n + count(to, text) - count(from, text), 0);
+  assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW) - added(NODE_ID_BEFORE_ARROW), 13);
+  assert.equal(count(src, NODE_ID) - count(out, NODE_ID) + added(NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 5);
+  assert.equal(LINE_REWRITES.length, 7);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -172,4 +174,37 @@ test("the built Render helper: a long closing operator in a text arrow takes its
     assert.equal(segs.length, cases.length);
     segs.forEach((s, i) => assert.equal(edgeStyle(readFileSync(join(h, s.svg), "utf8")), cases[i][1], cases[i][0]));
   } finally { rmSync(h, { recursive: true, force: true }); }
+});
+
+// ---- beautiful-mermaid's limits: each source drawn by the built helper, its SVG back ----
+const drawAll = (sources) => {
+  const h = mkdtempSync(join(tmpdir(), "render-limits-"));
+  try {
+    const f = join(h, "all.md");
+    writeFileSync(f, sources.map((s) => "```mermaid\n" + s + "\n```").join("\n\n"));
+    const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
+    assert.equal(r.status, 0, r.stderr);
+    const segs = JSON.parse(r.stdout).segments;
+    assert.equal(segs.length, sources.length);
+    return segs.map((s) => { assert.ok(s.svg, s.error); return readFileSync(join(h, s.svg), "utf8"); });
+  } finally { rmSync(h, { recursive: true, force: true }); }
+};
+const edgeTags = (svg) => [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map((m) => m[0]);
+
+test("the built Render helper: hyphenated class names apply; dotted text links -. text -.-> and -. text .- parse", () => {
+  const [assigned, shorthand, dottedArrow, dottedLine] = drawAll([
+    "flowchart LR\n  A-->B\n  classDef my-cls fill:#ff0000\n  class B my-cls",
+    "flowchart LR\n  A:::my-cls-->B\n  classDef my-cls fill:#ff0000",
+    "flowchart LR\n  A-. text -.->B",
+    "flowchart LR\n  A-. text .-B"]);
+  assert.match(assigned, /<g class="node" data-id="B"[^>]*>\s*<[a-z]+[^>]*fill="#ff0000"/);
+  assert.ok(!/data-id="classDef"/.test(assigned), "no stray classDef node");
+  assert.match(shorthand, /<g class="node" data-id="A"[^>]*>\s*<[a-z]+[^>]*fill="#ff0000"/);
+  for (const [svg, end] of [[dottedArrow, "true"], [dottedLine, "false"]]) {
+    assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2);
+    const e = edgeTags(svg);
+    assert.equal(e.length, 1);
+    assert.match(e[0], /data-style="dotted"/);
+    assert.match(e[0], new RegExp(`data-arrow-end="${end}"`));
+  }
 });

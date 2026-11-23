@@ -20,12 +20,19 @@ export const CLASS_SHORTHAND_BEFORE_ARROW = "var CLASS_SHORTHAND_REGEX = /^:::(\
 export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|([^|]*)\\|)?/;";
 export const ARROW_WIDE = "var ARROW_REGEX = /^(<)?(-{2,}>|-\\.+->|={2,}>|-{3,}|-\\.+-|={3,})(?:\\|([^|]*)\\|)?/;";
 export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-->|---|\\.\\->|-\\.\\-|==>|===)/;";
-export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+-|={2,}>|={3,})/;";
+// A dotted text link also closes with -.-> (tried before -.-) or .- (no head).
+export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+->|-\\.+-|\\.+-|={2,}>|={3,})/;";
 export const ARROW_STYLE_HEAD = "function arrowStyleFromOp(op) {";
 export const ARROW_STYLE_NORMALISE = '\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
 // A text arrow's closing operator (`-- text ..->`) is looked up the same way: normalised to its short form first.
 export const TEXT_ARROW_STYLE_HEAD = "function textArrowStyleFromOps(openOp, closeOp) {";
-export const TEXT_ARROW_STYLE_NORMALISE = '\n  closeOp = closeOp.replace(/^\\.+->$/, ".->").replace(/^-\\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
+export const TEXT_ARROW_STYLE_NORMALISE = '\n  closeOp = closeOp.replace(/^\\.+->$/, ".->").replace(/^-\\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===").replace(/^-\\.+->$/, ".->").replace(/^\\.+-$/, "-.-");';
+// Class names may hold hyphens (classDef my-cls, class B my-cls): beautiful-mermaid read them as \w+, so such a line
+// was drawn as a stray node `classDef` and the class never applied.
+export const CLASS_DEF = "line.match(/^classDef\\s+(\\w+)\\s+(.+)$/);";
+export const CLASS_DEF_WIDE = "line.match(/^classDef\\s+([\\w-]+)\\s+(.+)$/);";
+export const CLASS_ASSIGN = "line.match(/^class\\s+([\\w,-]+)\\s+(\\w+)$/);";
+export const CLASS_ASSIGN_WIDE = "line.match(/^class\\s+([\\w,-]+)\\s+([\\w-]+)$/);";
 // Each must be in the source exactly once, or the build fails.
 export const LINE_REWRITES = [
   { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
@@ -33,6 +40,8 @@ export const LINE_REWRITES = [
   { name: "text arrow pattern", from: TEXT_ARROW, to: TEXT_ARROW_WIDE },
   { name: "arrow style", from: ARROW_STYLE_HEAD, to: ARROW_STYLE_HEAD + ARROW_STYLE_NORMALISE },
   { name: "text arrow style", from: TEXT_ARROW_STYLE_HEAD, to: TEXT_ARROW_STYLE_HEAD + TEXT_ARROW_STYLE_NORMALISE },
+  { name: "classDef name", from: CLASS_DEF, to: CLASS_DEF_WIDE },
+  { name: "class assignment", from: CLASS_ASSIGN, to: CLASS_ASSIGN_WIDE },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.

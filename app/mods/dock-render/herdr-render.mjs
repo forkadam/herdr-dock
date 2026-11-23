@@ -92845,7 +92845,7 @@ function parseFlowchart(lines) {
   const subgraphStack = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    const classDefMatch = line.match(/^classDef\s+(\w+)\s+(.+)$/);
+    const classDefMatch = line.match(/^classDef\s+([\w-]+)\s+(.+)$/);
     if (classDefMatch) {
       const name = classDefMatch[1];
       const propsStr = classDefMatch[2];
@@ -92853,7 +92853,7 @@ function parseFlowchart(lines) {
       graph.classDefs.set(name, props);
       continue;
     }
-    const classAssignMatch = line.match(/^class\s+([\w,-]+)\s+(\w+)$/);
+    const classAssignMatch = line.match(/^class\s+([\w,-]+)\s+([\w-]+)$/);
     if (classAssignMatch) {
       const nodeIds = classAssignMatch[1].split(",").map((s) => s.trim());
       const className = classAssignMatch[2];
@@ -93074,7 +93074,7 @@ function parseStyleProps(propsStr) {
   return props;
 }
 var ARROW_REGEX = /^(<)?(-{2,}>|-\.+->|={2,}>|-{3,}|-\.+-|={3,})(?:\|([^|]*)\|)?/;
-var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|-\.+-|={2,}>|={3,})/;
+var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|-\.+->|-\.+-|\.+-|={2,}>|={3,})/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
   { regex: /^((?:\w|-(?![-.>]))+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
@@ -93228,7 +93228,7 @@ function arrowStyleFromOp(op) {
   return "solid";
 }
 function textArrowStyleFromOps(openOp, closeOp) {
-  closeOp = closeOp.replace(/^\.+->$/, ".->").replace(/^-\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");
+  closeOp = closeOp.replace(/^\.+->$/, ".->").replace(/^-\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===").replace(/^-\.+->$/, ".->").replace(/^\.+-$/, "-.-");
   if (openOp === "-." || closeOp === ".->" || closeOp === "-.-") return "dotted";
   if (openOp === "==" || closeOp === "==>" || closeOp === "===") return "thick";
   return "solid";
