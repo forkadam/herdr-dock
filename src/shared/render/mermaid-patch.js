@@ -13,8 +13,24 @@ const END = "var CLASS_SHORTHAND_REGEX";
 const EXPECTED = 13; // the 12 node shapes and the bare id
 export const CLASS_SHORTHAND = "var CLASS_SHORTHAND_REGEX = /^:::([\\w][\\w-]*)/;";
 export const CLASS_SHORTHAND_BEFORE_ARROW = "var CLASS_SHORTHAND_REGEX = /^:::(\\w(?:\\w|-(?![-.>]))*)/;";
+// Long links (A---->B, A-..->B, A====>B, A-- text --->B): beautiful-mermaid's arrow patterns know fixed lengths only, so
+// a longer link left a stray node and no edge; its style lookup compares exact operators, so a long one is normalised
+// to its short form first. A long link is drawn at the usual length.
+export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|([^|]*)\\|)?/;";
+export const ARROW_WIDE = "var ARROW_REGEX = /^(<)?(-{2,}>|-\\.+->|={2,}>|-{3,}|-\\.+-|={3,})(?:\\|([^|]*)\\|)?/;";
+export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-->|---|\\.\\->|-\\.\\-|==>|===)/;";
+export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+-|={2,}>|={3,})/;";
+export const ARROW_STYLE_HEAD = "function arrowStyleFromOp(op) {";
+export const ARROW_STYLE_NORMALISE = '\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
+// Each must be in the source exactly once, or the build fails.
+export const LINE_REWRITES = [
+  { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
+  { name: "arrow pattern", from: ARROW, to: ARROW_WIDE },
+  { name: "text arrow pattern", from: TEXT_ARROW, to: TEXT_ARROW_WIDE },
+  { name: "arrow style", from: ARROW_STYLE_HEAD, to: ARROW_STYLE_HEAD + ARROW_STYLE_NORMALISE },
+];
 
-// beautiful-mermaid's dist/index.js -> the same with its node-id patterns and its class shorthand arrow-aware.
+// beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.
 export function patchMermaidIds(source) {
   const start = source.indexOf(START);
   const end = start < 0 ? -1 : source.indexOf(END, start);
@@ -22,7 +38,10 @@ export function patchMermaidIds(source) {
   const region = source.slice(start, end);
   const n = region.split(NODE_ID).length - 1;
   if (n !== EXPECTED) throw new Error(`beautiful-mermaid has ${n} node-id patterns, expected ${EXPECTED}`);
-  const out = source.slice(0, start) + region.replaceAll(NODE_ID, NODE_ID_BEFORE_ARROW) + source.slice(end);
-  if (out.split(CLASS_SHORTHAND).length !== 2) throw new Error("beautiful-mermaid's class shorthand pattern changed");
-  return out.replace(CLASS_SHORTHAND, CLASS_SHORTHAND_BEFORE_ARROW);
+  let out = source.slice(0, start) + region.replaceAll(NODE_ID, NODE_ID_BEFORE_ARROW) + source.slice(end);
+  for (const { name, from, to } of LINE_REWRITES) {
+    if (out.split(from).length !== 2) throw new Error(`beautiful-mermaid's ${name} changed`);
+    out = out.replace(from, () => to);
+  }
+  return out;
 }

@@ -93073,8 +93073,8 @@ function parseStyleProps(propsStr) {
   }
   return props;
 }
-var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\.-|===)(?:\|([^|]*)\|)?/;
-var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-->|---|\.\->|-\.\-|==>|===)/;
+var ARROW_REGEX = /^(<)?(-{2,}>|-\.+->|={2,}>|-{3,}|-\.+-|={3,})(?:\|([^|]*)\|)?/;
+var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|-\.+-|={2,}>|={3,})/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
   { regex: /^((?:\w|-(?![-.>]))+)\(\(\((.+?)\)\)\)/, shape: "doublecircle" },
@@ -93220,6 +93220,7 @@ function trackInSubgraph(subgraphStack, nodeId) {
   }
 }
 function arrowStyleFromOp(op) {
+  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\.+->$/, "-.->").replace(/^-\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");
   if (op === "-.->") return "dotted";
   if (op === "-.-") return "dotted";
   if (op === "==>") return "thick";
@@ -97325,7 +97326,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 6;
+var LOOK_VERSION = 7;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;
