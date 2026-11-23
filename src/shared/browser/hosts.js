@@ -6,6 +6,7 @@ export function hostOf(url) {
   if (!m) return null;
   let h = m[1].slice(m[1].lastIndexOf("@") + 1);
   h = h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : h.replace(/:\d*$/, "");
+  h = h.replace(/\.$/, "");
   return h ? h.toLowerCase() : null;
 }
 

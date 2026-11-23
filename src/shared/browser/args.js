@@ -45,7 +45,8 @@ const FLAGS = ["--cdp", "--session", "--profile", "--state", "--auto-connect", "
 
 // The reason an agent-browser command is refused, or null.
 export function refused(args) {
-  if (REASONS[args[0]]) return REASONS[args[0]];
+  const word = args.find((a) => !a.startsWith("-"));
+  if (REASONS[word]) return REASONS[word];
   for (const a of args) {
     const flag = a.startsWith("--") ? a.split("=")[0] : a;
     if (FLAGS.includes(flag)) return `${flag} is not allowed: this browser is managed by herdr-dock`;

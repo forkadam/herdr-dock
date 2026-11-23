@@ -45,6 +45,7 @@ test("isProduction", () => {
   assert.equal(isProduction("http://10.0.0.5", p), null);
   assert.equal(isProduction("http://localhost:3000", ["localhost"]), "localhost");
   assert.equal(isProduction("about:blank", p), null);
+  assert.equal(isProduction("https://a.corp.com./x", p), "a.corp.com");
   assert.equal(isProduction("https://app.example.com", ["APP.Example.com"]), "app.example.com");
 });
 test("parseBrowse", () => {
@@ -69,6 +70,8 @@ test("refused", () => {
   assert.match(refused(["--cdp", "9222", "snapshot"]), /--cdp/);
   assert.match(refused(["snapshot", "--session", "x"]), /--session/);
   assert.match(refused(["open", "-p", "x"]), /-p/);
+  assert.match(refused(["--json", "close"]), /close/);
+  assert.match(refused(["--headed", "connect", "9222"]), /connect/);
   assert.equal(refused(["tab", "close"]), null);
   assert.equal(refused(["snapshot", "-i"]), null);
 });
