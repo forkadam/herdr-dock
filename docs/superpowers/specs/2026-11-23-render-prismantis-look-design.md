@@ -92,9 +92,11 @@ flowchart LR
   background (`mix()` from `flatten.js`). Edges, messages and arrowheads keep today's colours. State start and end
   markers (`_start`, `_end`, and numbered ones such as `_start2` in composite states) keep theirs.
 - **Colours the author set are kept** (my call). beautiful-mermaid draws `classDef` / `class` and `style` colours, and
-  Claude uses them for meaning (failed, done, new). A node whose fill, stroke or label differs from the defaults
-  `colors()` gives is left exactly as drawn, even when only one of them was set, and takes no palette colour, so the
-  painted nodes' colours stay distinct and in order.
+  Claude uses them for meaning (failed, done, new). A node the source styles (`style X`, `class X name` in a flowchart
+  or state diagram, `cssClass "X" name`, `X:::name`) is left exactly as drawn, even when only one colour was set, and
+  takes no palette colour, so the painted nodes' colours stay distinct and in order; `classDef default` leaves every
+  node as drawn. It is read from the source, not by comparing colours: class boxes and ER entities are drawn with
+  shades beautiful-mermaid derives itself, which no list of defaults would match.
 - **Palette** (my call): `ansi4, ansi6, ansi2, ansi5, ansi3, accent`, duplicates dropped. Red is left out: it reads as
   an error. A colour too close to the background to read is dropped (the builder picks the threshold); if none is left,
   everything takes `accent`.
