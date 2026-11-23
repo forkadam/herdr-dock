@@ -16,12 +16,12 @@ import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, finishWork, needsDetail,
-  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, withComment,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, todayFailure, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { columnDrop, laneCells, pickSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
-import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList } from "../../shared/jira/views.js";
+import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList, todayCount } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 import { briefView, changeView } from "./brief-view.js";
@@ -43,7 +43,8 @@ const DETAIL_W = 420;
 // first be drawn before its settings are read. Enough for a few tabs' lists, boards and board columns.
 const SCROLL_POOL = 64;
 const WARN = "#d29922";
-// Problems that mean "can't talk to Jira at all" (the whole page says so), versus ones about one request.
+// Problems that mean "can't talk to Jira at all" (the whole page says so), versus ones about one request. Today's own
+// requests go by todayFailure instead.
 const PAGE_PROBLEMS = ["auth", "forbidden", "offline", "tls", "timeout", "server", "nocurl", "unknown"];
 const TYPE_COLOR = (t, type) => ({ Bug: t.blocked, Story: t.done, Epic: "#8b5cf6" })[type] ?? t.accent;
 // Today's sprint board with nothing read yet, for `board` (the settings' board id; null: none). `board` becomes
@@ -412,8 +413,9 @@ export default class Jira extends View {
   // sprint), and the brief's own searches (readBrief). Today shown, this is the page's poll (refresh() sends it here);
   // another tab shown, the badge's refresh every HIDDEN_EVERY_MS (refreshBriefHidden), which leaves the poll's timing
   // alone. Its newest call wins; an answer for a board or a site the page has left since is dropped. A failure that
-  // means Jira can't be reached takes the page (pageProblem; with Today not shown, only a rejected token: countFailure);
-  // any other is said where it belongs, on the board or in the brief, and the rest carries on.
+  // means Jira can't be reached with this token takes the page (todayFailure, then pageProblem); any other (a slow or
+  // failing search, anything from the agile API) is Today's own: said where it belongs, on the board or in the brief,
+  // and as "!" on Today's tab (updateBadge), and the rest carries on.
   async refreshToday(cx, { fresh = false } = {}) {
     if (!this.connected || !this.jira) return;
     const board = this.options.board;
@@ -422,10 +424,11 @@ export default class Jira extends View {
     const live = () => s.seq.accept(seq) && this.states.get("today") === s && this.options.board === board;
     const polled = this.tab().kind === "today";
     let failed = false;
-    // A failed request: true when it took the page (stop there), else `here` keeps it and Today carries on.
-    const fail = (problem, here) => {
+    // A failed request: true when it took the page (stop there), else `here` keeps it and Today carries on. `agile`:
+    // the request was one of Jira Software's (readSprints says which).
+    const fail = (problem, here, agile = false) => {
       failed = true;
-      if (polled ? this.pageProblem(problem) : countFailure(problem.kind) === "page" && this.pageProblem(problem)) return true;
+      if (todayFailure(problem.kind, { shown: polled, agile }) === "page" && this.pageProblem(problem)) return true;
       here(problem);
       return false;
     };
@@ -446,7 +449,7 @@ export default class Jira extends View {
         const got = await this.readSprints(c, board, live);
         if (!got || !live()) return;
         if (got.ok) this.sprint = { ...this.sprint, ...got.data };
-        else if (fail(got.problem, onBoard)) { done(); return; } else cached = false;
+        else if (fail(got.problem, onBoard, got.agile)) { done(); return; } else cached = false;
       }
       if (cached) {
         const sp = this.sprint;
@@ -555,13 +558,14 @@ export default class Jira extends View {
     this.updateBadge();
   }
 
-  // The Pages badge and Today's count: the brief's unread items (briefBadge; none: no badge and no count). Nothing
-  // until the brief was first built.
+  // The Pages badge and Today's count (todayCount): the brief's unread items (briefBadge; none: no badge and no number),
+  // and "!" while Today's board or brief has a problem of its own. No number and no badge until the brief was first
+  // built. The badge is published only while connected and not paused: once a rejected token cleared it, neither a
+  // key that opens an issue (its read marks) nor a brief that ends late puts it back.
   updateBadge() {
-    if (!this.brief.at) return;
-    const badge = briefBadge(this.brief, this.marks());
-    setShared(BADGE_KEY, badge);
-    this.counts.set("today", { total: badge?.count });
+    const badge = this.brief.at ? briefBadge(this.brief, this.marks()) : null;
+    this.counts.set("today", todayCount(badge, [this.sprint.problem, this.brief.problem]));
+    if (this.brief.at && this.connected && !this.paused) setShared(BADGE_KEY, badge);
   }
 
   markAllRead(cx) {
@@ -613,19 +617,20 @@ export default class Jira extends View {
   }
 
   // What changes rarely on Today's board, for `board`: { ok, data: { board: { id, name }, columns, active, all,
-  // mine, current, cachedAt } }, or the first failure. One request at a time; one count per active sprint. Once
+  // mine, current, cachedAt } }, or the first failure (with `agile: true` when it came from Jira Software's agile
+  // API: the board's configuration, its sprints). One request at a time; one count per active sprint. Once
   // `live()` is false (a newer refresh of Today started, or the page left this board) it stops before the next
   // request, with null.
   async readSprints(c, board, live) {
     const conf = await c.boardConfiguration(board);
     if (!live()) return null;
-    if (!conf.ok) return conf;
+    if (!conf.ok) return { ...conf, agile: true };
     const statuses = await c.statuses();
     if (!live()) return null;
     if (!statuses.ok) return statuses;
     const sprints = await c.sprints(board, ["active", "future", "closed"]);
     if (!live()) return null;
-    if (!sprints.ok) return sprints;
+    if (!sprints.ok) return { ...sprints, agile: true };
     const active = sprints.data.filter((x) => x.state === "active");
     const mine = new Map();
     for (const a of active) {

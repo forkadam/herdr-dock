@@ -62,6 +62,13 @@ export function tabCountText({ total, problem } = {}) {
   return total > 99 ? "99+" : String(total);
 }
 
+// Today's count (for tabCountText): the brief's unread items (`badge`, briefBadge's; null: none), with the first of
+// `problems` (its board's, then its brief's) while one stands, so its tab reads "!" as a tab whose search failed does.
+export function todayCount(badge, problems) {
+  const problem = (Array.isArray(problems) ? problems : []).find(Boolean);
+  return problem ? { total: badge?.count, problem } : { total: badge?.count };
+}
+
 // The tabs whose counts are due: every searching tab but the shown one (its own search counts it), once
 // HIDDEN_EVERY_MS has passed since the last round, and at once when there was none.
 export function countsDue(tabs, shownId, lastAt, now) {

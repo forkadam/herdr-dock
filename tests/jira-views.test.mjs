@@ -2,7 +2,7 @@
 // sections a tab's rows are split into, and the count on a tab.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ALL_JQL, pickTab, sectionsFor, stepTab, tabCountText, tabList } from "../src/shared/jira/views.js";
+import { ALL_JQL, pickTab, sectionsFor, stepTab, tabCountText, tabList, todayCount } from "../src/shared/jira/views.js";
 import { BUILTIN_FILTERS } from "../src/shared/jira/jql.js";
 
 const views = [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }, { id: "all", name: "Everything", jql: "assignee = currentUser()", group: null }];
@@ -85,6 +85,19 @@ test("tabCountText: the edges", () => {
   assert.equal(tabCountText({ problem: { kind: "auth" } }), "!");
   assert.equal(tabCountText({ total: 9, loading: true }), "9");
   assert.equal(tabCountText({ loading: true }), "");
+});
+
+test("todayCount: the brief's unread number, and '!' while Today's board or brief has a problem of its own", () => {
+  const timeout = { kind: "timeout", message: "Jira took too long to answer." };
+  const forbidden = { kind: "forbidden", message: "Jira says you don't have permission for this." };
+  assert.deepEqual(todayCount({ count: 3, tone: "info" }, []), { total: 3 });
+  assert.deepEqual(todayCount(null, [null, undefined]), { total: undefined });
+  assert.equal(tabCountText(todayCount(null, [])), "");
+  assert.deepEqual(todayCount({ count: 3, tone: "warn" }, [null, timeout]), { total: 3, problem: timeout });
+  assert.equal(tabCountText(todayCount({ count: 3, tone: "warn" }, [null, timeout])), "!");
+  assert.equal(todayCount(null, [forbidden, timeout]).problem, forbidden); // the board's first, then the brief's
+  assert.equal(tabCountText(todayCount(null, [forbidden])), "!");
+  assert.deepEqual(todayCount(undefined, undefined), { total: undefined });
 });
 
 // ---- Tabs on the page ----

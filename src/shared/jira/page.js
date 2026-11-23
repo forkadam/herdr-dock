@@ -131,6 +131,22 @@ export function afterProblem(kind) {
 // is what tells whether Jira can be reached at all.
 export const countFailure = (kind) => (kind === "auth" || kind === "forbidden" ? "page" : "tab");
 
+// Failures that mean Jira can't be talked to at all with this token, from this computer.
+const CONNECTION = ["auth", "forbidden", "offline", "tls", "nocurl"];
+
+// A failed request of Today's (its board or its brief): "page" when it takes the whole page (the problem view, which
+// hides the tabs), else "today": Today says it on its board or brief and as "!" on its tab, and the other tabs stay
+// usable. Shown, a connection-level failure takes the page (a rejected token, offline, an untrusted certificate, no
+// curl, and a forbidden answer from Jira's own REST API); hidden, only a rejected or forbidden token does (as a hidden
+// tab's count: countFailure). A slow or failing search (timeout, server, unknown) is Today's own, and so is any failure
+// of Jira Software's agile API (`agile`: boards and sprints), a 403 included: Jira without a Jira Software licence
+// forbids it while the token is fine.
+export function todayFailure(kind, { shown = false, agile = false } = {}) {
+  if (agile) return "today";
+  if (!shown) return countFailure(kind) === "page" ? "page" : "today";
+  return CONNECTION.includes(kind) ? "page" : "today";
+}
+
 // The Start-work message for a preview or a tooltip: as it will be sent, except that a list row's missing
 // description is named rather than shown empty (Start work fetches it).
 export function previewTask(issue, template) {

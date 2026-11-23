@@ -274,6 +274,29 @@ test("countFailure: only a rejected or forbidden token takes the page; anything 
   for (const kind of ["invalid", "notfound", "offline", "tls", "timeout", "server", "nocurl", "unknown"]) assert.equal(countFailure(kind), "tab", kind);
 });
 
+// ---- A failed request of Today's ----
+import { todayFailure } from "../src/shared/jira/page.js";
+
+test("todayFailure: Today shown, only a connection-level failure takes the page; a slow or failing search stays on Today", () => {
+  for (const kind of ["auth", "offline", "tls", "nocurl", "forbidden"]) assert.equal(todayFailure(kind, { shown: true }), "page", kind);
+  for (const kind of ["timeout", "server", "unknown", "invalid", "notfound"]) assert.equal(todayFailure(kind, { shown: true }), "today", kind);
+  assert.equal(todayFailure("forbidden", { shown: true, agile: false }), "page"); // Jira's own REST API: the token can't
+});
+
+test("todayFailure: any failure of the agile API (boards, sprints) is Today's own, a 403 without a Jira Software licence included", () => {
+  for (const kind of ["forbidden", "auth", "offline", "tls", "nocurl", "timeout", "server", "unknown", "notfound"]) {
+    assert.equal(todayFailure(kind, { shown: true, agile: true }), "today", kind);
+    assert.equal(todayFailure(kind, { shown: false, agile: true }), "today", `hidden ${kind}`);
+  }
+});
+
+test("todayFailure: Today hidden (the badge's refresh), only a rejected or forbidden token takes the page, as a hidden count", () => {
+  assert.equal(todayFailure("auth", { shown: false }), "page");
+  assert.equal(todayFailure("forbidden", { shown: false }), "page");
+  for (const kind of ["offline", "tls", "nocurl", "timeout", "server", "unknown", "invalid"]) assert.equal(todayFailure(kind, { shown: false }), "today", kind);
+  assert.equal(todayFailure("timeout"), "today"); // nothing said: hidden, not agile
+});
+
 // ---- Start and Finish per flow ----
 import { finishWork, startTemplate } from "../src/shared/jira/page.js";
 
