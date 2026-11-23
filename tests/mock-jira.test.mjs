@@ -528,12 +528,14 @@ test("history: of the mock user's Sprint 42 issues only the deliberate cases are
   assert.ok(mine.length >= 10);
   // Created after the sprint started: just the one issue made into it.
   assert.deepEqual(mine.filter((i) => Date.parse(i.fields.created) > start).map((i) => i.key), ["WEB-46"]);
-  // The rules the brief reads history by: a Sprint item after the start adding Sprint 42 to an empty `from` is added
-  // (a non-empty `from` is a carry-over), an assignee item to the mock user (its key) after the start is assigned.
+  // The rules the brief reads history by: a Sprint item after the start bringing in Sprint 42 is added, unless it keeps
+  // every sprint its `from` held (a carry-over); an assignee item to the mock user (its key) after the start is assigned.
   const me = (await call("/rest/api/2/myself")).data;
   const why = (i) => {
     const after = i.changelog.histories.filter((h) => Date.parse(h.created) > start).flatMap((h) => h.items);
-    if (after.some((x) => x.field === "Sprint" && x.from === "" && x.to.split(",").map((s) => s.trim()).includes("42"))) return "added";
+    const ids = (v) => String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const carried = (x) => ids(x.from).length > 0 && ids(x.from).every((id) => ids(x.to).includes(id));
+    if (after.some((x) => x.field === "Sprint" && ids(x.to).includes("42") && !ids(x.from).includes("42") && !carried(x))) return "added";
     if (Date.parse(i.fields.created) > start) return "created";
     if (after.some((x) => x.field === "assignee" && x.to === me.key)) return "assigned";
     return null;

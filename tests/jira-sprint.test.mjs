@@ -25,7 +25,7 @@ test("pickSprint: a tie goes to the earliest start; a sprint without a start com
 });
 
 test("seriesKey: the name with its last number replaced by #", () => {
-  assert.equal(seriesKey("Lapras Sprint 19"), "Lapras Sprint #");
+  assert.equal(seriesKey("Heron Sprint 3"), "Heron Sprint #");
   assert.equal(seriesKey("Planning"), null);
   assert.equal(seriesKey("Sprint 42 - Alpha 7"), "Sprint 42 - Alpha #", "only the last run of digits");
   assert.equal(seriesKey("Sprint 2024.15 "), "Sprint 2024.#", "trimmed");
@@ -37,7 +37,7 @@ test("sprintSeries: one series, newest first; no number falls back to sprints wi
   assert.deepEqual(sprintSeries(s42, [s41, s42, s43, otter], new Map()).map((s) => s.id), [43, 42, 41]);
   const plan = S(5, "Planning", "active", 2, 9); // starts before Sprint 42, so 42 is newer
   assert.deepEqual(sprintSeries(plan, [plan, s42, otter], new Map([[5, 2], [42, 1]])).map((s) => s.id), [42, 5]);
-  assert.equal(seriesKey("Lapras Sprint 19"), "Lapras Sprint #");
+  assert.equal(seriesKey("Heron Sprint 3"), "Heron Sprint #");
   assert.equal(seriesKey("Planning"), null);
 });
 

@@ -564,6 +564,11 @@ function changedItem(issue, { me, sinceMs, marks } = {}) {
   return { key: issue.key, summary: issue.fields?.summary ?? "", edits, before: edits[0].from, after: last.to, at: last.at };
 }
 var sprintIds = (text) => String(text ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+function addedTo(item, id) {
+  const from = sprintIds(item.from), to = sprintIds(item.to);
+  if (!to.includes(id) || from.includes(id)) return false;
+  return !(from.length && from.every((x) => to.includes(x)));
+}
 function newInSprintItem(issue, { sprint, me } = {}) {
   const start = sprint?.startMs;
   if (!Number.isFinite(start)) return null;
@@ -575,7 +580,7 @@ function newInSprintItem(issue, { sprint, me } = {}) {
     const time2 = timeOf(history?.created);
     if (!(time2 > start)) continue;
     for (const item of list(history?.items)) {
-      if (isField(item, "sprint") && sprintIds(item.to).includes(String(sprint.id)) && !sprintIds(item.from).length) latest("added", time2);
+      if (isField(item, "sprint") && addedTo(item, String(sprint.id))) latest("added", time2);
       else if (isField(item, "assignee") && isMe(item.to, me)) latest("assigned", time2);
     }
   }
@@ -1500,7 +1505,7 @@ var BADGE_KEY = `dock.page.badge.${MOD}`;
 var VIEW_KEY = "dock.jira.view";
 var TAB_KEY = "dock.jira.tab";
 var LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
-var FILTER_KEY = "dock.jira.filter";
+var FILTER_KEY = "dock.jira.filter.all";
 var READ_KEY = "dock.jira.read";
 var SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 var TICK_MS = 3e4;
@@ -1967,6 +1972,7 @@ var Jira = class extends View {
             problem: null,
             at: Date.now()
           };
+          cx.notify();
           if (!sp.current || shown?.id === sp.current.id) current = sp.current ? issues : [];
         } else if (fail(found.problem, onBoard)) {
           done();

@@ -8,7 +8,7 @@ import { HIDDEN_EVERY_MS } from "./page.js";
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
 
 // Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|null, filters: boolean }.
-// `filters`: whether the tab shows the filter bar (status, type and text) over its rows.
+// `filters`: whether the tab has the filter menu (All: it searches the filter picked there, tabFilters).
 const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false };
 const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false };
 const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true };

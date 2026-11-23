@@ -38,7 +38,7 @@ export function pickSprint(active, mineBySprint) {
   return sorted[0] ?? null;
 }
 
-// The sprint's series: its name with the last number as "#" ("Lapras Sprint 19" -> "Lapras Sprint #"); null when the
+// The sprint's series: its name with the last number as "#" ("Heron Sprint 3" -> "Heron Sprint #"); null when the
 // name has no number (a plain "Planning" sprint belongs to no series).
 export function seriesKey(name) {
   const text = String(name ?? "");

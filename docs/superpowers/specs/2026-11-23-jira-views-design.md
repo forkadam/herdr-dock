@@ -151,8 +151,9 @@ it opens the detail, as everywhere.
    - the parents of your unresolved sub-tasks (the user's example: CLDACC00-625, parent of CLDACC00-783/-784).
 2. **New in sprint** — your issues in the current sprint that **became yours in it after it started** (my call on
    the rule; "started" is the sprint's `startDate`, the moment it was started):
-   - its history adds this sprint after the start, **unless** the same `Sprint` item already held another sprint
-     (`fromString` not empty): that is a carry-over from the previous sprint closing, not new work, or
+   - its history adds this sprint after the start, **unless** the same `Sprint` item keeps every sprint it already
+     held (`41` → `41, 42`): that is a carry-over from the previous sprint closing, not new work (an issue moved from
+     another sprint into this one, a future one say, `43` → `42`, was added), or
    - it was created into this sprint after the start, or
    - it was already in the sprint and its history assigns it to you after the start (new to you, in the user's
      words "new added tasks").

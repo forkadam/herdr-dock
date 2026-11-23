@@ -33,7 +33,9 @@ const BADGE_KEY = `dock.page.badge.${MOD}`;
 const VIEW_KEY = "dock.jira.view"; // the List / Board choice before tabs: a tab without its own choice starts from it
 const TAB_KEY = "dock.jira.tab";
 const LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
-const FILTER_KEY = "dock.jira.filter";
+// The All tab's filter (its menu). A key of its own, not the one from before tabs (dock.jira.filter, picked when the
+// page was one list): All starts on All my issues.
+const FILTER_KEY = "dock.jira.filter.all";
 const READ_KEY = "dock.jira.read"; // the brief's read marks (brief.js): { [key]: { changed?, sprint?, bug? } }
 // Your unresolved issues, for the parents of your sub-tasks (the brief's Changed, and {mine} in Check against my work).
 const SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
@@ -468,6 +470,9 @@ export default class Jira extends View {
             ...this.sprint, shown: shown ?? null, picked: shown && shown.id !== sp.current?.id ? shown.id : null,
             rows: issues.map((i) => issueRow(i, base)), total: found.data?.total, problem: null, at: Date.now(),
           };
+          // Drawn now, not after the brief's searches: a card dropped on another column would otherwise sit in its
+          // old one until they end.
+          cx.notify();
           // A sprint picked in the menu isn't the current one: New in sprint keeps what it had.
           if (!sp.current || shown?.id === sp.current.id) current = sp.current ? issues : [];
         } else if (fail(found.problem, onBoard)) { done(); return; }

@@ -129,6 +129,7 @@ test("newInSprintItem: added, carried over, created, assigned", () => {
   const added = newInSprintItem(h(after, [{ field: "Sprint", from: "", to: "42" }]), { sprint, me });
   assert.deepEqual([added.why, added.sprintId], ["added", 42]);
   assert.equal(newInSprintItem(h(after, [{ field: "Sprint", from: "41", to: "41, 42" }]), { sprint, me }), null);
+  assert.equal(newInSprintItem(h(after, [{ field: "Sprint", from: "43", to: "42" }]), { sprint, me }).why, "added"); // moved from a future sprint
   assert.equal(newInSprintItem(h(after, [{ field: "assignee", to: me }]), { sprint, me }).why, "assigned");
   assert.equal(newInSprintItem(h(after, [], after), { sprint, me }).why, "created");
   assert.equal(newInSprintItem(h(before, [{ field: "Sprint", from: "", to: "42" }]), { sprint, me }), null); // before the start
@@ -156,6 +157,22 @@ test("newInSprintItem: sprint ids are a comma list compared as text; other sprin
   assert.equal(newInSprintItem(mk([{ field: "assignee", to: "ana" }]), { sprint, me }), null);
   assert.equal(newInSprintItem(mk([{ field: "Sprint", from: "", to: "42" }]), { sprint: { id: 42, startMs: null }, me }), null);
   assert.equal(newInSprintItem({ key: "WEB-1", fields: { summary: "s" } }, { sprint, me }), null);
+});
+
+test("newInSprintItem: a carry-over keeps every sprint it held; a Sprint item that drops one moved the issue here", () => {
+  const sprint = { id: 42, startMs: Date.parse("2026-11-16T00:00:00Z") };
+  const mk = (from, to) => ({ key: "WEB-1", fields: { summary: "s", created: "2026-11-01T00:00:00.000+0000" },
+    changelog: { histories: [{ author: { name: "lead" }, created: "2026-11-18T00:00:00.000+0000", items: [{ field: "Sprint", from, to }] }] } });
+  const why = (from, to) => newInSprintItem(mk(from, to), { sprint, me })?.why ?? null;
+  assert.equal(why("41", "41, 42"), null); // the previous sprint closed: carried over
+  assert.equal(why("40, 41", "40,41,42"), null);
+  assert.equal(why("43", "42"), "added"); // moved from a future sprint into this one
+  assert.equal(why("41, 43", "41, 42"), "added"); // 43 left for 42
+  assert.equal(why("41", "42"), "added");
+  assert.equal(why("", "42"), "added");
+  assert.equal(why("42", "42, 43"), null); // it was already in this sprint
+  assert.equal(why("41, 42", "42"), null);
+  assert.equal(why("43", "44"), null); // not this sprint
 });
 
 test("newInSprintItem: a carry-over does not hide a later assignment to you; added wins over assigned", () => {

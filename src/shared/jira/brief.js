@@ -114,9 +114,17 @@ export function changedItem(issue, { me, sinceMs, marks } = {}) {
 // A comma-separated sprint id list as text ids: "41, 42" -> ["41", "42"].
 const sprintIds = (text) => String(text ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-// How an issue came to be new in the sprint after it started, or null: its history added the sprint to nothing
-// (`added`; a Sprint item that already held another sprint is the previous sprint closing, a carry-over), it was
-// `created` after the start, or its history `assigned` it to you after the start (to your key, as Jira Server writes
+// A Sprint history item that brought the issue into `id` (a text id): `id` is in `to` and wasn't in `from`, and it
+// isn't a carry-over, which keeps every sprint `from` held ("41" -> "41, 42": the previous sprint closing). An issue
+// moved from another sprint ("43" -> "42", a future one, say) was added.
+function addedTo(item, id) {
+  const from = sprintIds(item.from), to = sprintIds(item.to);
+  if (!to.includes(id) || from.includes(id)) return false;
+  return !(from.length && from.every((x) => to.includes(x)));
+}
+
+// How an issue came to be new in the sprint after it started, or null: its history `added` it to the sprint (addedTo:
+// not a carry-over), it was `created` after the start, or its history `assigned` it to you after the start (to your key, as Jira Server writes
 // it, or your name). When several apply, the first of those wins, and `at` is the latest time of that reason.
 export function newInSprintItem(issue, { sprint, me } = {}) {
   const start = sprint?.startMs;
@@ -127,7 +135,7 @@ export function newInSprintItem(issue, { sprint, me } = {}) {
     const time = timeOf(history?.created);
     if (!(time > start)) continue;
     for (const item of list(history?.items)) {
-      if (isField(item, "sprint") && sprintIds(item.to).includes(String(sprint.id)) && !sprintIds(item.from).length) latest("added", time);
+      if (isField(item, "sprint") && addedTo(item, String(sprint.id))) latest("added", time);
       else if (isField(item, "assignee") && isMe(item.to, me)) latest("assigned", time);
     }
   }
