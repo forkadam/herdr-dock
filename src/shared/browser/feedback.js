@@ -11,7 +11,8 @@ const PICTURE_DAYS = 1; // a sent picture is kept this long for the agent to ope
 const R = "[redacted]";
 // key=value or key: value where the key names a credential, with any prefix or suffix (aws_secret_access_key,
 // X-Api-Key). "auth" doesn't count in "author"/"authority"; a value that is "Bearer …" is left to BEARER.
-const PAIR = /([\w-]*(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]*)(\s*[=:]\s*)(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
+// The runs around the name are bounded (and the input capped at REDACT_MAX), so it runs in linear time on any input.
+const PAIR = /([\w-]{0,40}(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]{0,40})(\s{0,8}[=:]\s{0,8})(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
 const BEARER = /\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]+)/gi;
 const AWS_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
@@ -38,9 +39,11 @@ const authValue = (k, v) => (/^bearer$/i.test(k) ? v.length >= 8 && classes(v) >
 // Values that look like secrets replaced with [redacted]: key=value pairs whose key names a credential, JWTs,
 // Bearer/Basic/Token values, AWS access key ids, runs of 32 or more hex characters, and long runs that look random
 // (40 or more with "/" allowed, or 32 or more base64url).
+export const REDACT_MAX = 4000; // characters kept of one input (the page URL, an element's text, a note)
 export function redact(s) {
   let out = String(s ?? "");
   if (!out) return "";
+  if (out.length > REDACT_MAX) out = `${out.slice(0, REDACT_MAX)}…`;
   out = out.replace(BEARER, (m, k, sp, v) => (authValue(k, v) ? `${k}${sp}${R}` : m));
   out = out.replace(PAIR, (m, k, sep, v) => (v === R ? m : `${k}${sep}${R}`));
   out = out.replace(JWT, R);

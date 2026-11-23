@@ -935,7 +935,7 @@ var NOTES_MAX = 20;
 var TEXT_MAX = 200;
 var PICTURE_DAYS = 1;
 var R = "[redacted]";
-var PAIR = /([\w-]*(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]*)(\s*[=:]\s*)(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
+var PAIR = /([\w-]{0,40}(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]{0,40})(\s{0,8}[=:]\s{0,8})(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
 var JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
 var BEARER = /\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]+)/gi;
 var AWS_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
@@ -952,9 +952,11 @@ function switches(m) {
 }
 var looksRandom = (m, min) => mixed(m) && switches(m) >= min && m.split(/[-_]/).some((p) => p.length >= 16);
 var authValue = (k, v) => /^bearer$/i.test(k) ? v.length >= 8 && classes(v) >= 2 : v.length >= 16 && classes(v) >= 2;
+var REDACT_MAX = 4e3;
 function redact(s) {
   let out = String(s ?? "");
   if (!out) return "";
+  if (out.length > REDACT_MAX) out = `${out.slice(0, REDACT_MAX)}\u2026`;
   out = out.replace(BEARER, (m, k, sp, v) => authValue(k, v) ? `${k}${sp}${R}` : m);
   out = out.replace(PAIR, (m, k, sep, v) => v === R ? m : `${k}${sep}${R}`);
   out = out.replace(JWT, R);

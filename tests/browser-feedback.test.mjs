@@ -217,3 +217,16 @@ test("shouldReinstall: only when the script is gone and the record still says th
   assert.equal(shouldReinstall(false, { ...free, takeover: { reason: "person", since: 1 } }, "notes"), false);
   assert.equal(shouldReinstall(false, null, "notes"), false);
 });
+
+test("redact: linear on hostile input, and capped at 4000 characters", () => {
+  for (const unit of ["token", "api_key_"]) {
+    const s = unit.repeat(Math.ceil(20_000 / unit.length)).slice(0, 20_000);
+    const t0 = performance.now();
+    redact(s);
+    assert.ok(performance.now() - t0 < 200, `${unit}: ${performance.now() - t0} ms`);
+  }
+  const long = "a ".repeat(3000);
+  const out = redact(long);
+  assert.equal(out, long.slice(0, 4000) + "…");
+  assert.equal(redact("x".repeat(4000)), "x".repeat(4000));
+});
