@@ -784,6 +784,10 @@ function startWork(issue, template) {
   if (!issue?.key) return null;
   return { command: "tab.new", args: { name: issue.key, argv: ["claude"], task: startTask(template, issue) } };
 }
+function tabButtonWork(button) {
+  if (!button) return null;
+  return { command: "tab.new", args: { name: button.label, argv: ["claude"], task: button.task.replace(/\\n/g, "\n") } };
+}
 var startTemplate = (rules, issue, fallback) => matchAction(rules, issue).start ?? fallback;
 function finishWork(issue, rules) {
   const finish = matchAction(rules, issue).finish;
@@ -1055,7 +1059,12 @@ function jiraOptions(settings) {
       if (v.group === "type") group = "type";
       else warnings.push(`${at}: group "${v.group}" is not "type"`);
     }
-    views.push({ id: v.id, name, jql, group });
+    let button = null;
+    if (v.button != null) {
+      if (isObj(v.button) && nonEmpty(v.button.label) && nonEmpty(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
+      else warnings.push(`${at}: button needs a label and a task`);
+    }
+    views.push({ id: v.id, name, jql, group, button });
   }
   const actions = [];
   if (s.actions != null && !Array.isArray(s.actions)) warnings.push("actions: not a list");
@@ -1311,15 +1320,15 @@ async function lockFiles(io, paths) {
 
 // src/shared/jira/views.js
 var ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
-var TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false };
-var MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false };
-var ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true };
-var fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false });
+var TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null };
+var MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null };
+var ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null };
+var fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null });
 function tabList(views, { today } = {}) {
   const own = (id) => views.find((v) => v.id === id);
   const builtin = (tab) => {
     const v = own(tab.id);
-    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group } : tab;
+    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null } : tab;
   };
   return [
     ...today ? [TODAY] : [],
@@ -2653,6 +2662,20 @@ var Jira = class extends View {
     }
     showTerminal();
   }
+  // A tab's button (a view's `button` setting): a Claude tab named after its label, with its task as the first message,
+  // then the terminal, as Start work does. No Jira request, so it needs no connection.
+  tabButton(button, cx) {
+    const c = tabButtonWork(button);
+    if (!c) return;
+    try {
+      run(c.command, c.args);
+    } catch (e) {
+      this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` };
+      cx.notify();
+      return;
+    }
+    showTerminal();
+  }
   openUrl(url) {
     const c = openUrlCommand(window()?.platform, url);
     exec(c.command, c.args).catch((e) => console.log(`dock-jira: open failed: ${e}`));
@@ -2887,7 +2910,7 @@ var Jira = class extends View {
     }).trigger(h_flex4().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div4().max_w(220).truncate().child(f.name)).child(svg3("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex3().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
     const seg = (value, label) => h_flex4().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer().on_click(() => setShared2(LAYOUT_KEY(tab.id), value)).when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).child(label);
     const icon = (id, path, tip, onClick) => div4().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(7).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => onClick(cx)).child(svg3(path).size(14));
-    return h_flex4().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border).child(div4().text_size(16).font_semibold().child("Jira")).child(div4().text_size(12).text_color(t.dim).max_w(180).truncate().child(host)).when(Boolean(picker), (el) => el.child(picker)).when(!today, (el) => el.child(h_flex4().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background).child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))).child(div4().flex_1()).child(div4().text_size(11.5).text_color(t.dim).child(list3.loading ? "loading\u2026" : list3.fetchedAt ? [countText(shownCount, total), `updated ${ago(list3.fetchedAt, Date.now())}`].filter(Boolean).join(" \xB7 ") : "")).when(!today, (el) => el.child(h_flex4().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))).child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx2) => this.reload(cx2)))).child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
+    return h_flex4().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border).child(div4().text_size(16).font_semibold().child("Jira")).child(div4().text_size(12).text_color(t.dim).max_w(180).truncate().child(host)).when(Boolean(picker), (el) => el.child(picker)).when(!today, (el) => el.child(h_flex4().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background).child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))).when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { tip: tabButtonWork(tab.button).args.task }))).child(div4().flex_1()).child(div4().text_size(11.5).text_color(t.dim).child(list3.loading ? "loading\u2026" : list3.fetchedAt ? [countText(shownCount, total), `updated ${ago(list3.fetchedAt, Date.now())}`].filter(Boolean).join(" \xB7 ") : "")).when(!today, (el) => el.child(h_flex4().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))).child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx2) => this.reload(cx2)))).child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
   }
   typeMark(t, r) {
     return div4().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");

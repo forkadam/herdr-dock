@@ -16,7 +16,7 @@ import { ROW_FIELDS, withSearch } from "../../shared/jira/jql.js";
 import { ago, boardColumns, issueDetail, issueRow, latestOnly } from "../../shared/jira/model.js";
 import {
   CLEARED_VIEW, PAGE_SIZE, actionOutcome, afterProblem, canAssignToMe, commentReady, countFailure, countText, filterList, finishWork, keyColumnWidth, needsDetail,
-  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, todayFailure, withComment,
+  boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, tabButtonWork, todayFailure, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
@@ -1089,6 +1089,15 @@ export default class Jira extends View {
     showTerminal();
   }
 
+  // A tab's button (a view's `button` setting): a Claude tab named after its label, with its task as the first message,
+  // then the terminal, as Start work does. No Jira request, so it needs no connection.
+  tabButton(button, cx) {
+    const c = tabButtonWork(button);
+    if (!c) return;
+    try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; cx.notify(); return; }
+    showTerminal();
+  }
+
   openUrl(url) {
     const c = openUrlCommand(window()?.platform, url);
     exec(c.command, c.args).catch((e) => console.log(`dock-jira: open failed: ${e}`));
@@ -1355,6 +1364,7 @@ export default class Jira extends View {
       .when(Boolean(picker), (el) => el.child(picker))
       .when(!today, (el) => el.child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
         .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground))))
+      .when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { tip: tabButtonWork(tab.button).args.task })))
       .child(div().flex_1())
       .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? [countText(shownCount, total), `updated ${ago(list.fetchedAt, Date.now())}`].filter(Boolean).join(" · ") : ""))
       .when(!today, (el) => el.child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board"))))

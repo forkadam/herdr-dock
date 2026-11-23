@@ -147,7 +147,8 @@ function parseRule(a) {
 }
 
 // Settings -> { board, highPriorities, briefBugs, views, actions, checkTask, warnings }. A bad view or rule is skipped
-// with one warning (its place in the file counted from 0), so the rest of the file still works.
+// with one warning (its place in the file counted from 0), so the rest of the file still works. A view's optional
+// `button` ({ label, task }: opens Claude with `task`) that lacks either is dropped with a warning; the view is kept.
 export function jiraOptions(settings) {
   const s = isObj(settings) ? settings : {};
   const warnings = [];
@@ -180,7 +181,12 @@ export function jiraOptions(settings) {
       if (v.group === "type") group = "type";
       else warnings.push(`${at}: group "${v.group}" is not "type"`);
     }
-    views.push({ id: v.id, name, jql, group });
+    let button = null;
+    if (v.button != null) {
+      if (isObj(v.button) && nonEmpty(v.button.label) && nonEmpty(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
+      else warnings.push(`${at}: button needs a label and a task`);
+    }
+    views.push({ id: v.id, name, jql, group, button });
   }
 
   const actions = [];

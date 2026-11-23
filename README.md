@@ -265,15 +265,19 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     future sprints (and how many of yours each active sprint holds) once an hour, or when you press refresh. The
     closed sprints are read apart: when the sprint menu first opens after each of those reads, or right away when no
     sprint is active. Requests still go one at a time, so a refresh waits for a read of them that is running.
-- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"? }`. The id is lower-case
-  letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type first,
-  then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
-  For example:
+- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"?, "button"? }`. The id is
+  lower-case letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type
+  first, then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
+  `"button": { "label", "task" }` puts one button in that tab's header, right of the search box (never on Today):
+  clicking it opens a Claude tab named after the label whose first message is the `task` (a typed `\n` is a line
+  break, as in the Start-work message), then shows the terminal. It makes no Jira request. Hover it to see the
+  message it sends. A button without a label or a task is skipped (Settings says so) and the tab stays. For example:
 
   ```json
   "views": [
     { "id": "sec", "name": "Security", "group": "type",
-      "jql": "project = SEC AND assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
+      "jql": "project = SEC AND assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+      "button": { "label": "Triage all", "task": "/triage" } },
     { "id": "bugs", "name": "Bugs",
       "jql": "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved ORDER BY priority DESC" }
   ]

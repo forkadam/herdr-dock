@@ -86,7 +86,7 @@ test("jiraOptions: views, actions, board and priorities, bad entries skipped wit
   ], actions: [{ project: "SEC", start: "/triage {key}" }, { subtask: true, parentType: "Story", finish: "/close {key}" }, { project: "X" }] });
   assert.equal(o.board, 12);
   assert.deepEqual(o.highPriorities, ["P0", "P1"]);
-  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }]);
+  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type", button: null }]);
   assert.deepEqual(o.actions[1], { subtask: true, parentType: ["Story"], finish: "/close {key}" });
   assert.equal(o.actions.length, 2);
   assert.deepEqual(o.warnings, [
@@ -100,6 +100,17 @@ test("jiraOptions: views, actions, board and priorities, bad entries skipped wit
 test("formatSettings never writes option defaults", () => {
   const text = formatSettings(parseSettings('{"baseUrl":"https://j"}').settings);
   for (const k of ["views", "actions", "board", "highPriorities", "briefBugs", "checkTask"]) assert.ok(!text.includes(`"${k}"`), k);
+});
+
+test("jiraOptions: a view's button", () => {
+  const o = jiraOptions({ views: [
+    { id: "sec", name: "Security", jql: "project = SEC", button: { label: " Triage all ", task: " /triage " } },
+    { id: "ops", name: "Ops", jql: "project = OPS", button: { label: "", task: "/x" } },
+    { id: "web", name: "Web", jql: "project = WEB", button: "go" },
+    { id: "api", name: "API", jql: "project = API" },
+  ] });
+  assert.deepEqual(o.views.map((v) => v.button), [{ label: "Triage all", task: "/triage" }, null, null, null]);
+  assert.deepEqual(o.warnings, ["views[1]: button needs a label and a task", "views[2]: button needs a label and a task"]);
 });
 
 test("jiraOptions: board is a positive whole number or its digits, anything else is null with a warning", () => {
@@ -149,10 +160,10 @@ test("jiraOptions: a view group other than \"type\" becomes null with a warning 
     { id: "d", name: "D", jql: "j4", group: "type" },
   ] });
   assert.deepEqual(o.views, [
-    { id: "a", name: "A", jql: "j1", group: null },
-    { id: "b", name: "B", jql: "j2", group: null },
-    { id: "c", name: "C", jql: "j3", group: null },
-    { id: "d", name: "D", jql: "j4", group: "type" },
+    { id: "a", name: "A", jql: "j1", group: null, button: null },
+    { id: "b", name: "B", jql: "j2", group: null, button: null },
+    { id: "c", name: "C", jql: "j3", group: null, button: null },
+    { id: "d", name: "D", jql: "j4", group: "type", button: null },
   ]);
   assert.deepEqual(o.warnings, ['views[0]: group "status" is not "type"']);
 });
@@ -172,8 +183,8 @@ test("jiraOptions: view ids are lower-case letters, digits and dashes (24 at mos
     { id: 7, name: "N", jql: "j" },
   ] });
   assert.deepEqual(o.views, [
-    { id: longest, name: "Name", jql: "project = X", group: null },
-    { id: "a-1", name: "N", jql: "j", group: null },
+    { id: longest, name: "Name", jql: "project = X", group: null, button: null },
+    { id: "a-1", name: "N", jql: "j", group: null, button: null },
   ]);
   assert.deepEqual(o.warnings, [bad(2), bad(3), bad(4), bad(5), bad(6), bad(7), bad(8)]);
 });
@@ -201,7 +212,7 @@ test("jiraOptions: only an accepted view takes its id, so a rejected one never m
     { id: "a", name: "A", jql: "j" },
     { id: "a", name: "Again", jql: "j" },
   ] });
-  assert.deepEqual(o.views, [{ id: "a", name: "A", jql: "j", group: null }]);
+  assert.deepEqual(o.views, [{ id: "a", name: "A", jql: "j", group: null, button: null }]);
   assert.deepEqual(o.warnings, [
     'views[0]: "today" is the Today tab\'s id',
     'views[1]: "today" is the Today tab\'s id',
