@@ -52,6 +52,8 @@ var FILE_LIMIT = 1e3;
 var COALESCE_MS = 80;
 var EMPTY_WATCH_MS = 1e3;
 var POLL_MS = 2500;
+var REMOTE_POLL_MS = 1e4;
+var MIN_GAP_MS = 500;
 var SAFETY_POLL_MS = 1e4;
 var WATCH_RETRY_MS = 6e4;
 var norm = (p) => {
@@ -144,13 +146,15 @@ function pollDecision({
   lastRefreshAt,
   watchFailedAt,
   now,
+  remote = false,
   pollMs = POLL_MS,
   safetyPollMs = SAFETY_POLL_MS,
-  watchRetryMs = WATCH_RETRY_MS
+  watchRetryMs = WATCH_RETRY_MS,
+  remotePollMs = REMOTE_POLL_MS
 }) {
   if (!visible || loading || busy) return { refresh: false, retryWatch: false };
   const retryWatch = !watchActive && watchFailedAt != null && now - watchFailedAt >= watchRetryMs;
-  const interval = watchActive ? safetyPollMs : pollMs;
+  const interval = watchActive ? safetyPollMs : remote ? remotePollMs : pollMs;
   const refresh = retryWatch || now - lastRefreshAt >= interval;
   return { refresh, retryWatch };
 }
@@ -165,9 +169,12 @@ function createChangesSync({
   emptyWatchMs = EMPTY_WATCH_MS,
   pollMs = POLL_MS,
   safetyPollMs = SAFETY_POLL_MS,
-  watchRetryMs = WATCH_RETRY_MS
+  watchRetryMs = WATCH_RETRY_MS,
+  remotePollMs = REMOTE_POLL_MS,
+  minGapMs = MIN_GAP_MS
 }) {
   let visible = true;
+  let lastStartAt = -Infinity;
   let context = null;
   let gen = 0;
   let loading = false;
@@ -247,7 +254,7 @@ function createChangesSync({
     const myGen = gen;
     ctx.spawn(async (taskCtx) => {
       try {
-        await taskCtx.sleep(coalesceMs);
+        await taskCtx.sleep(Math.max(coalesceMs, lastStartAt + minGapMs - now()));
       } finally {
         if (gen !== myGen) return;
         coalescing = false;
@@ -266,6 +273,7 @@ function createChangesSync({
       dirty = false;
       coalescing = false;
       lastRefreshAt = -Infinity;
+      lastStartAt = -Infinity;
       watchFailed = null;
       stopWatches();
       onReset?.(nextContext, loc);
@@ -277,6 +285,7 @@ function createChangesSync({
     }
     dirty = false;
     loading = true;
+    lastStartAt = now();
     const myGen = gen;
     ctx.spawn(async (taskCtx) => {
       try {
@@ -327,9 +336,11 @@ function createChangesSync({
       lastRefreshAt,
       watchFailedAt: watchFailed?.at ?? null,
       now: now(),
+      remote: Boolean(getLocation()?.on),
       pollMs,
       safetyPollMs,
-      watchRetryMs
+      watchRetryMs,
+      remotePollMs
     });
     if (decision.retryWatch) watchFailed = null;
     if (decision.refresh) refresh(ctx);

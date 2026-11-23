@@ -9,6 +9,11 @@ export const FILE_LIMIT = 1000;
 export const COALESCE_MS = 80;
 export const EMPTY_WATCH_MS = 1000;
 export const POLL_MS = 2500;
+// A repo on another machine can't be watched; each check is git over the connection, so it's polled gently.
+export const REMOTE_POLL_MS = 10000;
+// Watch-triggered refreshes start at least this far apart, so a burst of changes (an install, a build)
+// doesn't run git back to back.
+export const MIN_GAP_MS = 500;
 export const SAFETY_POLL_MS = 10000;
 export const WATCH_RETRY_MS = 60000;
 
@@ -117,12 +122,12 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null }
 // Decides whether a periodic poll tick should run a refresh, and whether a previously failed
 // folder watch is ready to retry.
 export function pollDecision({
-  visible, loading, busy, watchActive, lastRefreshAt, watchFailedAt, now,
-  pollMs = POLL_MS, safetyPollMs = SAFETY_POLL_MS, watchRetryMs = WATCH_RETRY_MS,
+  visible, loading, busy, watchActive, lastRefreshAt, watchFailedAt, now, remote = false,
+  pollMs = POLL_MS, safetyPollMs = SAFETY_POLL_MS, watchRetryMs = WATCH_RETRY_MS, remotePollMs = REMOTE_POLL_MS,
 }) {
   if (!visible || loading || busy) return { refresh: false, retryWatch: false };
   const retryWatch = !watchActive && watchFailedAt != null && now - watchFailedAt >= watchRetryMs;
-  const interval = watchActive ? safetyPollMs : pollMs;
+  const interval = watchActive ? safetyPollMs : remote ? remotePollMs : pollMs;
   const refresh = retryWatch || now - lastRefreshAt >= interval;
   return { refresh, retryWatch };
 }
@@ -141,8 +146,11 @@ export function createChangesSync({
   pollMs = POLL_MS,
   safetyPollMs = SAFETY_POLL_MS,
   watchRetryMs = WATCH_RETRY_MS,
+  remotePollMs = REMOTE_POLL_MS,
+  minGapMs = MIN_GAP_MS,
 }) {
   let visible = true;
+  let lastStartAt = -Infinity;
   let context = null;
   let gen = 0;
   let loading = false;
@@ -221,7 +229,7 @@ export function createChangesSync({
     const myGen = gen;
     ctx.spawn(async (taskCtx) => {
       try {
-        await taskCtx.sleep(coalesceMs);
+        await taskCtx.sleep(Math.max(coalesceMs, lastStartAt + minGapMs - now()));
       } finally {
         if (gen !== myGen) return;
         coalescing = false;
@@ -241,6 +249,7 @@ export function createChangesSync({
       dirty = false;
       coalescing = false;
       lastRefreshAt = -Infinity;
+      lastStartAt = -Infinity;
       watchFailed = null;
       stopWatches();
       onReset?.(nextContext, loc);
@@ -252,6 +261,7 @@ export function createChangesSync({
     }
     dirty = false;
     loading = true;
+    lastStartAt = now();
     const myGen = gen;
     ctx.spawn(async (taskCtx) => {
       try {
@@ -297,8 +307,8 @@ export function createChangesSync({
   function tick(ctx) {
     const decision = pollDecision({
       visible, loading, busy, watchActive, lastRefreshAt,
-      watchFailedAt: watchFailed?.at ?? null, now: now(),
-      pollMs, safetyPollMs, watchRetryMs,
+      watchFailedAt: watchFailed?.at ?? null, now: now(), remote: Boolean(getLocation()?.on),
+      pollMs, safetyPollMs, watchRetryMs, remotePollMs,
     });
     if (decision.retryWatch) watchFailed = null;
     if (decision.refresh) refresh(ctx);

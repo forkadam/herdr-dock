@@ -7,6 +7,9 @@ import {
   parsePorcelainStatus,
   fetchChanges,
   pollDecision,
+  REMOTE_POLL_MS,
+  MIN_GAP_MS,
+  COALESCE_MS,
   createChangesSync,
 } from "../src/shared/changes.js";
 
@@ -397,3 +400,48 @@ test("createChangesSync ignores empty watch batches without tight-looping and ha
   assert.deepEqual(open(), []);
 });
 
+
+test("pollDecision polls a repo on another machine every 10 s, not every 2.5 s", () => {
+  const base = { visible: true, loading: false, busy: false, watchActive: false, lastRefreshAt: 1000, watchFailedAt: null, remote: true };
+  assert.deepEqual(pollDecision({ ...base, now: 3500 }), { refresh: false, retryWatch: false });
+  assert.deepEqual(pollDecision({ ...base, now: 10999 }), { refresh: false, retryWatch: false });
+  assert.deepEqual(pollDecision({ ...base, now: 11000 }), { refresh: true, retryWatch: false });
+  assert.equal(REMOTE_POLL_MS, 10000);
+});
+
+test("createChangesSync keeps watch-triggered refreshes at least MIN_GAP_MS apart", async () => {
+  const { watchFolder, latest } = makeWatchHarness();
+  const { ctx, sleeps } = makeCtx();
+  let t = 0;
+  const runs = [];
+  const sync = createChangesSync({
+    watchFolder,
+    now: () => t,
+    getLocation: () => ({ cwd: "/repo", on: null }),
+    onRun: async () => { runs.push(t); return { root: "/repo", gitDir: "/repo/.git" }; },
+  });
+
+  sync.refresh(ctx); // run 1 starts at t = 0
+  await flush(); await flush(); await flush();
+  assert.deepEqual(runs, [0]);
+  assert.ok(latest("/repo"), "watching /repo");
+
+  // A change 100 ms after run 1 started waits out the rest of the gap, not just the 80 ms coalesce.
+  t = 100;
+  latest("/repo").resolve(["/repo/a.js"]);
+  await flush(); await flush();
+  const wait = sleeps.at(-1);
+  assert.equal(wait.ms, MIN_GAP_MS - 100);
+
+  t = 500;
+  wait.resolve(); await flush(); await flush(); await flush();
+  assert.deepEqual(runs, [0, 500]);
+
+  // Long after, a change only waits the coalesce window.
+  t = 5000;
+  latest("/repo").resolve(["/repo/b.js"]);
+  await flush(); await flush();
+  assert.equal(sleeps.at(-1).ms, COALESCE_MS);
+  assert.equal(MIN_GAP_MS, 500);
+  sync.close();
+});
