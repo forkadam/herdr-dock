@@ -126,8 +126,8 @@ for (const transport of ["fetch", "curl"]) {
   });
 }
 
-// A Jira whose sprint list the test scripts: each request's URL is kept, and `page(url)` answers with { status, body }.
-function sprintClient(page) {
+// A Jira the test scripts: each request's URL is kept, and `page(url)` answers with { status, body }.
+function stubClient(page) {
   const seen = [];
   const fetch = async (url) => {
     seen.push(new URL(url));
@@ -139,7 +139,7 @@ function sprintClient(page) {
 const sprintValues = (from, n) => Array.from({ length: n }, (_, i) => ({ id: from + i, name: `S${from + i}`, state: "closed", startDate: "2026-01-05T09:00:00.000Z", endDate: "garbage" }));
 
 test("sprints: follows isLast through pages of 50, mapping ids and dates", async () => {
-  const { seen, c } = sprintClient((u) => {
+  const { seen, c } = stubClient((u) => {
     const at = Number(u.searchParams.get("startAt"));
     return { body: { startAt: at, maxResults: 50, isLast: at >= 100, values: sprintValues(at + 1, at >= 100 ? 7 : 50) } };
   });
@@ -152,7 +152,7 @@ test("sprints: follows isLast through pages of 50, mapping ids and dates", async
 });
 
 test("sprints: stops at 20 pages however long Jira says it goes on", async () => {
-  const { seen, c } = sprintClient((u) => ({ body: { isLast: false, values: sprintValues(Number(u.searchParams.get("startAt")) + 1, 50) } }));
+  const { seen, c } = stubClient((u) => ({ body: { isLast: false, values: sprintValues(Number(u.searchParams.get("startAt")) + 1, 50) } }));
   const r = await c.sprints(1, ["closed"]);
   assert.equal(r.ok, true);
   assert.equal(seen.length, 20);
@@ -160,12 +160,80 @@ test("sprints: stops at 20 pages however long Jira says it goes on", async () =>
 });
 
 test("sprints: a page that fails fails the call", async () => {
-  const { c } = sprintClient((u) => (u.searchParams.get("startAt") === "0"
+  const { c } = stubClient((u) => (u.searchParams.get("startAt") === "0"
     ? { body: { isLast: false, values: sprintValues(1, 50) } }
     : { status: 500, body: { errorMessages: ["boom"] } }));
   const r = await c.sprints(1, ["closed"]);
   assert.equal(r.ok, false);
   assert.equal(r.problem.kind, "server");
+});
+
+// The new agile calls get whatever Jira (or a proxy in front of it) sends: odd entries are skipped, never thrown on.
+const junk = [null, 5, "x", true, [], {}];
+
+test("boards: entries that aren't boards are skipped, and a body that isn't a list gives none", async () => {
+  const board = { id: 1, name: "WEB board", type: "scrum" };
+  const ok = await stubClient(() => ({ body: { values: [...junk, { name: "no id" }, { id: null, name: "null id" }, board] } })).c.boards();
+  assert.deepEqual(ok, { ok: true, status: 200, data: [board] });
+  for (const body of [null, {}, { values: null }, { values: {} }, "text", 7]) {
+    const r = await stubClient(() => ({ body })).c.boards("WEB");
+    assert.deepEqual([r.ok, r.data], [true, []], JSON.stringify(body));
+  }
+});
+
+test("boardConfiguration: columns that aren't objects with a name, and statuses with no id, are skipped", async () => {
+  const body = { columnConfig: { columns: [...junk, { name: "To Do", statuses: [...junk, { id: "1" }, { id: null }, { id: 10000 }, { self: "no id" }] }, { name: "Done" }, { name: "Odd", statuses: "x" }] } };
+  const r = await stubClient(() => ({ body })).c.boardConfiguration(1);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.data.columns.map((c) => [c.name, c.statusIds]), [["To Do", ["1", "10000"]], ["Done", []], ["Odd", []]]);
+  for (const odd of [null, {}, { columnConfig: null }, { columnConfig: { columns: "x" } }, "text"]) {
+    assert.deepEqual((await stubClient(() => ({ body: odd })).c.boardConfiguration(1)).data, { columns: [] }, JSON.stringify(odd));
+  }
+});
+
+test("sprints: entries without a usable id are skipped, and paging goes on past them; states that aren't a list mean no filter", async () => {
+  const bad = [...junk, { name: "no id" }, { id: null }, { id: "" }, { id: "x" }];
+  const { seen, c } = stubClient((u) => (u.searchParams.get("startAt") === "0"
+    ? { body: { isLast: false, values: [...bad, ...sprintValues(1, 2)] } }
+    : { body: { isLast: true, values: [{ id: 9, name: "Last", state: "future" }, null] } }));
+  const r = await c.sprints(1, null);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.data.map((x) => x.id), [1, 2, 9]);
+  assert.deepEqual(seen.map((u) => u.searchParams.get("startAt")), ["0", String(bad.length + 2)]);
+  assert.ok(seen.every((u) => !u.searchParams.has("state")));
+  assert.deepEqual(r.data[2], { id: 9, name: "Last", state: "future", startMs: null, endMs: null });
+  for (const states of [undefined, "active", 5, {}, []]) {
+    const one = stubClient(() => ({ body: { isLast: true, values: sprintValues(1, 1) } }));
+    assert.equal((await one.c.sprints(1, states)).ok, true, String(states));
+    assert.equal(one.seen[0].searchParams.has("state"), false, String(states));
+  }
+  const some = stubClient(() => ({ body: { isLast: true, values: [] } }));
+  await some.c.sprints(1, ["active", null, 3, "future"]);
+  assert.equal(some.seen[0].searchParams.get("state"), "active,future");
+  for (const body of [null, {}, { values: "x" }, { isLast: false }]) {
+    const e = await stubClient(() => ({ body })).c.sprints(1, ["active"]);
+    assert.deepEqual([e.ok, e.data], [true, []], JSON.stringify(body));
+  }
+});
+
+test("issueHistory: a body without fields or changelog gives no description and no histories; histories that aren't objects with an id are skipped", async () => {
+  for (const body of [null, {}, { fields: null, changelog: null }, "text"]) {
+    const r = await stubClient(() => ({ body })).c.issueHistory("WEB-1");
+    assert.deepEqual([r.ok, r.data], [true, { description: null, histories: [] }], JSON.stringify(body));
+  }
+  const r = await stubClient(() => ({ body: { fields: { description: "d" }, changelog: { histories: [...junk, { id: "7", items: [] }] } } })).c.issueHistory("WEB-1");
+  assert.deepEqual(r.data, { description: "d", histories: [{ id: "7", items: [] }] });
+});
+
+test("the agile calls resolve, never reject, when they can't even build the request", async () => {
+  const { c } = stubClient(() => ({ body: {} }));
+  for (const bad of ["\uD800", Symbol("x")]) { // encodeURIComponent throws on both
+    for (const call of [() => c.boardConfiguration(bad), () => c.sprints(bad, ["active"]), () => c.issueHistory(bad)]) {
+      const r = await call();
+      assert.equal(r.ok, false);
+      assert.ok(r.problem.kind && r.problem.message);
+    }
+  }
 });
 
 test("curl not installed: a clear problem, no throw", async () => {
