@@ -256,3 +256,15 @@ test("the built Render helper: an invisible link really lays its nodes out toget
   assert.equal(rowOf(linked, "B"), rowOf(linked, "A"), "B beside A");
   assert.notEqual(rowOf(unlinked, "B"), rowOf(unlinked, "A"), "without the link B stacks below A");
 });
+
+test("the built Render helper: a linkStyle-coloured edge's arrowheads, at either end, are markers defined in its colour", () => {
+  const [oneWay, twoWay] = drawAll(["flowchart LR\n  A --> B\n  linkStyle 0 stroke:#ff0000", "flowchart LR\n  A <--> B\n  linkStyle 0 stroke:#ff0000"]);
+  // The marker an edge names (read from the edge, not hard-coded), and the fill its definition draws.
+  const ref = (svg, end) => new RegExp(`marker-${end}="url\\(#([^)]*)\\)"`).exec(edgeTags(svg)[0])?.[1];
+  const markerFill = (svg, id) => new RegExp(`<marker id="${id}"[^>]*>\\s*<[a-z]+[^>]*fill="([^"]*)"`).exec(svg)?.[1];
+  assert.equal(markerFill(oneWay, ref(oneWay, "end")), "#ff0000");
+  assert.equal(ref(oneWay, "start"), undefined);
+  assert.equal(markerFill(twoWay, ref(twoWay, "start")), "#ff0000");
+  assert.equal(markerFill(twoWay, ref(twoWay, "end")), "#ff0000");
+  assert.notEqual(ref(twoWay, "start"), ref(twoWay, "end"));
+});
