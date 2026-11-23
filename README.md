@@ -237,9 +237,11 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     "checkTask": "/review-spec-change {key}: changed {when}; my work is {mine}"
     ```
 
-  - **Requests**: each refresh of Today asks one search for your changed issues, one per 50 parents, and one for the
-    bugs (the sprint's search, already made for the board, also brings what New in sprint reads); your sub-tasks'
-    parents once an hour with the board's columns, or when you press refresh.
+  - **Requests**: each refresh of Today asks one search for your changed issues and one per 50 parents (these read
+    only when each issue was last updated), and one for the bugs (the sprint's search, already made for the board,
+    also brings what New in sprint reads). The history Changed reads is fetched apart, one search per 50 issues that
+    are new to the window or were updated since their history was fetched, so most refreshes fetch none. Your
+    sub-tasks' parents are read once an hour with the board's columns, or when you press refresh.
 - **Today**'s board, under the brief, is your Scrum board's current sprint, laid out like the board in Jira
   Software: the board's own columns (each holding the statuses the board maps to it) sharing the width, and one lane
   per parent story (its key, status and summary; click it to fold the lane), then **Other issues**. It lists the
@@ -251,14 +253,18 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     id as `board` in `jira-work.json` (you can also write `"board": <id>` there). **No board** removes it: Today is
     then the brief alone.
   - **The sprint menu** (the sprint's name): its series, the sprints whose name differs only by its number
-    (`Sprint 41`, `Sprint 42`, …), newest first: the next one, the active one and the last 5 closed. A sprint named
-    without a number lists the sprints holding your issues instead. Picking one shows it until Herdr restarts. With no
-    active sprint Today says so, and the menu offers the series of the sprint that ended last.
+    (`Sprint 41`, `Sprint 42`, …), newest first: the next one, the active one and the last 5 closed. The closed ones
+    load when the menu opens: until they have, it lists the others and says "Loading older sprints…" (or "Couldn't
+    load older sprints"; opening it again tries again). A sprint named without a number lists the sprints holding your
+    issues instead. Picking one shows it until Herdr restarts. With no active sprint Today says so, and the menu
+    offers the series of the sprint that ended last.
   - **Drag a card** to another column: a column lights up when the issue's workflow reaches any status it holds. A
     drop there runs that move, asks which when several lead there (and for a Resolution when the step needs one), and
     on a dimmed column says, in that column, where the issue can go. A drop on the card's own column does nothing.
-  - **Requests**: each refresh asks for the shown sprint's issues; the board's columns, statuses and sprints (and how
-    many of yours each active sprint holds) once an hour, or when you press refresh.
+  - **Requests**: each refresh asks for the shown sprint's issues; the board's columns, statuses and its active and
+    future sprints (and how many of yours each active sprint holds) once an hour, or when you press refresh. The
+    closed sprints are read apart: when the sprint menu first opens after each of those reads, or right away when no
+    sprint is active. Requests still go one at a time, so a refresh waits for a read of them that is running.
 - **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"? }`. The id is lower-case
   letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type first,
   then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
