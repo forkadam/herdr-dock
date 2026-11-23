@@ -802,3 +802,30 @@ test("auto-add (c): the same path on another machine is a different repo, still 
   await ticks(io, c, 5);
   assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/api", machine: null }, { path: "/w/api", machine: "devbox" }]);
 });
+
+test("auto-add (d): a tick that read the list before another tick's auto-add doesn't append the same path again", async () => {
+  let slow = false;
+  let release;
+  const yList = wtList(["/w/y", "main"]);
+  const panes = [];
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, panes, repos: [{ path: "/w/y", machine: null }],
+    table: {
+      [` -C /w/y ${RP}`]: ok("/w/y\n/w/y/.git\n"),
+      " -C /w/y worktree list --porcelain": () => (slow ? new Promise((r) => { release = () => r(yList); }) : yList),
+      [` -C /w/x ${RP}`]: ok("/w/x\n/w/x/.git\n"),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick(); // t = 0: /w/y is listed
+  io.t = 60000;
+  slow = true;
+  panes.push({ pane: "p1", tab: "t1", cwd: "/w/x" }); // a terminal opens in a repo nobody added
+  const a = c.tick(); // A: its 60 s re-list of /w/y waits; /w/x resolves
+  await new Promise((r) => setTimeout(r, 30));
+  io.t = 61000;
+  await c.tick(); // B: auto-adds /w/x
+  release();
+  await a; // A ends with the list it read before B's append
+  assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/y", machine: null }, { path: "/w/x", machine: null }]);
+});

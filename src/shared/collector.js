@@ -366,8 +366,9 @@ export function createCollector(io) {
     if (io.autoAdd === false) return; // tests of other behaviour can turn it off; on in the app
     if (resolving) return;
     // An added entry whose listing failed is keyed by its path, not its common dir, so its terminal's row looks
-    // un-added: never append a path that is already listed (the same check as the panel's Add repo).
-    const listed = new Set(addedList.map((a) => idOf(a.machine, a.path)));
+    // un-added: never append a path that is already listed (the same check as the panel's Add repo). Read the
+    // live list, not this tick's addedList: a tick that started earlier can end after another tick appended.
+    const listed = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;

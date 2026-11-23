@@ -953,7 +953,7 @@ function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return;
     if (resolving) return;
-    const listed = new Set(addedList.map((a) => idOf(a.machine, a.path)));
+    const listed = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
