@@ -115,13 +115,15 @@ export function createCollector(io) {
     try {
       const rp = await run(e.machine, ["-C", e.path, ...REV_PARSE]);
       if (rp.code !== 0) {
-        Object.assign(e, { error: errText(rp), list: [] });
+        Object.assign(e, { error: errText(rp), commonDir: null, list: [] });
         return;
       }
       const { top, commonDir } = parseRevParse(rp.stdout, e.path);
       const wl = await run(e.machine, ["-C", top, "worktree", "list", "--porcelain"]);
       if (wl.code !== 0) {
-        Object.assign(e, { error: errText(wl), list: [] });
+        // Keep the common dir rev-parse found: buildView keys the error row by it, so it is the same row as a
+        // terminal in this repo (and Remove sees that terminal).
+        Object.assign(e, { error: errText(wl), commonDir, list: [] });
         return;
       }
       Object.assign(e, { error: null, commonDir, list: parseWorktrees(wl.stdout).filter((w) => !w.bare) });
@@ -308,7 +310,10 @@ export function createCollector(io) {
       const e = added.get(`${a.machine ?? ""}|${a.path}`);
       if (!e?.done) continue;
       if (e.error) {
-        const bad = repoFor(idOf(a.machine, a.path), a.machine, a.path);
+        // Keyed by its common dir when rev-parse found one, else by its path (not a repo, machine unreachable).
+        const bad = e.commonDir
+          ? repoFor(idOf(a.machine, e.commonDir), a.machine, mainFromCommonDir(e.commonDir))
+          : repoFor(idOf(a.machine, a.path), a.machine, a.path);
         Object.assign(bad, { added: true, error: e.error });
         bad.addedPaths.push({ path: a.path, machine: a.machine });
         continue;

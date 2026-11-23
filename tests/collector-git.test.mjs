@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCollector } from "../src/shared/collector.js";
+import { removeRepoPaths, skipAfterRemove } from "../src/mods/dock-git/view.js";
 
 const ok = (stdout) => ({ code: 0, stdout, stderr: "" });
 const wtList = (...wts) =>
@@ -828,4 +829,52 @@ test("auto-add (d): a tick that read the list before another tick's auto-add doe
   release();
   await a; // A ends with the list it read before B's append
   assert.deepEqual(io.shared("dock.git.repos"), [{ path: "/w/y", machine: null }, { path: "/w/x", machine: null }]);
+});
+
+const failingApi = (state) => ({
+  [` -C /w/api ${RP}`]: ok("/w/api\n/w/api/.git\n"),
+  " -C /w/api worktree list --porcelain": () => (state.refusing ? refused() : wtList(["/w/api", "main"])),
+  " -C /w/api remote get-url origin": NO_ORIGIN,
+  " --no-optional-locks -C /w/api status --porcelain=v2 --branch": status("main"),
+});
+
+test("auto-add (e): a repo whose listing fails shares one row with its terminal, and keeps its id when it recovers", async () => {
+  const state = { refusing: true };
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes: [{ pane: "p1", tab: "t1", cwd: "/w/api" }], table: failingApi(state),
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 3);
+  let rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.added]), [["|/w/api/.git", true]]);
+  assert.match(rows[0].error, /connection refused/);
+  assert.deepEqual(rows[0].worktrees.map((w) => [w.path, w.open]), [["/w/api", true]]);
+  state.refusing = false;
+  io.t = 60000;
+  await c.tick();
+  rows = c.state().repos;
+  assert.deepEqual(rows.map((r) => [r.id, r.error]), [["|/w/api/.git", null]]);
+});
+
+test("auto-add (f): Remove on a failing repo with a terminal in it sticks until the terminal leaves", async () => {
+  const panes = [{ pane: "p1", tab: "t1", cwd: "/w/api" }];
+  const io = fakeIo({
+    platform: "linux", autoAdd: true, spaces: oneSpace, repos: [{ path: "/w/api", machine: null }],
+    panes, table: failingApi({ refusing: true }),
+  });
+  const c = createCollector(io);
+  await ticks(io, c, 3);
+  const row = c.state().repos.find((r) => r.error); // the row with the red Remove button
+  // What dock-git's Remove does (src/mods/dock-git/main.js, removeRepo).
+  io.setShared("dock.git.repos", removeRepoPaths(io.shared("dock.git.repos"), row, "linux"));
+  const skipped = skipAfterRemove(io.shared("dock.git.skipped"), row);
+  if (skipped) io.setShared("dock.git.skipped", skipped);
+  for (let t = 3000; t <= 6000; t += 1000) { io.t = t; await c.tick(); }
+  assert.deepEqual(io.shared("dock.git.repos"), []);
+  assert.deepEqual(c.state().repos, []);
+  panes.length = 0; // the terminal leaves
+  io.t = 7000;
+  await c.tick();
+  assert.deepEqual(io.shared("dock.git.skipped"), []);
 });

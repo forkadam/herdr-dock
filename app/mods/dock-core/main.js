@@ -720,13 +720,13 @@ function createCollector(io) {
     try {
       const rp = await run2(e.machine, ["-C", e.path, ...REV_PARSE]);
       if (rp.code !== 0) {
-        Object.assign(e, { error: errText(rp), list: [] });
+        Object.assign(e, { error: errText(rp), commonDir: null, list: [] });
         return;
       }
       const { top, commonDir } = parseRevParse(rp.stdout, e.path);
       const wl = await run2(e.machine, ["-C", top, "worktree", "list", "--porcelain"]);
       if (wl.code !== 0) {
-        Object.assign(e, { error: errText(wl), list: [] });
+        Object.assign(e, { error: errText(wl), commonDir, list: [] });
         return;
       }
       Object.assign(e, { error: null, commonDir, list: parseWorktrees(wl.stdout).filter((w) => !w.bare) });
@@ -903,7 +903,7 @@ function createCollector(io) {
       const e = added.get(`${a.machine ?? ""}|${a.path}`);
       if (!e?.done) continue;
       if (e.error) {
-        const bad = repoFor(idOf(a.machine, a.path), a.machine, a.path);
+        const bad = e.commonDir ? repoFor(idOf(a.machine, e.commonDir), a.machine, mainFromCommonDir(e.commonDir)) : repoFor(idOf(a.machine, a.path), a.machine, a.path);
         Object.assign(bad, { added: true, error: e.error });
         bad.addedPaths.push({ path: a.path, machine: a.machine });
         continue;
