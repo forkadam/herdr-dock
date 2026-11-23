@@ -17,7 +17,7 @@ test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied on
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW) - added(NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID) + added(NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 7);
+  assert.equal(LINE_REWRITES.length, 14);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -207,4 +207,30 @@ test("the built Render helper: hyphenated class names apply; dotted text links -
     assert.match(e[0], /data-style="dotted"/);
     assert.match(e[0], new RegExp(`data-arrow-end="${end}"`));
   }
+});
+
+const markerOf = (tag, end) => new RegExp(`marker-${end}="url\\(#([^)]*)\\)"`).exec(tag)?.[1] ?? "-";
+const edgeSummary = (svg) => edgeTags(svg).map((e) => [/data-style="([^"]*)"/.exec(e)[1], markerOf(e, "start"), markerOf(e, "end")]);
+
+test("the built Render helper draws circle and cross heads in the link's style; spaced and arrow forms keep their reading", () => {
+  const cases = [["A --o B", [["solid", "-", "circlehead"]]], ["A --x B", [["solid", "-", "crosshead"]]],
+    ["A o--o B", [["solid", "circlehead-start", "circlehead"]]], ["A x--x B", [["solid", "crosshead-start", "crosshead"]]],
+    ["A ==o B", [["thick", "-", "circlehead"]]], ["A -.-o B", [["dotted", "-", "circlehead"]]],
+    ["A-->o1", [["solid", "-", "arrowhead"]]], ["A --- other", [["solid", "-", "-"]]],
+    ["A --> B --o C", [["solid", "-", "arrowhead"], ["solid", "-", "circlehead"]]]];
+  const svgs = drawAll(cases.map(([c]) => "flowchart LR\n  " + c));
+  svgs.forEach((svg, i) => assert.deepEqual(edgeSummary(svg), cases[i][1], cases[i][0]));
+  assert.match(svgs[6], /data-id="o1"/);
+  assert.match(svgs[7], /data-id="other"/);
+  assert.match(svgs[0], /<marker id="circlehead"/);
+  assert.match(svgs[0], /<marker id="crosshead"/);
+});
+
+test("the built Render helper lays out an invisible link (~~~) but draws neither its line nor its label", () => {
+  const [spaced, unspaced, labelled] = drawAll(["flowchart LR\n  A ~~~ B", "flowchart LR\n  A~~~B", "flowchart LR\n  A ~~~|x| B"]);
+  for (const svg of [spaced, unspaced, labelled]) {
+    assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2);
+    assert.equal(edgeTags(svg).length, 0);
+  }
+  assert.ok(!/class="edge-label"/.test(labelled), "no label");
 });

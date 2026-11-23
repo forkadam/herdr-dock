@@ -93073,7 +93073,7 @@ function parseStyleProps(propsStr) {
   }
   return props;
 }
-var ARROW_REGEX = /^(<)?(-{2,}>|-\.+->|={2,}>|-{3,}|-\.+-|={3,})(?:\|([^|]*)\|)?/;
+var ARROW_REGEX = /^([<ox])?(-{2,}>|-\.+->|={2,}>|-{2,}[ox]|-\.+-[ox]|={2,}[ox]|-{3,}|-\.+-|={3,}|~{3,})(?:\|([^|]*)\|)?/;
 var TEXT_ARROW_REGEX = /^(<)?(--|-\.|==)\s+(.+?)\s+(-{2,}>|-{3,}|\.+->|-\.+->|-\.+-|\.+-|={2,}>|={3,})/;
 var NODE_PATTERNS = [
   // Triple delimiters (must be first)
@@ -93122,13 +93122,13 @@ function parseEdgeLine(line, graph, subgraphStack) {
     let edgeLabel;
     const arrowMatch = remaining.match(ARROW_REGEX);
     if (arrowMatch) {
-      hasArrowStart = Boolean(arrowMatch[1]);
+      hasArrowStart = arrowMatch[1] === "o" ? "circle" : arrowMatch[1] === "x" ? "cross" : Boolean(arrowMatch[1]);
       const arrowOp = arrowMatch[2];
       const rawEdgeLabel = arrowMatch[3]?.trim();
       edgeLabel = rawEdgeLabel ? normalizeBrTags(rawEdgeLabel) : void 0;
       remaining = remaining.slice(arrowMatch[0].length).trim();
       style = arrowStyleFromOp(arrowOp);
-      hasArrowEnd = arrowOp.endsWith(">");
+      hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;
     } else {
       const textMatch = remaining.match(TEXT_ARROW_REGEX);
       if (!textMatch) break;
@@ -93220,6 +93220,8 @@ function trackInSubgraph(subgraphStack, nodeId) {
   }
 }
 function arrowStyleFromOp(op) {
+  if (/^~{3,}$/.test(op)) return "invisible";
+  op = op.replace(/[ox]$/, ">");
   op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\.+->$/, "-.->").replace(/^-\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");
   if (op === "-.->") return "dotted";
   if (op === "-.-") return "dotted";
@@ -94840,6 +94842,7 @@ function renderSvg(graph, colors, font = "Inter", transparent = false) {
   parts.push(buildStyleBlock(font, false));
   parts.push("<defs>");
   parts.push(arrowMarkerDefs());
+  parts.push(`<marker id="circlehead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker><marker id="circlehead-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker><marker id="crosshead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker><marker id="crosshead-start" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker>`);
   const customStrokeColors = /* @__PURE__ */ new Set();
   for (const edge of graph.edges) {
     if (edge.inlineStyle?.stroke) {
@@ -94857,7 +94860,7 @@ function renderSvg(graph, colors, font = "Inter", transparent = false) {
     parts.push(renderEdge(edge));
   }
   for (const edge of graph.edges) {
-    if (edge.label) {
+    if (edge.label && edge.style !== "invisible") {
       parts.push(renderEdgeLabel(edge, font));
     }
   }
@@ -94927,7 +94930,7 @@ function renderGroup(group, font) {
   return parts.join("\n");
 }
 function renderEdge(edge) {
-  if (edge.points.length < 2) return "";
+  if (edge.points.length < 2 || edge.style === "invisible") return "";
   const pathData = pointsToPolylinePath(edge.points);
   const dashArray = edge.style === "dotted" ? ' stroke-dasharray="4 4"' : "";
   const baseStrokeWidth = edge.style === "thick" ? STROKE_WIDTHS.connector * 2 : STROKE_WIDTHS.connector;
@@ -94935,8 +94938,8 @@ function renderEdge(edge) {
   const strokeWidth = escapeAttr(edge.inlineStyle?.["stroke-width"] ?? String(baseStrokeWidth));
   const suffix = edge.inlineStyle?.stroke ? `-${markerSuffix(edge.inlineStyle.stroke)}` : "";
   let markers = "";
-  if (edge.hasArrowEnd) markers += ` marker-end="url(#arrowhead${suffix})"`;
-  if (edge.hasArrowStart) markers += ` marker-start="url(#arrowhead-start${suffix})"`;
+  if (edge.hasArrowEnd) markers += edge.hasArrowEnd === true ? ` marker-end="url(#arrowhead${suffix})"` : ` marker-end="url(#${edge.hasArrowEnd}head)"`;
+  if (edge.hasArrowStart) markers += edge.hasArrowStart === true ? ` marker-start="url(#arrowhead-start${suffix})"` : ` marker-start="url(#${edge.hasArrowStart}head-start)"`;
   const dataAttrs = [
     'class="edge"',
     `data-from="${escapeAttr(edge.source)}"`,
@@ -97327,7 +97330,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 8;
+var LOOK_VERSION = 9;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;

@@ -18,12 +18,13 @@ export const CLASS_SHORTHAND_BEFORE_ARROW = "var CLASS_SHORTHAND_REGEX = /^:::(\
 // only, so a longer link left a stray node and no edge; its style lookup compares exact operators, so a long one is
 // normalised to its short form first. A long link is drawn at the usual length.
 export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|([^|]*)\\|)?/;";
-export const ARROW_WIDE = "var ARROW_REGEX = /^(<)?(-{2,}>|-\\.+->|={2,}>|-{3,}|-\\.+-|={3,})(?:\\|([^|]*)\\|)?/;";
+// Also circle / cross heads (--o, --x, o--o, ==o, -.-o) and invisible links (~~~).
+export const ARROW_WIDE = "var ARROW_REGEX = /^([<ox])?(-{2,}>|-\\.+->|={2,}>|-{2,}[ox]|-\\.+-[ox]|={2,}[ox]|-{3,}|-\\.+-|={3,}|~{3,})(?:\\|([^|]*)\\|)?/;";
 export const TEXT_ARROW = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-->|---|\\.\\->|-\\.\\-|==>|===)/;";
 // A dotted text link also closes with -.-> (tried before -.-) or .- (no head).
 export const TEXT_ARROW_WIDE = "var TEXT_ARROW_REGEX = /^(<)?(--|-\\.|==)\\s+(.+?)\\s+(-{2,}>|-{3,}|\\.+->|-\\.+->|-\\.+-|\\.+-|={2,}>|={3,})/;";
 export const ARROW_STYLE_HEAD = "function arrowStyleFromOp(op) {";
-export const ARROW_STYLE_NORMALISE = '\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
+export const ARROW_STYLE_NORMALISE = '\n  if (/^~{3,}$/.test(op)) return "invisible";\n  op = op.replace(/[ox]$/, ">");\n  op = op.replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^-\\.+->$/, "-.->").replace(/^-\\.+-$/, "-.-").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===");';
 // A text arrow's closing operator (`-- text ..->`) is looked up the same way: normalised to its short form first.
 export const TEXT_ARROW_STYLE_HEAD = "function textArrowStyleFromOps(openOp, closeOp) {";
 export const TEXT_ARROW_STYLE_NORMALISE = '\n  closeOp = closeOp.replace(/^\\.+->$/, ".->").replace(/^-\\.+-$/, "-.-").replace(/^-{2,}>$/, "-->").replace(/^-{3,}$/, "---").replace(/^={2,}>$/, "==>").replace(/^={3,}$/, "===").replace(/^-\\.+->$/, ".->").replace(/^\\.+-$/, "-.-");';
@@ -33,6 +34,26 @@ export const CLASS_DEF = "line.match(/^classDef\\s+(\\w+)\\s+(.+)$/);";
 export const CLASS_DEF_WIDE = "line.match(/^classDef\\s+([\\w-]+)\\s+(.+)$/);";
 export const CLASS_ASSIGN = "line.match(/^class\\s+([\\w,-]+)\\s+(\\w+)$/);";
 export const CLASS_ASSIGN_WIDE = "line.match(/^class\\s+([\\w,-]+)\\s+([\\w-]+)$/);";
+// The kind of head rides on hasArrowStart / hasArrowEnd (true, "circle" or "cross"), which the layout already copies to
+// the drawn edge; the renderer picks its marker from it and gains circle / cross markers. An invisible edge (~~~) is
+// laid out but draws neither line nor label.
+export const ARROW_START = 'hasArrowStart = Boolean(arrowMatch[1]);';
+export const ARROW_START_KIND = 'hasArrowStart = arrowMatch[1] === "o" ? "circle" : arrowMatch[1] === "x" ? "cross" : Boolean(arrowMatch[1]);';
+export const ARROW_END = 'hasArrowEnd = arrowOp.endsWith(">");';
+export const ARROW_END_KIND = 'hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;';
+export const RENDER_EDGE = 'function renderEdge(edge) {\n  if (edge.points.length < 2) return "";';
+export const RENDER_EDGE_INVISIBLE = 'function renderEdge(edge) {\n  if (edge.points.length < 2 || edge.style === "invisible") return "";';
+export const END_MARKER = 'if (edge.hasArrowEnd) markers += ` marker-end="url(#arrowhead${suffix})"`;';
+export const END_MARKER_KIND = 'if (edge.hasArrowEnd) markers += edge.hasArrowEnd === true ? ` marker-end="url(#arrowhead${suffix})"` : ` marker-end="url(#${edge.hasArrowEnd}head)"`;';
+export const START_MARKER = 'if (edge.hasArrowStart) markers += ` marker-start="url(#arrowhead-start${suffix})"`;';
+export const START_MARKER_KIND = 'if (edge.hasArrowStart) markers += edge.hasArrowStart === true ? ` marker-start="url(#arrowhead-start${suffix})"` : ` marker-start="url(#${edge.hasArrowStart}head-start)"`;';
+export const MARKER_DEFS = '  parts.push(arrowMarkerDefs());';
+export const MARKER_DEFS_HEADS = MARKER_DEFS + '\n  parts.push(`<marker id="circlehead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker>' +
+  '<marker id="circlehead-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="var(--_arrow)" /></marker>' +
+  '<marker id="crosshead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker>' +
+  '<marker id="crosshead-start" markerWidth="8" markerHeight="8" refX="2" refY="4" orient="auto"><path d="M1 1 L7 7 M7 1 L1 7" stroke="var(--_arrow)" stroke-width="1.5" fill="none" /></marker>`);';
+export const EDGE_LABEL = 'if (edge.label) {\n      parts.push(renderEdgeLabel(edge, font));';
+export const EDGE_LABEL_VISIBLE = 'if (edge.label && edge.style !== "invisible") {\n      parts.push(renderEdgeLabel(edge, font));';
 // Each must be in the source exactly once, or the build fails.
 export const LINE_REWRITES = [
   { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
@@ -42,6 +63,13 @@ export const LINE_REWRITES = [
   { name: "text arrow style", from: TEXT_ARROW_STYLE_HEAD, to: TEXT_ARROW_STYLE_HEAD + TEXT_ARROW_STYLE_NORMALISE },
   { name: "classDef name", from: CLASS_DEF, to: CLASS_DEF_WIDE },
   { name: "class assignment", from: CLASS_ASSIGN, to: CLASS_ASSIGN_WIDE },
+  { name: "arrow start kind", from: ARROW_START, to: ARROW_START_KIND },
+  { name: "arrow end kind", from: ARROW_END, to: ARROW_END_KIND },
+  { name: "invisible edge", from: RENDER_EDGE, to: RENDER_EDGE_INVISIBLE },
+  { name: "end marker", from: END_MARKER, to: END_MARKER_KIND },
+  { name: "start marker", from: START_MARKER, to: START_MARKER_KIND },
+  { name: "head markers", from: MARKER_DEFS, to: MARKER_DEFS_HEADS },
+  { name: "invisible label", from: EDGE_LABEL, to: EDGE_LABEL_VISIBLE },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.
