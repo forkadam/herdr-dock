@@ -308,11 +308,13 @@ function sessionName(scope, terminal) {
   const tail = String(scope ?? "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
   return `dock-${tail}-${terminal}`;
 }
+var realSessionName = (session) => `${session}-real`;
 var BROWSER_REL = "herdr-dock/browser";
 var sessionsRel = () => `${BROWSER_REL}/sessions`;
 var sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 var controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 var framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
+var bigFramesRel = (t) => `${framesRel(t)}-big`;
 var signedInRel = () => `${BROWSER_REL}/profiles/signed-in.json`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 function normalizeUrl(input) {
@@ -483,6 +485,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
     rmSync(sessionFile, { force: true });
     rmSync(controlFile, { force: true });
     rmSync(frames, { recursive: true, force: true });
+    rmSync(abs(bigFramesRel(terminal)), { recursive: true, force: true });
   };
   const save = (rec) => writeAtomic(sessionFile, JSON.stringify(rec, null, 2) + "\n");
   let created2 = null;
@@ -654,7 +657,7 @@ function windowCmd(args, { io, ab, abs, terminal }) {
   }
   const tmpDir = abs(`${BROWSER_REL}/tmp`);
   const out = join2(tmpDir, `${t}.json`), done = join2(tmpDir, `${t}.done.json`);
-  const real = `${rec.session}-real`;
+  const real = realSessionName(rec.session);
   mkdirSync(tmpDir, { recursive: true });
   if (args.cmd === "window-open") {
     saveState(ab, rec.session, out);
@@ -680,6 +683,7 @@ function sweep(abs, bin, cfg, env) {
       rmSync(abs(sessionFileRel(g.terminal)), { force: true });
       rmSync(abs(controlFileRel(g.terminal)), { force: true });
       rmSync(abs(framesRel(g.terminal)), { recursive: true, force: true });
+      rmSync(abs(bigFramesRel(g.terminal)), { recursive: true, force: true });
     }
   } catch {
   }

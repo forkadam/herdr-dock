@@ -6,11 +6,16 @@ export function sessionName(scope, terminal) {
   return `dock-${tail}-${terminal}`;
 }
 
+// The visible window "Open in a real window" opens: a session of its own beside the agent's.
+export const realSessionName = (session) => `${session}-real`;
+
 export const BROWSER_REL = "herdr-dock/browser";
 export const sessionsRel = () => `${BROWSER_REL}/sessions`;
 export const sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 export const controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 export const framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
+// The Enlarge window's own frames: two copies of the panel never clear each other's.
+export const bigFramesRel = (t) => `${framesRel(t)}-big`;
 export const picksRel = () => `${BROWSER_REL}/picks`;
 export const signedInRel = () => `${BROWSER_REL}/profiles/signed-in.json`;
 export const binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;

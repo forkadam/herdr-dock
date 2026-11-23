@@ -130,16 +130,16 @@ export class Stream {
 
   set(state) { this.state = state; this.onChange(this); }
 
-  // Closes the socket and deletes the frames folder.
+  // Closes the socket and deletes the frames folder (the returned promise settles when it's gone).
   stop() {
-    if (this.stopped) return;
+    if (this.stopped) return Promise.resolve();
     this.stopped = true;
     this.gen++;
     const ws = this.ws;
     this.ws = null;
     ws?.close().catch(() => {});
     this.ring.clear();
-    clearFolder(this.framesRel);
+    return clearFolder(this.framesRel);
   }
 
   // A message to the page (input). Typed input goes here only: never logged.

@@ -1697,6 +1697,22 @@ function nextPage(active, features) {
 }
 var focusLeavesPage = (prev, now) => prev !== null && prev !== now;
 
+// src/shared/browser/panel.js
+var bigWindow = (terminal) => ({
+  mod: "dock-browser",
+  kind: "window",
+  key: "dock-browser-big",
+  width: 0.8,
+  height: 0.85,
+  props: { big: true, ...terminal ? { terminal } : {} }
+});
+function parseBrowserShow(c) {
+  const m = /^browser\.show\.([A-Za-z0-9_-]+)$/.exec(String(c ?? ""));
+  if (!m) return null;
+  const terminal = b64urlDecode(m[1]);
+  return terminal ? { terminal } : null;
+}
+
 // src/shared/notify.js
 var HISTORY_KEY = "dock.notify.history";
 var CAP = 200;
@@ -2584,6 +2600,22 @@ var DockCore = class extends View {
     setShared(HISTORY_KEY, applyNotifyCommand(history, cmd, Date.now(), id));
     return true;
   }
+  // browser.show.<terminal> (a handoff's notification): the agent's terminal in front, so the Browser panel follows
+  // it, and the panel shown (the right column, else the big window on that terminal). Returns false when c isn't one.
+  browserCommand(c) {
+    const b = parseBrowserShow(c);
+    if (!b) return false;
+    try {
+      run("agent.focus", { terminal: b.terminal });
+    } catch (e) {
+      console.log(`dock-core: agent.focus failed: ${e?.message ?? e}`);
+    }
+    this.reveal(
+      revealPlan(this.merged, "dock-browser", bigWindow(b.terminal)),
+      (e) => console.log(`dock-core: browser.show failed: ${e?.message ?? e}`)
+    );
+    return true;
+  }
   // Each tick: mark needs-you items whose cause is fixed, writing the history only when one changed.
   resolveNotify() {
     const history = historyOf(shared(HISTORY_KEY));
@@ -2676,6 +2708,7 @@ var DockCore = class extends View {
   command(c, cx) {
     if (this.gitCommand(c)) return;
     if (this.notifyCommand(c)) return;
+    if (this.browserCommand(c)) return;
     if (this.updateCommand(c, cx)) return;
     if (c === "reload") {
       cx.spawn(async (cx2) => this.reload(cx2));

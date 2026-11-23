@@ -13,6 +13,7 @@ import {
 } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 import { parseGitCommand, revealPlan, showPlan } from "../../shared/gitcmd.js";
+import { bigWindow, parseBrowserShow } from "../../shared/browser/panel.js";
 import { HISTORY_KEY, historyOf, markAllRead, resolveItems } from "../../shared/notify.js";
 import { NOTIFY_DIALOG, applyNotifyCommand, parseNotifyCommand } from "../../shared/notifycmd.js";
 import { fixHint, ghVersionArgs, installOf, modeOf, parseVersionJson, publishedUrl } from "../../shared/install.js";
@@ -516,6 +517,17 @@ export default class DockCore extends View {
     return true;
   }
 
+  // browser.show.<terminal> (a handoff's notification): the agent's terminal in front, so the Browser panel follows
+  // it, and the panel shown (the right column, else the big window on that terminal). Returns false when c isn't one.
+  browserCommand(c) {
+    const b = parseBrowserShow(c);
+    if (!b) return false;
+    try { run("agent.focus", { terminal: b.terminal }); } catch (e) { console.log(`dock-core: agent.focus failed: ${e?.message ?? e}`); }
+    this.reveal(revealPlan(this.merged, "dock-browser", bigWindow(b.terminal)),
+      (e) => console.log(`dock-core: browser.show failed: ${e?.message ?? e}`));
+    return true;
+  }
+
   // Each tick: mark needs-you items whose cause is fixed, writing the history only when one changed.
   resolveNotify() {
     const history = historyOf(shared(HISTORY_KEY));
@@ -620,6 +632,7 @@ export default class DockCore extends View {
   command(c, cx) {
     if (this.gitCommand(c)) return;
     if (this.notifyCommand(c)) return;
+    if (this.browserCommand(c)) return;
     if (this.updateCommand(c, cx)) return;
     if (c === "reload") {
       cx.spawn(async (cx) => this.reload(cx));

@@ -28,26 +28,29 @@ export const toPage = (local, frameW, drawnW) => {
 };
 export const drawnHeight = (frame, drawnW) => (frame.h * drawnW) / frame.w;
 
+// Named keys: the DOM key, and the Windows key code Chrome needs before it acts on one (Backspace, the arrows and
+// Tab do nothing in a text field with the key name alone).
 const NAMED = {
-  enter: "Enter", backspace: "Backspace", delete: "Delete", tab: "Tab", escape: "Escape",
-  left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown",
-  home: "Home", end: "End", pageup: "PageUp", pagedown: "PageDown",
+  enter: ["Enter", 13], backspace: ["Backspace", 8], delete: ["Delete", 46], tab: ["Tab", 9], escape: ["Escape", 27],
+  left: ["ArrowLeft", 37], right: ["ArrowRight", 39], up: ["ArrowUp", 38], down: ["ArrowDown", 40],
+  home: ["Home", 36], end: ["End", 35], pageup: ["PageUp", 33], pagedown: ["PageDown", 34],
 };
 const mask = (m = {}) => (m.alt ? 1 : 0) | (m.control ? 2 : 0) | (m.platform ? 4 : 0) | (m.shift ? 8 : 0);
 
 export function keyEvents(e) {
   const modifiers = mask(e.modifiers);
-  let key, text;
+  let key, text, named = null;
   const name = String(e.key ?? "").toLowerCase();
-  if (NAMED[name]) { key = NAMED[name]; if (name === "enter") text = "\r"; }
-  else if (name === "space") { key = " "; text = " "; }
+  if (NAMED[name]) { named = NAMED[name]; key = named[0]; if (name === "enter") text = "\r"; }
+  else if (name === "space") { key = " "; text = " "; named = ["Space", 32]; }
   else if (e.key_char) { key = e.key_char; text = e.key_char; }
   else return [];
   if (modifiers & 6) text = undefined;
-  const down = { type: "input_keyboard", eventType: "keyDown", key };
+  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] } : {};
+  const down = { type: "input_keyboard", eventType: "keyDown", key, ...codes };
   if (text !== undefined) down.text = text;
   down.modifiers = modifiers;
-  return [down, { type: "input_keyboard", eventType: "keyUp", key, modifiers }];
+  return [down, { type: "input_keyboard", eventType: "keyUp", key, ...codes, modifiers }];
 }
 
 export function wheelEvent(e, frameW, drawnW) {
@@ -55,12 +58,13 @@ export function wheelEvent(e, frameW, drawnW) {
   return { type: "input_mouse", eventType: "mouseWheel", x, y, deltaX: -e.delta.x, deltaY: -e.delta.y };
 }
 
-export function mouseEvents(kind, e, frameW, drawnW) {
+// A move carries the left button only while it is held (a drag); otherwise it is a hover.
+export function mouseEvents(kind, e, frameW, drawnW, pressed = false) {
   const { x, y } = toPage(e.local_position, frameW, drawnW);
-  const ev = (eventType) => ({ type: "input_mouse", eventType, x, y, button: "left", clickCount: e.click_count ?? 1 });
-  if (kind === "down") return [ev("mouseMoved"), ev("mousePressed")];
+  const ev = (eventType, button = "left") => ({ type: "input_mouse", eventType, x, y, button, clickCount: e.click_count ?? 1 });
+  if (kind === "down") return [ev("mouseMoved", "none"), ev("mousePressed")];
   if (kind === "up") return [ev("mouseReleased")];
-  return [ev("mouseMoved")];
+  return [ev("mouseMoved", pressed ? "left" : "none")];
 }
 
 export class FrameRing {

@@ -225,11 +225,13 @@ test("close removes the records and frames", async () => {
     x.write("t3.control.json", { v: 1, takeover: null, answer: null });
     mkdirSync(join(x.home, "herdr-dock/browser/frames/t3"), { recursive: true });
     writeFileSync(join(x.home, "herdr-dock/browser/frames/t3/a.jpg"), "x");
+    mkdirSync(join(x.home, "herdr-dock/browser/frames/t3-big"), { recursive: true });
     assert.equal(await x.run(["close"]), 0);
     assert.ok(x.calls().some((c) => c.includes("close")));
     assert.ok(!existsSync(join(x.home, "herdr-dock/browser/sessions/t3.json")));
     assert.ok(!existsSync(join(x.home, "herdr-dock/browser/sessions/t3.control.json")));
     assert.ok(!existsSync(join(x.home, "herdr-dock/browser/frames/t3")));
+    assert.ok(!existsSync(join(x.home, "herdr-dock/browser/frames/t3-big")));
   } finally { x.done(); }
 });
 

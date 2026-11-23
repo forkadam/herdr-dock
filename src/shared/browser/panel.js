@@ -1,0 +1,111 @@
+// The Browser panel's decisions (pure; no host imports): who has the page, the control record it writes, which
+// handoffs to announce, the size views, and the dock-core command that brings the panel into view.
+
+import { b64urlDecode, b64urlEncode } from "../gitcmd.js";
+import { answer, handBack, isStale, parseControl, personHas, takeOver } from "./registry.js";
+
+// What the panel shows for a session: "handoff" (the agent asked; its handoff is open), "takeover" (the person took
+// the page), else "view". A handoff answered, or past handoffMinutes, is over.
+export function panelMode(session, control, now, handoffMinutes) {
+  const c = control ?? parseControl(null);
+  const h = session?.handoff;
+  if (h && personHas(session, { ...c, takeover: null }, now, handoffMinutes)) return { kind: "handoff", handoff: h };
+  return { kind: c.takeover ? "takeover" : "view" };
+}
+
+// The person drives the page (clicks and keys go to it) in a handoff or a take-over.
+export const inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
+
+// The control record's next text: the current one (a stale one, left by an older terminal with the same id, starts
+// over), changed, and stamped with the terminal's creation time, without which browse reads it as stale.
+export function controlText(text, created, change) {
+  let c = parseControl(text);
+  if (text != null && Number.isFinite(created) && isStale(c, created)) c = parseControl(null);
+  const next = change(c);
+  return JSON.stringify(Number.isFinite(created) ? { ...next, terminalCreated: created } : next, null, 2) + "\n";
+}
+
+// The changes the panel's buttons make.
+export const changes = {
+  takeOver: (now) => (c) => (c.takeover ? c : takeOver(c, "person", now)),
+  window: (now) => (c) => takeOver(c, "window", now),
+  handBack: () => (c) => handBack(c),
+  answer: (id, value) => (c) => handBack(answer(c, id, value)),
+};
+
+// Handoffs to announce: open ones (not answered, not timed out) whose id isn't in `notified`.
+// entries: [{ session, control }] for every terminal with a session record.
+export function handoffNotices(entries, notified, now, handoffMinutes) {
+  const seen = new Set(Array.isArray(notified) ? notified : []);
+  const out = [];
+  for (const { session, control } of entries ?? []) {
+    const h = session?.handoff;
+    if (!h || seen.has(h.id)) continue;
+    if (panelMode(session, control, now, handoffMinutes).kind !== "handoff") continue;
+    out.push({ terminal: session.terminal, id: h.id, message: h.message });
+  }
+  return out;
+}
+
+// The announced ids kept (newest last), at most cap.
+export function rememberNotified(list, ids, cap = 50) {
+  const prev = Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
+  return [...prev.filter((x) => !ids.includes(x)), ...ids].slice(-cap);
+}
+
+// The size views: a new tab at the current URL, then the size. agent-browser's viewport is the session's (every
+// tab gets it), so the panel puts the agent's back when the person hands back (restoreCommands).
+export const SIZES = {
+  phone: { label: "Phone", set: ["set", "device", "iPhone 16"] },
+  tablet: { label: "Tablet", set: ["set", "device", "iPad"] },
+  desktop: { label: "Desktop", set: ["set", "viewport", "1440", "900"] },
+};
+
+export function sizeCommands(size, url) {
+  const s = SIZES[size];
+  if (!s || !url) return null;
+  return [["tab", "new", "--json", url], s.set];
+}
+
+// The tab id `tab new --json` printed, or null.
+export function newTabId(stdout) {
+  try {
+    const id = JSON.parse(String(stdout ?? "")).data?.tabId;
+    return typeof id === "string" && id ? id : null;
+  } catch { return null; }
+}
+
+// Back to the agent's tab at its own size: the size tabs closed, its tab active, its viewport set again.
+// sizes: { tabs: [ids], agentTab, viewport: { w, h } }.
+export function restoreCommands(sizes) {
+  if (!sizes?.tabs?.length) return [];
+  const out = sizes.tabs.map((id) => ["tab", "close", id]);
+  if (sizes.agentTab) out.push(["tab", sizes.agentTab]);
+  const v = sizes.viewport;
+  if (v && v.w > 0 && v.h > 0) out.push(["set", "viewport", String(v.w), String(v.h)]);
+  return out;
+}
+
+// The picture's width: the panel's width, and in the big window also no taller than the room there is.
+export function fitWidth(frame, availW, availH) {
+  const w = Math.floor(availW);
+  if (!frame?.w || !frame?.h || !(availH > 0)) return w;
+  return Math.max(0, Math.min(w, Math.floor((availH * frame.w) / frame.h)));
+}
+
+// The Enlarge window, and where dock-core shows the panel when the right column doesn't hold it.
+export const bigWindow = (terminal) => ({
+  mod: "dock-browser", kind: "window", key: "dock-browser-big", width: 0.8, height: 0.85,
+  props: { big: true, ...(terminal ? { terminal } : {}) },
+});
+
+// dock-core's browser.show command (without the "dock-core." prefix): bring the panel into view on a terminal.
+// Herdr drops run()'s args for mod commands, so the terminal rides in the name.
+export const browserShowName = (terminal) => `browser.show.${b64urlEncode(String(terminal))}`;
+
+export function parseBrowserShow(c) {
+  const m = /^browser\.show\.([A-Za-z0-9_-]+)$/.exec(String(c ?? ""));
+  if (!m) return null;
+  const terminal = b64urlDecode(m[1]);
+  return terminal ? { terminal } : null;
+}

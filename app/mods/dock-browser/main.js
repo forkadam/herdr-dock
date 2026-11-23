@@ -1,8 +1,8 @@
 // src/mods/dock-browser/main.js
-import { View, div, image } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
-import { agents, appHome as appHome2, checking, exec, focused, hc, props, readTextFile, shared, theme, watchFolder, window } from "herdr";
-import * as fs2 from "fs/promises";
+import { View, div as div2, image } from "gpui-kit";
+import { h_flex as h_flex2, v_flex as v_flex2 } from "gpui-base";
+import { agents, appHome as appHome3, checking, closeOverlay, exec as exec2, focused, hc, nextCommand, props, readTextFile as readTextFile2, shared as shared2, theme, watchFolder, window } from "herdr";
+import * as fs3 from "fs/promises";
 
 // src/shared/path.js
 function slashPath(p) {
@@ -40,10 +40,10 @@ function modeOf(src) {
   if (src.mode === "app") return "app";
   return null;
 }
-function installOf(src, home2) {
+function installOf(src, home3) {
   const mode = modeOf(src);
   if (mode === "app") {
-    return { mode, configPath: `${home2}/mods/dock-core/config.json`, repo: null, versionPath: `${home2}/mods/dock-core/VERSION.json` };
+    return { mode, configPath: `${home3}/mods/dock-core/config.json`, repo: null, versionPath: `${home3}/mods/dock-core/VERSION.json` };
   }
   if (mode !== "clone" || !isText(src.config)) return null;
   const configPath = slashPath(src.config);
@@ -227,11 +227,13 @@ function isProduction(url, patterns) {
 }
 
 // src/shared/browser/session.js
+var realSessionName = (session) => `${session}-real`;
 var BROWSER_REL = "herdr-dock/browser";
 var sessionsRel = () => `${BROWSER_REL}/sessions`;
 var sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 var controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 var framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
+var bigFramesRel = (t) => `${framesRel(t)}-big`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 
 // src/shared/browser/registry.js
@@ -277,7 +279,22 @@ function parseControl(text) {
     ...created(o)
   };
 }
+var limit = (m) => Number.isFinite(m) && m > 0 ? m : 15;
+var expired = (h, now, minutes) => now - h.since > limit(minutes) * 6e4;
 var isStale = (record, createdMs) => !record || !Number.isFinite(record.terminalCreated) || record.terminalCreated !== createdMs;
+var answerOf = (session, control) => session.handoff && control.answer && control.answer.id === session.handoff.id ? control.answer.value : null;
+function personHas(session, control, now, handoffMinutes) {
+  if (control.takeover) return true;
+  const h = session.handoff;
+  return !!h && !answerOf(session, control) && !expired(h, now, handoffMinutes);
+}
+var answer = (control, id, value) => ({ ...control, answer: { id, value } });
+var takeOver = (control, reason, now, terminalCreated) => ({
+  ...control,
+  takeover: { reason, since: now },
+  ...Number.isFinite(terminalCreated) ? { terminalCreated } : {}
+});
+var handBack = (control) => ({ ...control, takeover: null });
 var goneSessions = (sessions, liveTerminals2) => sessions.filter((s) => !liveTerminals2.has(s.terminal));
 function liveTerminals(stdout) {
   let o;
@@ -327,9 +344,55 @@ var toPage = (local, frameW, drawnW) => {
   return { x: Math.round(local.x * k), y: Math.round(local.y * k) };
 };
 var drawnHeight = (frame, drawnW) => frame.h * drawnW / frame.w;
+var NAMED = {
+  enter: ["Enter", 13],
+  backspace: ["Backspace", 8],
+  delete: ["Delete", 46],
+  tab: ["Tab", 9],
+  escape: ["Escape", 27],
+  left: ["ArrowLeft", 37],
+  right: ["ArrowRight", 39],
+  up: ["ArrowUp", 38],
+  down: ["ArrowDown", 40],
+  home: ["Home", 36],
+  end: ["End", 35],
+  pageup: ["PageUp", 33],
+  pagedown: ["PageDown", 34]
+};
+var mask = (m = {}) => (m.alt ? 1 : 0) | (m.control ? 2 : 0) | (m.platform ? 4 : 0) | (m.shift ? 8 : 0);
+function keyEvents(e) {
+  const modifiers = mask(e.modifiers);
+  let key, text, named = null;
+  const name = String(e.key ?? "").toLowerCase();
+  if (NAMED[name]) {
+    named = NAMED[name];
+    key = named[0];
+    if (name === "enter") text = "\r";
+  } else if (name === "space") {
+    key = " ";
+    text = " ";
+    named = ["Space", 32];
+  } else if (e.key_char) {
+    key = e.key_char;
+    text = e.key_char;
+  } else return [];
+  if (modifiers & 6) text = void 0;
+  const codes = named ? { code: named[0], windowsVirtualKeyCode: named[1] } : {};
+  const down = { type: "input_keyboard", eventType: "keyDown", key, ...codes };
+  if (text !== void 0) down.text = text;
+  down.modifiers = modifiers;
+  return [down, { type: "input_keyboard", eventType: "keyUp", key, ...codes, modifiers }];
+}
 function wheelEvent(e, frameW, drawnW) {
   const { x, y } = toPage(e.local_position, frameW, drawnW);
   return { type: "input_mouse", eventType: "mouseWheel", x, y, deltaX: -e.delta.x, deltaY: -e.delta.y };
+}
+function mouseEvents(kind, e, frameW, drawnW, pressed = false) {
+  const { x, y } = toPage(e.local_position, frameW, drawnW);
+  const ev = (eventType, button2 = "left") => ({ type: "input_mouse", eventType, x, y, button: button2, clickCount: e.click_count ?? 1 });
+  if (kind === "down") return [ev("mouseMoved", "none"), ev("mousePressed")];
+  if (kind === "up") return [ev("mouseReleased")];
+  return [ev("mouseMoved", pressed ? "left" : "none")];
 }
 var FrameRing = class {
   constructor(dirRel, keep = 6) {
@@ -428,6 +491,107 @@ function pageHeading(record, state) {
   return { title: (bare ? fromRecord || tabTitle : tabTitle) || url, url };
 }
 
+// src/shared/gitcmd.js
+var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+function utf8(str) {
+  const out = [];
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c < 128) out.push(c);
+    else if (c < 2048) out.push(192 | c >> 6, 128 | c & 63);
+    else if (c < 65536) out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+    else out.push(240 | c >> 18, 128 | c >> 12 & 63, 128 | c >> 6 & 63, 128 | c & 63);
+  }
+  return out;
+}
+function b64urlEncode(str) {
+  const b = utf8(String(str));
+  let s = "";
+  for (let i = 0; i < b.length; i += 3) {
+    const n = b[i] << 16 | (b[i + 1] ?? 0) << 8 | (b[i + 2] ?? 0);
+    s += ALPHABET[n >> 18 & 63] + ALPHABET[n >> 12 & 63];
+    if (i + 1 < b.length) s += ALPHABET[n >> 6 & 63];
+    if (i + 2 < b.length) s += ALPHABET[n & 63];
+  }
+  return s;
+}
+
+// src/shared/browser/panel.js
+function panelMode(session, control, now, handoffMinutes) {
+  const c = control ?? parseControl(null);
+  const h = session?.handoff;
+  if (h && personHas(session, { ...c, takeover: null }, now, handoffMinutes)) return { kind: "handoff", handoff: h };
+  return { kind: c.takeover ? "takeover" : "view" };
+}
+var inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
+function controlText(text, created2, change) {
+  let c = parseControl(text);
+  if (text != null && Number.isFinite(created2) && isStale(c, created2)) c = parseControl(null);
+  const next = change(c);
+  return JSON.stringify(Number.isFinite(created2) ? { ...next, terminalCreated: created2 } : next, null, 2) + "\n";
+}
+var changes = {
+  takeOver: (now) => (c) => c.takeover ? c : takeOver(c, "person", now),
+  window: (now) => (c) => takeOver(c, "window", now),
+  handBack: () => (c) => handBack(c),
+  answer: (id, value) => (c) => handBack(answer(c, id, value))
+};
+function handoffNotices(entries, notified, now, handoffMinutes) {
+  const seen = new Set(Array.isArray(notified) ? notified : []);
+  const out = [];
+  for (const { session, control } of entries ?? []) {
+    const h = session?.handoff;
+    if (!h || seen.has(h.id)) continue;
+    if (panelMode(session, control, now, handoffMinutes).kind !== "handoff") continue;
+    out.push({ terminal: session.terminal, id: h.id, message: h.message });
+  }
+  return out;
+}
+function rememberNotified(list, ids, cap = 50) {
+  const prev = Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
+  return [...prev.filter((x) => !ids.includes(x)), ...ids].slice(-cap);
+}
+var SIZES = {
+  phone: { label: "Phone", set: ["set", "device", "iPhone 16"] },
+  tablet: { label: "Tablet", set: ["set", "device", "iPad"] },
+  desktop: { label: "Desktop", set: ["set", "viewport", "1440", "900"] }
+};
+function sizeCommands(size, url) {
+  const s = SIZES[size];
+  if (!s || !url) return null;
+  return [["tab", "new", "--json", url], s.set];
+}
+function newTabId(stdout) {
+  try {
+    const id = JSON.parse(String(stdout ?? "")).data?.tabId;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+function restoreCommands(sizes) {
+  if (!sizes?.tabs?.length) return [];
+  const out = sizes.tabs.map((id) => ["tab", "close", id]);
+  if (sizes.agentTab) out.push(["tab", sizes.agentTab]);
+  const v = sizes.viewport;
+  if (v && v.w > 0 && v.h > 0) out.push(["set", "viewport", String(v.w), String(v.h)]);
+  return out;
+}
+function fitWidth(frame, availW, availH) {
+  const w = Math.floor(availW);
+  if (!frame?.w || !frame?.h || !(availH > 0)) return w;
+  return Math.max(0, Math.min(w, Math.floor(availH * frame.w / frame.h)));
+}
+var bigWindow = (terminal) => ({
+  mod: "dock-browser",
+  kind: "window",
+  key: "dock-browser-big",
+  width: 0.8,
+  height: 0.85,
+  props: { big: true, ...terminal ? { terminal } : {} }
+});
+var browserShowName = (terminal) => `browser.show.${b64urlEncode(String(terminal))}`;
+
 // src/mods/dock-browser/stream.js
 import { WebSocket } from "websocket";
 import { Buffer } from "buffer";
@@ -496,13 +660,13 @@ var Stream = class {
   start(cx) {
     if (this.stopped) return;
     const gen = ++this.gen;
-    const home2 = slashPath(appHome());
+    const home3 = slashPath(appHome());
     cx.spawn(async () => {
       let ws = null;
       try {
         await (clearing.get(this.framesRel) ?? Promise.resolve()).catch(() => {
         });
-        await fs.mkdir(`${home2}/${this.framesRel}`, { recursive: true });
+        await fs.mkdir(`${home3}/${this.framesRel}`, { recursive: true });
         ws = await WebSocket.connect(`ws://127.0.0.1:${this.port}/?maxFps=${MAX_FPS}`);
         if (this.stopped || gen !== this.gen) {
           ws.close().catch(() => {
@@ -521,7 +685,7 @@ var Stream = class {
             continue;
           }
           if (m?.type === "frame") {
-            await this.write(m, home2);
+            await this.write(m, home3);
             continue;
           }
           const next = streamStep(this.state, m);
@@ -544,28 +708,28 @@ var Stream = class {
     this.set({ ...this.state, phase: "connecting" });
     this.start(cx);
   }
-  async write(m, home2) {
+  async write(m, home3) {
     if (typeof m.data !== "string") return;
     const bytes = bytesOf(m.data);
     const size = jpegSize(bytes);
     if (!size) return;
     const { rel, drop } = this.ring.next(`${this.epoch}-${++this.count}`);
-    const file = `${home2}/${rel}`;
+    const file = `${home3}/${rel}`;
     try {
       await fs.writeFile(file, bytes);
     } catch {
       try {
-        await fs.mkdir(`${home2}/${this.framesRel}`, { recursive: true });
+        await fs.mkdir(`${home3}/${this.framesRel}`, { recursive: true });
         await fs.writeFile(file, bytes);
       } catch {
         this.ring.list = this.ring.list.filter((r) => r !== rel);
         return;
       }
     }
-    for (const d of drop) fs.unlink(`${home2}/${d}`).catch(() => {
+    for (const d of drop) fs.unlink(`${home3}/${d}`).catch(() => {
     });
     if (this.stopped) {
-      fs.unlink(`${home2}/${rel}`).catch(() => {
+      fs.unlink(`${home3}/${rel}`).catch(() => {
       });
       return;
     }
@@ -576,9 +740,9 @@ var Stream = class {
     this.state = state;
     this.onChange(this);
   }
-  // Closes the socket and deletes the frames folder.
+  // Closes the socket and deletes the frames folder (the returned promise settles when it's gone).
   stop() {
-    if (this.stopped) return;
+    if (this.stopped) return Promise.resolve();
     this.stopped = true;
     this.gen++;
     const ws = this.ws;
@@ -586,12 +750,216 @@ var Stream = class {
     ws?.close().catch(() => {
     });
     this.ring.clear();
-    clearFolder(this.framesRel);
+    return clearFolder(this.framesRel);
   }
   // A message to the page (input). Typed input goes here only: never logged.
   send(msg) {
     this.ws?.write(JSON.stringify(msg)).catch(() => {
     });
+  }
+};
+
+// src/mods/dock-browser/controls.js
+import { div } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+function button(t, id, label, onClick, { busy = false, primary = false, tip = null } = {}) {
+  return div().id(id).flex_none().px(8).h(22).flex().items_center().rounded(4).text_size(11.5).when(primary, (el) => el.bg(t.accent).text_color(t.background)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(!!tip, (el) => el.tooltip(tip)).when(busy, (el) => el.opacity(0.5)).when(!busy, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
+    cx.stop_propagation();
+    onClick(cx);
+  })).child(label);
+}
+function controlBar(t, state, on) {
+  const busy = !!state.busy;
+  const row = h_flex().flex_none().flex_wrap().gap(4).px(12).py(6).items_center().border_b(1).border_color(t.border);
+  if (state.control === "view") {
+    row.child(button(t, "browser-takeover", "Take over", on.takeOver, { busy, tip: "Use the page yourself; the agent waits until you hand back" }));
+  } else if (state.control === "takeover") {
+    row.child(button(t, "browser-handback", "Hand back", on.handBack, { busy, primary: true, tip: "Give the page back to the agent" }));
+  }
+  row.child(div().flex_none().w(6));
+  for (const [kind, s] of Object.entries(SIZES)) {
+    row.child(button(t, `browser-size-${kind}`, s.label, (cx) => on.size(kind, cx), { busy, tip: `This page in a new tab at ${kind} size` }));
+  }
+  row.child(div().flex_1());
+  row.child(state.big ? button(t, "browser-close", "Close", on.close, { tip: "Close this window" }) : button(t, "browser-enlarge", "Enlarge", on.enlarge, { tip: "The page in a big window" }));
+  if (state.busy) row.child(div().flex_none().text_size(11).text_color(t.dim).child(state.busy));
+  return row;
+}
+function handoffBar(t, state, on) {
+  const busy = !!state.busy;
+  return v_flex().flex_none().gap(6).px(12).py(8).bg(t.raised ?? t.background).border_b(1).border_color(t.working).child(div().text_size(11).font_semibold().text_color(t.working).child("The agent needs you")).child(div().text_size(12.5).text_color(t.foreground).child(state.message || "The agent asked for your help in this page.")).when(!!state.windowOpen, (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Finish in the window, then press Done"))).child(h_flex().flex_wrap().gap(4).items_center().child(button(t, "browser-done", "Done", on.done, { busy, primary: true, tip: "Tell the agent you're done" })).child(button(t, "browser-cancel", "Cancel", on.cancel, { busy, tip: "Tell the agent you won't do it" })).when(!state.windowOpen, (el) => el.child(button(
+    t,
+    "browser-window",
+    "Open in a real window",
+    on.openWindow,
+    { busy, tip: "For captchas and passkeys: a real browser window on this page" }
+  ))));
+}
+var errorLine = (t, text) => div().flex_none().px(12).py(4).text_size(11.5).text_color(t.blocked).child(text);
+
+// src/mods/dock-browser/actions.js
+import { appHome as appHome2, exec, notify, readTextFile, setShared, shared, writeTextFile } from "herdr";
+import * as fs2 from "fs/promises";
+var NOTIFIED_KEY = "dock.browser.notified";
+var home = () => slashPath(appHome2());
+async function writeControl(t, created2, change) {
+  const path = `${home()}/${controlFileRel(t)}`;
+  await fs2.mkdir(`${home()}/${sessionsRel()}`, { recursive: true }).catch(() => {
+  });
+  for (let i = 0; i < 3; i++) {
+    const text = await readTextFile(path).catch(() => null);
+    const next = controlText(text, created2, change);
+    try {
+      await writeTextFile(path, next, text);
+      return parseControl(next);
+    } catch {
+    }
+  }
+  return null;
+}
+var firstLine = (r) => String(r?.stderr || r?.stdout || "").trim().split("\n").find((l) => l.trim()) ?? "";
+async function run(cmd, args, timeout = 6e4) {
+  const r = await exec(cmd, args, { timeout });
+  if (r.code !== 0) throw new Error(firstLine(r) || `${cmd} exited ${r.code}`);
+  return r;
+}
+var browse = (args) => run("node", [`${home()}/mods/dock-browser/browse.mjs`, ...args], 12e4);
+async function allRecords() {
+  const dir = `${home()}/${sessionsRel()}`;
+  let names = [];
+  try {
+    names = await fs2.readdir(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    if (!n.endsWith(".json") || n.endsWith(".control.json")) continue;
+    const session = parseSession(await readTextFile(`${dir}/${n}`).catch(() => null));
+    if (!session) continue;
+    const control = parseControl(await readTextFile(`${home()}/${controlFileRel(session.terminal)}`).catch(() => null));
+    out.push({ session, control });
+  }
+  return out;
+}
+async function announceHandoffs(handoffMinutes) {
+  const entries = await allRecords();
+  const notices = handoffNotices(entries, shared(NOTIFIED_KEY), Date.now(), handoffMinutes);
+  if (!notices.length) return;
+  setShared(NOTIFIED_KEY, rememberNotified(shared(NOTIFIED_KEY), notices.map((n) => n.id)));
+  for (const n of notices) {
+    notify({
+      title: "The agent needs you",
+      body: n.message,
+      level: "warning",
+      action: { name: `dock-core.${browserShowName(n.terminal)}` }
+    });
+  }
+}
+
+// src/mods/dock-browser/person.js
+import { openOverlay } from "herdr";
+var personControls = {
+  mode() {
+    return this.record ? panelMode(this.record, this.control, Date.now(), this.browser.handoffMinutes) : { kind: "view" };
+  },
+  // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons.
+  act(label, cx, work) {
+    if (this.busy || !this.terminal || !this.record) return;
+    const t = this.terminal, rec = this.record;
+    this.busy = label;
+    this.error = null;
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      try {
+        await work(t, rec);
+      } catch (e) {
+        if (this.terminal === t) this.error = String(e?.message ?? e);
+      }
+      this.busy = null;
+      cx2.notify();
+    });
+  },
+  async setControl(t, change) {
+    const c = await writeControl(t, this.created, change);
+    if (!c) throw new Error("The control record couldn't be written");
+    if (this.terminal === t) this.control = c;
+  },
+  ab(rec, args) {
+    const chrome = this.browser.chrome ? ["--executable-path", this.browser.chrome] : [];
+    return run(this.bin(), ["--session", rec.session, ...chrome, ...args]);
+  },
+  takeOver(cx) {
+    this.act("Taking over\u2026", cx, (t) => this.setControl(t, changes.takeOver(Date.now())));
+  },
+  // Size tabs closed and the agent's tab and viewport back, then the page is the agent's again.
+  handBack(cx) {
+    this.act("Handing back\u2026", cx, async (t, rec) => {
+      await this.undoSizes(t, rec);
+      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, true);
+      await this.setControl(t, changes.handBack());
+    });
+  },
+  async undoSizes(t, rec) {
+    const s = this.sizes;
+    if (!s || s.terminal !== t) return;
+    this.sizes = null;
+    for (const args of restoreCommands(s)) await this.ab(rec, args).catch(() => null);
+  },
+  // The real window: keep what the person did there (window-done) or just close it.
+  async closeWindow(t, rec, keep) {
+    this.windowOpen = null;
+    if (keep) await browse(["window-done", "--terminal", t]);
+    else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
+  },
+  answer(value, cx) {
+    const h = this.mode().handoff;
+    if (!h) return;
+    this.act(value === "done" ? "Done\u2026" : "Cancelling\u2026", cx, async (t, rec) => {
+      if (this.windowOpen?.terminal === t) await this.closeWindow(t, rec, value === "done");
+      await this.undoSizes(t, rec);
+      await this.setControl(t, changes.answer(h.id, value));
+    });
+  },
+  openWindow(cx) {
+    const h = this.mode().handoff;
+    if (!h) return;
+    this.act("Opening a window\u2026", cx, async (t) => {
+      await this.setControl(t, changes.window(Date.now()));
+      await browse(["window-open", "--terminal", t]);
+      if (this.terminal === t) this.windowOpen = { terminal: t, id: h.id };
+    });
+  },
+  // Another tab: the person takes the page first, so the agent never drives it at the same time.
+  switchTab(tabId, cx) {
+    this.act("Switching tab\u2026", cx, async (t, rec) => {
+      if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
+      await this.ab(rec, ["tab", tabId]);
+    });
+  },
+  // The page at a size, in a new tab. agent-browser's viewport is the whole session's and the new tab becomes the
+  // active one, so the person takes the page (the agent waits) and Hand back puts the agent's tab and size back.
+  size(kind, cx) {
+    const st = this.stream?.state ?? {};
+    const { url } = pageHeading(this.record, st);
+    const cmds = sizeCommands(kind, url);
+    if (!cmds) return;
+    const agentTab = activeTab(st.tabs)?.tabId ?? null, viewport = this.stream?.size ?? null;
+    this.act("Opening the size\u2026", cx, async (t, rec) => {
+      if (!inControl(this.mode())) await this.setControl(t, changes.takeOver(Date.now()));
+      if (!this.sizes || this.sizes.terminal !== t) this.sizes = { terminal: t, tabs: [], agentTab, viewport };
+      const opened = await this.ab(rec, cmds[0]);
+      const id = newTabId(opened.stdout);
+      if (id) this.sizes.tabs.push(id);
+      await this.ab(rec, cmds[1]);
+    });
+  },
+  enlarge() {
+    try {
+      openOverlay(bigWindow(this.terminal));
+    } catch (e) {
+      this.error = String(e?.message ?? e);
+    }
   }
 };
 
@@ -602,11 +970,21 @@ var SWEEP_MS = 3e4;
 var LOSS_GRACE_MS = 1e3;
 var CLOSED_MS = 3e3;
 var EMPTY = "No page yet. The agent opens one with browse open.";
-var home = () => slashPath(appHome2());
+var MOVE_MS = 30;
+var home2 = () => slashPath(appHome3());
 var nodePlatform = (p) => p === "windows" ? "win32" : p === "macos" ? "darwin" : "linux";
 var Browser = class extends View {
   init(_props, cx) {
+    this.big = !!props()?.big;
+    this.h = cx.focus_handle();
     this.width = 0;
+    this.bodyH = 0;
+    this.busy = null;
+    this.error = null;
+    this.windowOpen = null;
+    this.sizes = null;
+    this.pressed = false;
+    this.lastMove = 0;
     this.key = null;
     this.terminal = null;
     this.created = null;
@@ -619,23 +997,42 @@ var Browser = class extends View {
     this.watch = null;
     if (checking()) return;
     cx.timer.every(SWEEP_MS, (cx2) => {
+      if (this.big) {
+        cx2.notify();
+        return;
+      }
       if (this.shown()) cx2.spawn(async () => this.sweep());
+      cx2.notify();
+    });
+    if (!this.big) this.watchHandoffs(cx);
+    cx.spawn(async (cx2) => {
+      for (; ; ) {
+        const c = await nextCommand();
+        if (c === "focus" && this.record && inControl(this.mode())) this.h.focus();
+        if (c === "enlarge" && !this.big && this.terminal) this.enlarge();
+        cx2.notify();
+      }
     });
   }
   shown() {
-    if (props()?.dockRegion !== "right") return true;
-    const applied = shared("dock.config.applied");
-    return rightShownOf(shared("dock.right.shown"), applied) && rightActiveOf(shared("dock.right.active"), applied?.right?.features ?? []) === MOD;
+    if (this.big || props()?.dockRegion !== "right") return true;
+    const applied = shared2("dock.config.applied");
+    return rightShownOf(shared2("dock.right.shown"), applied) && rightActiveOf(shared2("dock.right.active"), applied?.right?.features ?? []) === MOD;
   }
   bin() {
-    return `${home()}/${binRel(nodePlatform(window()?.platform))}`;
+    return `${home2()}/${binRel(nodePlatform(window()?.platform))}`;
+  }
+  framesOf(t) {
+    return this.big ? bigFramesRel(t) : framesRel(t);
   }
   // Called from render: notices the panel showing or hiding and the agent in front changing.
   follow(cx) {
     if (checking()) return;
     const shown = this.shown();
     let agent = null;
-    if (shown) {
+    const fixed = this.big ? props()?.terminal : null;
+    if (fixed) agent = { address: String(fixed) };
+    else if (shown) {
       try {
         agent = pickAgent(focused(), agents());
       } catch {
@@ -648,7 +1045,7 @@ var Browser = class extends View {
     const wasShown = this.key !== null && this.key !== "hidden";
     this.key = key;
     this.stopStream();
-    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false });
+    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null });
     if (!shown) {
       this.watch?.cancel?.();
       this.watch = null;
@@ -658,7 +1055,7 @@ var Browser = class extends View {
       this.watchSessions(cx);
       cx.spawn(async (cx2) => {
         await this.loadConfig();
-        await this.sweep();
+        if (!this.big) await this.sweep();
         cx2.notify();
       });
     }
@@ -674,14 +1071,14 @@ var Browser = class extends View {
   // The merged config's browser section, read the way dock-core does (source.json → config + local.json).
   async loadConfig() {
     try {
-      const h = home();
-      const src = JSON.parse(await readTextFile(`${h}/mods/dock-core/source.json`) ?? "null");
+      const h = home2();
+      const src = JSON.parse(await readTextFile2(`${h}/mods/dock-core/source.json`) ?? "null");
       const install = installOf(src, h);
       if (!install) return;
-      const parsed = parseConfig(await readTextFile(install.configPath) ?? "");
+      const parsed = parseConfig(await readTextFile2(install.configPath) ?? "");
       if (!parsed.ok) return;
-      const local = parseLocal(await readTextFile(`${h}/herdr-dock/local.json`).catch(() => null));
-      const host = shared("dock.host");
+      const local = parseLocal(await readTextFile2(`${h}/herdr-dock/local.json`).catch(() => null));
+      const host = shared2("dock.host");
       this.browser = browserOf(mergeWithLocal(parsed.config, typeof host === "string" ? host : null, local.ok ? local.local : null));
     } catch (e) {
       console.log(`${MOD}: config not read: ${e?.message ?? e}`);
@@ -698,14 +1095,14 @@ var Browser = class extends View {
   }
   // This terminal's session record, or null (none, unreadable, or left by an older terminal with the same id).
   async sessionOf(t) {
-    const rec = parseSession(await readTextFile(`${home()}/${sessionFileRel(t)}`).catch(() => null));
+    const rec = parseSession(await readTextFile2(`${home2()}/${sessionFileRel(t)}`).catch(() => null));
     return rec && this.created != null && isStale(rec, this.created) ? null : rec;
   }
   async readRecords(cx) {
     const t = this.terminal;
     if (!t) return;
     const rec = await this.sessionOf(t);
-    const text = await readTextFile(`${home()}/${controlFileRel(t)}`).catch(() => null);
+    const text = await readTextFile2(`${home2()}/${controlFileRel(t)}`).catch(() => null);
     if (this.terminal !== t) return;
     const control = parseControl(text);
     this.control = text != null && this.created != null && isStale(control, this.created) ? parseControl(null) : control;
@@ -717,11 +1114,11 @@ var Browser = class extends View {
   }
   // Re-reads the records when the sessions folder changes, while the panel shows.
   watchSessions(cx) {
-    const dir = `${home()}/${sessionsRel()}`;
+    const dir = `${home2()}/${sessionsRel()}`;
     const gen = this.watchGen = (this.watchGen ?? 0) + 1;
     const done = () => this.key === "hidden" || this.watchGen !== gen;
     cx.spawn(async (cx2) => {
-      await fs2.mkdir(dir, { recursive: true }).catch(() => {
+      await fs3.mkdir(dir, { recursive: true }).catch(() => {
       });
       for (; ; ) {
         if (done()) return;
@@ -751,7 +1148,7 @@ var Browser = class extends View {
     const t = this.terminal;
     const s = new Stream({
       port: rec.port,
-      framesRel: framesRel(t),
+      framesRel: this.framesOf(t),
       onChange: () => {
         if (this.stream === s) cx.notify();
       },
@@ -781,7 +1178,7 @@ var Browser = class extends View {
       }
       let port = 0;
       if (what === "reconnect") {
-        const r = await exec(this.bin(), ["--session", s.session, "stream", "status", "--json"]).catch(() => null);
+        const r = await exec2(this.bin(), ["--session", s.session, "stream", "status", "--json"]).catch(() => null);
         port = r?.code === 0 ? streamPort(r.stdout) : 0;
       }
       if (this.stream !== s) return;
@@ -806,66 +1203,115 @@ var Browser = class extends View {
   // Sessions whose terminal is gone: their browser closed, their records and frames deleted.
   async sweep() {
     if (checking()) return;
-    const r = await exec("herdr-app", ["ls"]).catch(() => null);
+    const r = await exec2("herdr-app", ["ls"]).catch(() => null);
     const live = r?.code === 0 ? liveTerminals(r.stdout) : null;
     if (!live) return;
-    const dir = `${home()}/${sessionsRel()}`;
+    const dir = `${home2()}/${sessionsRel()}`;
     let names = [];
     try {
-      names = await fs2.readdir(dir);
+      names = await fs3.readdir(dir);
     } catch {
       return;
     }
     const sessions = [];
     for (const n of names) {
       if (!n.endsWith(".json") || n.endsWith(".control.json")) continue;
-      const rec = parseSession(await readTextFile(`${dir}/${n}`).catch(() => null));
+      const rec = parseSession(await readTextFile2(`${dir}/${n}`).catch(() => null));
       if (rec) sessions.push(rec);
     }
     for (const g of goneSessions(sessions, live)) {
       const chrome = this.browser.chrome ? ["--executable-path", this.browser.chrome] : [];
-      await exec(this.bin(), ["--session", g.session, ...chrome, "close"]).catch(() => null);
-      await fs2.unlink(`${home()}/${sessionFileRel(g.terminal)}`).catch(() => {
+      await exec2(this.bin(), ["--session", g.session, ...chrome, "close"]).catch(() => null);
+      await fs3.unlink(`${home2()}/${sessionFileRel(g.terminal)}`).catch(() => {
       });
-      await fs2.unlink(`${home()}/${controlFileRel(g.terminal)}`).catch(() => {
+      await fs3.unlink(`${home2()}/${controlFileRel(g.terminal)}`).catch(() => {
       });
       await clearFolder(framesRel(g.terminal));
+      await clearFolder(bigFramesRel(g.terminal));
     }
+  }
+  // New handoffs, announced whether or not the panel shows (the notification is how the person finds out).
+  watchHandoffs(cx) {
+    const dir = `${home2()}/${sessionsRel()}`;
+    cx.spawn(async (cx2) => {
+      await this.loadConfig();
+      await fs3.mkdir(dir, { recursive: true }).catch(() => {
+      });
+      for (; ; ) {
+        await announceHandoffs(this.browser.handoffMinutes).catch((e) => console.log(`${MOD}: handoffs not read: ${e?.message ?? e}`));
+        let w;
+        try {
+          w = watchFolder(dir);
+        } catch {
+          await cx2.sleep(3e3);
+          continue;
+        }
+        const changed = await w.catch(() => null);
+        if (!changed?.length) await cx2.sleep(1e3);
+      }
+    });
   }
   // ---- drawing ----
   note(t, text) {
-    return div().p(PAD + 2).text_size(12.5).text_color(t.dim).child(text);
+    return div2().p(PAD + 2).text_size(12.5).text_color(t.dim).child(text);
   }
   chip(t, text, color) {
-    return div().flex_none().px(6).h(18).flex().items_center().rounded(4).border_1().border_color(color ?? t.border).text_size(10.5).text_color(color ?? t.muted).child(text);
+    return div2().flex_none().px(6).h(18).flex().items_center().rounded(4).border_1().border_color(color ?? t.border).text_size(10.5).text_color(color ?? t.muted).child(text);
   }
-  header(t) {
+  header(t, cx) {
     const rec = this.record, st = this.stream?.state ?? {};
     const { title, url } = pageHeading(rec, st);
     const prod = isProduction(url, this.browser.production);
     const errors = st.errors ?? 0;
     const tabs = Array.isArray(st.tabs) ? st.tabs : [];
-    return v_flex().flex_none().px(PAD).pt(10).pb(8).gap(4).border_b(1).border_color(t.border).child(h_flex().gap(6).items_center().child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(title || "Browser")).when(!!prod, (el) => el.child(this.chip(t, "Production", t.blocked))).child(this.chip(t, rec.profile === "signed-in" ? "signed-in" : "clean")).when(errors > 0, (el) => el.child(div().id("browser-errors").flex_none().px(6).h(18).flex().items_center().rounded(4).cursor_pointer().bg(t.blocked).text_size(10.5).text_color(t.background).tooltip(this.showErrors ? "Hide the errors" : "The page's last console errors").on_click((_e, cx) => {
+    return v_flex2().flex_none().px(PAD).pt(10).pb(8).gap(4).border_b(1).border_color(t.border).child(h_flex2().gap(6).items_center().child(div2().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(title || "Browser")).when(!!prod, (el) => el.child(this.chip(t, "Production", t.blocked))).child(this.chip(t, rec.profile === "signed-in" ? "signed-in" : "clean")).when(errors > 0, (el) => el.child(div2().id("browser-errors").flex_none().px(6).h(18).flex().items_center().rounded(4).cursor_pointer().bg(t.blocked).text_size(10.5).text_color(t.background).tooltip(this.showErrors ? "Hide the errors" : "The page's last console errors").on_click((_e, cx2) => {
       this.showErrors = !this.showErrors;
-      cx.notify();
-    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active, (e) => e.text_color(t.muted)).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => el.child(v_flex().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar().gap(2).p(6).rounded(6).border_1().border_color(t.border).children((st.errorTexts ?? []).slice().reverse().map((e, i) => div().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
+      cx2.notify();
+    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div2().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex2().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div2().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Switch to this tab (you take the page)").on_click((_e, cx2) => this.switchTab(String(tab.tabId), cx2))).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => el.child(v_flex2().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar().gap(2).p(6).rounded(6).border_1().border_color(t.border).children((st.errorTexts ?? []).slice().reverse().map((e, i) => div2().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
   }
-  picture(t) {
+  picture(t, mode) {
     const s = this.stream;
-    const drawnW = Math.floor(this.width - PAD * 2);
+    const room = this.big ? this.bodyH - PAD * 2 : 0;
+    const drawnW = fitWidth(s?.size, this.width - PAD * 2, room);
     if (!s?.frame || !s.size || drawnW <= 0) return this.note(t, s?.state.phase === "connecting" && s.loss.lastReconnect ? "Reconnecting\u2026" : "Connecting\u2026");
     const h = Math.round(drawnHeight(s.size, drawnW));
-    const layer = (rel) => div().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
-    return div().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4).border_1().border_color(t.border).on_scroll_wheel((e, cx) => {
+    const layer = (rel) => div2().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
+    const live = inControl(mode);
+    const edge = mode.kind === "handoff" ? t.working : t.accent;
+    const send = (msgs) => {
+      for (const m of msgs) s.send(m);
+    };
+    return div2().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4).when(live, (el) => el.border_2().border_color(edge)).when(!live, (el) => el.border_1().border_color(t.border)).on_scroll_wheel((e, cx) => {
       if (!s.size || !e.local_position) return;
       s.send(wheelEvent(e, s.size.w, drawnW));
       cx.stop_propagation();
-    }).when(!!s.prev, (el) => el.child(layer(s.prev))).child(layer(s.frame));
+    }).when(live, (el) => el.track_focus(this.h).on_mouse_down("left", (e, cx) => {
+      this.h.focus();
+      if (!s.size || !e.local_position) return;
+      this.pressed = true;
+      send(mouseEvents("down", e, s.size.w, drawnW));
+      cx.stop_propagation();
+    }).on_mouse_up("left", (e, cx) => {
+      this.pressed = false;
+      if (!s.size || !e.local_position) return;
+      send(mouseEvents("up", e, s.size.w, drawnW));
+      cx.stop_propagation();
+    }).on_mouse_move((e) => {
+      const now = Date.now();
+      if (!s.size || !e.local_position || now - this.lastMove < MOVE_MS) return;
+      this.lastMove = now;
+      send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
+    }).on_key_down((e, cx) => {
+      const msgs = keyEvents(e);
+      if (!msgs.length) return;
+      send(msgs);
+      cx.stop_propagation();
+    })).when(!!s.prev, (el) => el.child(layer(s.prev))).child(layer(s.frame));
   }
   render(cx) {
     const t = theme();
     this.follow(cx);
-    const root = v_flex().id("dock-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
+    const root = v_flex2().id("dock-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
       if (Math.abs((size?.width ?? 0) - this.width) > 2) {
         this.width = size.width;
         cx2.notify();
@@ -876,12 +1322,38 @@ var Browser = class extends View {
       return root.child(this.note(t, "The browser closed."));
     }
     if (!this.record) return root.child(this.note(t, EMPTY));
-    return root.child(this.header(t)).child(v_flex().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD).child(this.picture(t)));
+    const mode = this.mode();
+    if (mode.kind === "view") {
+      this.windowOpen = null;
+      this.pressed = false;
+    }
+    const handoff = mode.kind === "handoff";
+    const windowOpen = handoff && this.windowOpen?.terminal === this.terminal && this.windowOpen.id === mode.handoff.id;
+    return root.child(this.header(t, cx)).when(handoff, (el) => el.child(handoffBar(t, { message: mode.handoff.message, windowOpen, busy: this.busy }, {
+      done: (cx2) => this.answer("done", cx2),
+      cancel: (cx2) => this.answer("cancel", cx2),
+      openWindow: (cx2) => this.openWindow(cx2)
+    }))).child(controlBar(t, { control: mode.kind, big: this.big, busy: this.busy }, {
+      takeOver: (cx2) => this.takeOver(cx2),
+      handBack: (cx2) => this.handBack(cx2),
+      size: (kind, cx2) => this.size(kind, cx2),
+      enlarge: () => this.enlarge(),
+      close: () => closeOverlay(props()?.overlay)
+    })).when(!!this.error, (el) => el.child(errorLine(t, this.error))).child(v_flex2().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD).on_size_change((size, cx2) => {
+      if (Math.abs((size?.height ?? 0) - this.bodyH) > 2) {
+        this.bodyH = size.height;
+        cx2.notify();
+      }
+    }).child(this.picture(t, mode)));
   }
+  // Closing (the big window, or Herdr): the frames folder goes before the copy does.
   async close() {
-    this.stopStream();
+    const s = this.stream;
+    this.stream = null;
+    await s?.stop();
   }
 };
+Object.assign(Browser.prototype, personControls);
 export {
   Browser as default
 };

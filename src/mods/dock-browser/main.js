@@ -1,11 +1,13 @@
 // Browser: the page an agent is driving with `browse`, live in the right panel. It follows the agent in front (like
 // Render), reads that terminal's session record (herdr-dock/browser/sessions/<terminal>.json, written by browse) and,
 // while the panel shows, holds the session's stream: frames drawn as two stacked image() layers (the previous one
-// under the new one, so a frame still loading never shows as nothing). View-only here, except the wheel.
-// Every 30 s while shown it closes the browsers of terminals that are gone.
+// under the new one, so a frame still loading never shows as nothing). Only the wheel reaches the page until the
+// person has it (Take over, or a handoff the agent asked for): then clicks and keys go to it too, over the stream
+// and nowhere else. It announces new handoffs, and every 30 s while shown closes the browsers of terminals that are
+// gone. Enlarge opens a copy of it as a big window (props { big, terminal }) on the same terminal.
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, appHome, checking, exec, focused, hc, props, readTextFile, shared, theme, watchFolder, window } from "herdr";
+import { agents, appHome, checking, closeOverlay, exec, focused, hc, nextCommand, props, readTextFile, shared, theme, watchFolder, window } from "herdr";
 import * as fs from "fs/promises";
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
@@ -14,10 +16,14 @@ import { installOf } from "../../shared/install.js";
 import { mergeWithLocal, parseConfig, parseLocal } from "../../shared/config.js";
 import { browserOf } from "../../shared/browser/config.js";
 import { isProduction } from "../../shared/browser/hosts.js";
-import { binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
+import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
-import { afterLoss, drawnHeight, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
+import { afterLoss, drawnHeight, keyEvents, mouseEvents, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
+import { fitWidth, inControl } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
+import { controlBar, errorLine, handoffBar } from "./controls.js";
+import { announceHandoffs } from "./actions.js";
+import { personControls } from "./person.js";
 
 const MOD = "dock-browser";
 const PAD = 12;
@@ -25,13 +31,23 @@ const SWEEP_MS = 30_000;
 const LOSS_GRACE_MS = 1000;
 const CLOSED_MS = 3000; // "The browser closed." stays at least this long before the empty state
 const EMPTY = "No page yet. The agent opens one with browse open.";
+const MOVE_MS = 30; // at most one pointer move per this to the page
 
 const home = () => slashPath(appHome());
 const nodePlatform = (p) => (p === "windows" ? "win32" : p === "macos" ? "darwin" : "linux");
 
 export default class Browser extends View {
   init(_props, cx) {
+    this.big = !!props()?.big; // the Enlarge window
+    this.h = cx.focus_handle(); // the picture's, while the person has the page
     this.width = 0; // the panel's width, once laid out
+    this.bodyH = 0; // the room under the header (the big window fits the picture in it)
+    this.busy = null; // what a button started and is still running, shown beside the buttons
+    this.error = null; // the last button's failure
+    this.windowOpen = null; // { terminal, id }: "Open in a real window" is open for this handoff
+    this.sizes = null; // { terminal, tabs, agentTab, viewport }: size tabs the panel opened, undone on Hand back
+    this.pressed = false; // the left button is down on the picture (moves are a drag)
+    this.lastMove = 0;
     this.key = null; // "hidden" | "shown|<terminal or none>": what follow() last acted on
     this.terminal = null;
     this.created = null; // the terminal's created_ms (hc), null when hc couldn't say
@@ -43,23 +59,42 @@ export default class Browser extends View {
     this.browser = browserOf(null);
     this.watch = null;
     if (checking()) return;
-    cx.timer.every(SWEEP_MS, (cx) => { if (this.shown()) cx.spawn(async () => this.sweep()); });
+    cx.timer.every(SWEEP_MS, (cx) => {
+      if (this.big) { cx.notify(); return; } // a handoff timing out redraws
+      if (this.shown()) cx.spawn(async () => this.sweep());
+      cx.notify();
+    });
+    if (!this.big) this.watchHandoffs(cx);
+    // Commands: "focus" (pane.go onto this copy, or a popup over it closed): the keyboard goes to the page while the
+    // person has it. "enlarge" (keys.json can bind "dock-browser.enlarge"): the big window.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const c = await nextCommand();
+        if (c === "focus" && this.record && inControl(this.mode())) this.h.focus();
+        if (c === "enlarge" && !this.big && this.terminal) this.enlarge();
+        cx.notify();
+      }
+    });
   }
 
   shown() {
-    if (props()?.dockRegion !== "right") return true;
+    if (this.big || props()?.dockRegion !== "right") return true;
     const applied = shared("dock.config.applied");
     return rightShownOf(shared("dock.right.shown"), applied) && rightActiveOf(shared("dock.right.active"), applied?.right?.features ?? []) === MOD;
   }
 
   bin() { return `${home()}/${binRel(nodePlatform(window()?.platform))}`; }
 
+  framesOf(t) { return this.big ? bigFramesRel(t) : framesRel(t); }
+
   // Called from render: notices the panel showing or hiding and the agent in front changing.
   follow(cx) {
     if (checking()) return;
     const shown = this.shown();
     let agent = null;
-    if (shown) { try { agent = pickAgent(focused(), agents()); } catch { agent = null; } }
+    const fixed = this.big ? props()?.terminal : null; // the big window stays on the terminal it was opened for
+    if (fixed) agent = { address: String(fixed) };
+    else if (shown) { try { agent = pickAgent(focused(), agents()); } catch { agent = null; } }
     // Records are this machine's: an agent on another machine (its address has a "/") has none here.
     const t = agent && !String(agent.address).includes("/") ? agent.address : null;
     const key = shown ? `shown|${t ?? "none"}` : "hidden";
@@ -67,11 +102,11 @@ export default class Browser extends View {
     const wasShown = this.key !== null && this.key !== "hidden";
     this.key = key;
     this.stopStream();
-    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false });
+    Object.assign(this, { terminal: t, created: null, record: null, control: parseControl(null), closed: null, showErrors: false, error: null });
     if (!shown) { this.watch?.cancel?.(); this.watch = null; return; }
     if (!wasShown) {
       this.watchSessions(cx);
-      cx.spawn(async (cx) => { await this.loadConfig(); await this.sweep(); cx.notify(); });
+      cx.spawn(async (cx) => { await this.loadConfig(); if (!this.big) await this.sweep(); cx.notify(); });
     }
     if (t) {
       cx.spawn(async (cx) => {
@@ -158,7 +193,7 @@ export default class Browser extends View {
     if (!want || this.stream) return;
     const t = this.terminal;
     const s = new Stream({
-      port: rec.port, framesRel: framesRel(t),
+      port: rec.port, framesRel: this.framesOf(t),
       onChange: () => { if (this.stream === s) cx.notify(); },
       onLost: () => { if (this.stream === s) cx.spawn(async (cx) => this.lost(s, cx)); },
     });
@@ -222,7 +257,24 @@ export default class Browser extends View {
       await fs.unlink(`${home()}/${sessionFileRel(g.terminal)}`).catch(() => {});
       await fs.unlink(`${home()}/${controlFileRel(g.terminal)}`).catch(() => {});
       await clearFolder(framesRel(g.terminal));
+      await clearFolder(bigFramesRel(g.terminal));
     }
+  }
+
+  // New handoffs, announced whether or not the panel shows (the notification is how the person finds out).
+  watchHandoffs(cx) {
+    const dir = `${home()}/${sessionsRel()}`;
+    cx.spawn(async (cx) => {
+      await this.loadConfig();
+      await fs.mkdir(dir, { recursive: true }).catch(() => {});
+      for (;;) {
+        await announceHandoffs(this.browser.handoffMinutes).catch((e) => console.log(`${MOD}: handoffs not read: ${e?.message ?? e}`));
+        let w;
+        try { w = watchFolder(dir); } catch { await cx.sleep(3000); continue; }
+        const changed = await w.catch(() => null);
+        if (!changed?.length) await cx.sleep(1000);
+      }
+    });
   }
 
   // ---- drawing ----
@@ -236,7 +288,7 @@ export default class Browser extends View {
       .text_size(10.5).text_color(color ?? t.muted).child(text);
   }
 
-  header(t) {
+  header(t, cx) {
     const rec = this.record, st = this.stream?.state ?? {};
     const { title, url } = pageHeading(rec, st);
     const prod = isProduction(url, this.browser.production);
@@ -256,7 +308,9 @@ export default class Browser extends View {
       .when(tabs.length > 1, (el) => el.child(h_flex().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) =>
         div().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11)
           .when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground))
-          .when(!tab.active, (e) => e.text_color(t.muted))
+          .when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover))
+            .tooltip("Switch to this tab (you take the page)")
+            .on_click((_e, cx) => this.switchTab(String(tab.tabId), cx)))
           .child(String(tab.title || tab.url || "Tab"))))))
       .when(this.showErrors && errors > 0, (el) => el.child(v_flex().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar()
         .gap(2).p(6).rounded(6).border_1().border_color(t.border)
@@ -264,18 +318,51 @@ export default class Browser extends View {
           div().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
   }
 
-  picture(t) {
+  picture(t, mode) {
     const s = this.stream;
-    const drawnW = Math.floor(this.width - PAD * 2);
+    const room = this.big ? this.bodyH - PAD * 2 : 0;
+    const drawnW = fitWidth(s?.size, this.width - PAD * 2, room);
     if (!s?.frame || !s.size || drawnW <= 0) return this.note(t, s?.state.phase === "connecting" && s.loss.lastReconnect ? "Reconnecting…" : "Connecting…");
     const h = Math.round(drawnHeight(s.size, drawnW));
     const layer = (rel) => div().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
-    return div().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4).border_1().border_color(t.border)
+    const live = inControl(mode);
+    const edge = mode.kind === "handoff" ? t.working : t.accent;
+    // Input goes to the stream only (Stream.send): never logged, kept or sent anywhere else.
+    const send = (msgs) => { for (const m of msgs) s.send(m); };
+    return div().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4)
+      .when(live, (el) => el.border_2().border_color(edge))
+      .when(!live, (el) => el.border_1().border_color(t.border))
       .on_scroll_wheel((e, cx) => {
         if (!s.size || !e.local_position) return;
         s.send(wheelEvent(e, s.size.w, drawnW));
         cx.stop_propagation();
       })
+      .when(live, (el) => el.track_focus(this.h)
+        .on_mouse_down("left", (e, cx) => {
+          this.h.focus();
+          if (!s.size || !e.local_position) return;
+          this.pressed = true;
+          send(mouseEvents("down", e, s.size.w, drawnW));
+          cx.stop_propagation();
+        })
+        .on_mouse_up("left", (e, cx) => {
+          this.pressed = false;
+          if (!s.size || !e.local_position) return;
+          send(mouseEvents("up", e, s.size.w, drawnW));
+          cx.stop_propagation();
+        })
+        .on_mouse_move((e) => {
+          const now = Date.now();
+          if (!s.size || !e.local_position || now - this.lastMove < MOVE_MS) return;
+          this.lastMove = now;
+          send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
+        })
+        .on_key_down((e, cx) => {
+          const msgs = keyEvents(e);
+          if (!msgs.length) return;
+          send(msgs);
+          cx.stop_propagation();
+        }))
       .when(!!s.prev, (el) => el.child(layer(s.prev)))
       .child(layer(s.frame));
   }
@@ -290,9 +377,30 @@ export default class Browser extends View {
       return root.child(this.note(t, "The browser closed."));
     }
     if (!this.record) return root.child(this.note(t, EMPTY));
-    return root.child(this.header(t))
-      .child(v_flex().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD).child(this.picture(t)));
+    const mode = this.mode();
+    if (mode.kind === "view") { this.windowOpen = null; this.pressed = false; }
+    const handoff = mode.kind === "handoff";
+    const windowOpen = handoff && this.windowOpen?.terminal === this.terminal && this.windowOpen.id === mode.handoff.id;
+    return root.child(this.header(t, cx))
+      .when(handoff, (el) => el.child(handoffBar(t, { message: mode.handoff.message, windowOpen, busy: this.busy }, {
+        done: (cx) => this.answer("done", cx), cancel: (cx) => this.answer("cancel", cx), openWindow: (cx) => this.openWindow(cx),
+      })))
+      .child(controlBar(t, { control: mode.kind, big: this.big, busy: this.busy }, {
+        takeOver: (cx) => this.takeOver(cx), handBack: (cx) => this.handBack(cx), size: (kind, cx) => this.size(kind, cx),
+        enlarge: () => this.enlarge(), close: () => closeOverlay(props()?.overlay),
+      }))
+      .when(!!this.error, (el) => el.child(errorLine(t, this.error)))
+      .child(v_flex().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD)
+        .on_size_change((size, cx) => { if (Math.abs((size?.height ?? 0) - this.bodyH) > 2) { this.bodyH = size.height; cx.notify(); } })
+        .child(this.picture(t, mode)));
   }
 
-  async close() { this.stopStream(); }
+  // Closing (the big window, or Herdr): the frames folder goes before the copy does.
+  async close() {
+    const s = this.stream;
+    this.stream = null;
+    await s?.stop();
+  }
 }
+
+Object.assign(Browser.prototype, personControls);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sessionName, BROWSER_REL, sessionsRel, sessionFileRel, controlFileRel, framesRel, picksRel, signedInRel, binRel, normalizeUrl } from "../src/shared/browser/session.js";
+import { sessionName, BROWSER_REL, sessionsRel, sessionFileRel, controlFileRel, framesRel, bigFramesRel, realSessionName, picksRel, signedInRel, binRel, normalizeUrl } from "../src/shared/browser/session.js";
 import { hostOf, isProduction } from "../src/shared/browser/hosts.js";
 import { parseBrowse, UsageError, refused } from "../src/shared/browser/args.js";
 
@@ -15,6 +15,8 @@ test("paths", () => {
   assert.equal(sessionFileRel("t3"), "herdr-dock/browser/sessions/t3.json");
   assert.equal(controlFileRel("t3"), "herdr-dock/browser/sessions/t3.control.json");
   assert.equal(framesRel("t3"), "herdr-dock/browser/frames/t3");
+  assert.equal(bigFramesRel("t3"), "herdr-dock/browser/frames/t3-big");
+  assert.equal(realSessionName("dock-ab-t3"), "dock-ab-t3-real");
   assert.equal(picksRel(), "herdr-dock/browser/picks");
   assert.equal(signedInRel(), "herdr-dock/browser/profiles/signed-in.json");
   assert.equal(binRel("linux"), "herdr-dock/browser/bin/agent-browser");

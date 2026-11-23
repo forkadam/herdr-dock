@@ -24,8 +24,8 @@ test("toPage and drawnHeight", () => {
 test("keyEvents", () => {
   const m = { control: false, alt: false, shift: false, platform: false, function: false };
   assert.deepEqual(keyEvents({ key: "enter", modifiers: m }), [
-    { type: "input_keyboard", eventType: "keyDown", key: "Enter", text: "\r", modifiers: 0 },
-    { type: "input_keyboard", eventType: "keyUp", key: "Enter", modifiers: 0 },
+    { type: "input_keyboard", eventType: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", modifiers: 0 },
+    { type: "input_keyboard", eventType: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 0 },
   ]);
   assert.equal(keyEvents({ key: "a", key_char: "a", modifiers: m })[0].text, "a");
   const sh = keyEvents({ key: "a", key_char: "A", modifiers: { ...m, shift: true } })[0];
@@ -38,6 +38,23 @@ test("keyEvents", () => {
   assert.equal(keyEvents({ key: "left", modifiers: m })[0].key, "ArrowLeft");
   assert.equal(keyEvents({ key: "platform", modifiers: m }).length, 0);
 });
+test("keyEvents: named keys carry the Windows key code Chrome edits with", () => {
+  const m = { control: false, alt: false, shift: false, platform: false, function: false };
+  const codes = { backspace: 8, tab: 9, enter: 13, escape: 27, space: 32, pageup: 33, pagedown: 34, end: 35, home: 36,
+    left: 37, up: 38, right: 39, down: 40, delete: 46 };
+  for (const [name, vk] of Object.entries(codes)) {
+    const [down, up] = keyEvents({ key: name, modifiers: m });
+    assert.equal(down.windowsVirtualKeyCode, vk, name);
+    assert.equal(up.windowsVirtualKeyCode, vk, name);
+    assert.equal(down.code, up.code);
+  }
+  assert.equal(keyEvents({ key: "space", modifiers: m })[0].code, "Space");
+  assert.equal(keyEvents({ key: "left", modifiers: m })[0].code, "ArrowLeft");
+  // A typed character carries its text only.
+  const a = keyEvents({ key: "a", key_char: "a", modifiers: m })[0];
+  assert.equal("windowsVirtualKeyCode" in a, false);
+  assert.equal("code" in a, false);
+});
 test("wheel and mouse", () => {
   const w = wheelEvent({ delta: { x: 3, y: -10 }, local_position: { x: 440, y: 100 } }, 1280, 880);
   assert.equal(w.deltaX, -3); assert.equal(w.deltaY, 10); assert.equal(w.x, 640); assert.equal(w.y, 145);
@@ -47,6 +64,10 @@ test("wheel and mouse", () => {
   assert.equal(mouseEvents("down", { local_position: { x: 1, y: 1 } }, 100, 100)[1].clickCount, 1);
   assert.deepEqual(mouseEvents("up", e, 100, 100).map((x) => x.eventType), ["mouseReleased"]);
   assert.deepEqual(mouseEvents("move", e, 100, 100).map((x) => x.eventType), ["mouseMoved"]);
+  assert.equal(mouseEvents("move", e, 100, 100)[0].button, "none");
+  assert.equal(mouseEvents("move", e, 100, 100, true)[0].button, "left");
+  assert.equal(mouseEvents("down", e, 100, 100)[0].button, "none");
+  assert.equal(mouseEvents("down", e, 100, 100)[1].button, "left");
 });
 test("FrameRing keeps 6 and drops the oldest", () => {
   const r = new FrameRing("herdr-dock/browser/frames/t3");

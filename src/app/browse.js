@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { browserSettings } from "./browser-settings.js";
 import { UsageError, parseBrowse, refused } from "../shared/browser/args.js";
 import { isProduction, hostOf } from "../shared/browser/hosts.js";
-import { BROWSER_REL, binRel, controlFileRel, framesRel, normalizeUrl, sessionFileRel, sessionName, sessionsRel, signedInRel } from "../shared/browser/session.js";
+import { BROWSER_REL, bigFramesRel, binRel, controlFileRel, framesRel, normalizeUrl, realSessionName, sessionFileRel, sessionName, sessionsRel, signedInRel } from "../shared/browser/session.js";
 import {
   clearHandoff, goneSessions, isStale, liveTerminals, newId, parseControl, parseSession, personHas, startHandoff, waitOutcome,
 } from "../shared/browser/registry.js";
@@ -83,7 +83,10 @@ export async function main(argv, env = process.env, io = defaultIo()) {
   const sessionFile = abs(sessionFileRel(terminal)), controlFile = abs(controlFileRel(terminal)), frames = abs(framesRel(terminal));
   const name = sessionName(scope, terminal);
   const readSession = () => { const t = readText(sessionFile); return t == null ? null : parseSession(t); };
-  const wipe = () => { rmSync(sessionFile, { force: true }); rmSync(controlFile, { force: true }); rmSync(frames, { recursive: true, force: true }); };
+  const wipe = () => {
+    rmSync(sessionFile, { force: true }); rmSync(controlFile, { force: true });
+    rmSync(frames, { recursive: true, force: true }); rmSync(abs(bigFramesRel(terminal)), { recursive: true, force: true });
+  };
   const save = (rec) => writeAtomic(sessionFile, JSON.stringify(rec, null, 2) + "\n");
 
   // The terminal's own creation time: a reused id (an older terminal's records) must start clean.
@@ -213,7 +216,7 @@ function windowCmd(args, { io, ab, abs, terminal }) {
   if (!rec) { io.err(`no browser session for ${t}`); return 2; }
   const tmpDir = abs(`${BROWSER_REL}/tmp`);
   const out = join(tmpDir, `${t}.json`), done = join(tmpDir, `${t}.done.json`);
-  const real = `${rec.session}-real`;
+  const real = realSessionName(rec.session);
   mkdirSync(tmpDir, { recursive: true });
   if (args.cmd === "window-open") {
     saveState(ab, rec.session, out);
@@ -242,6 +245,7 @@ function sweep(abs, bin, cfg, env) {
       rmSync(abs(sessionFileRel(g.terminal)), { force: true });
       rmSync(abs(controlFileRel(g.terminal)), { force: true });
       rmSync(abs(framesRel(g.terminal)), { recursive: true, force: true });
+      rmSync(abs(bigFramesRel(g.terminal)), { recursive: true, force: true });
     }
   } catch {}
 }
