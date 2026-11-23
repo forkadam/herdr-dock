@@ -144,16 +144,22 @@ test("columnDrop: a column of several statuses", () => {
   assert.equal(columnDrop([tr("2", "Done")], col, "To Do").kind, "none");
 });
 
-test("columnDrop: the choice lists the moves into the column; the card's own status is never a target; bad input is none", () => {
+test("columnDrop: the choice lists the moves into the column; bad input is none", () => {
   const tr = (id, to) => ({ id, to: { name: to } });
   const col = { name: "RD In Progress", statuses: ["In Progress", "Handling"] };
   const plan = columnDrop([tr("1", "In Progress"), tr("5", "Handling"), tr("2", "Done")], col, "To Do");
   assert.deepEqual(plan.transitions.map((t) => t.id), ["1", "5"]);
-  assert.deepEqual(columnDrop([tr("1", "In Progress"), tr("5", "Handling")], col, "Handling"), { kind: "run", transition: tr("1", "In Progress") });
-  assert.equal(columnDrop([tr("1", "In Progress")], col, "In Progress").kind, "none");
   assert.equal(columnDrop(null, col, "To Do").kind, "none");
   assert.equal(columnDrop([tr("1", "In Progress")], null, "To Do").kind, "none");
   assert.equal(columnDrop([{ id: "9" }, null], col, "To Do").kind, "none");
+});
+
+test("columnDrop: a drop on the card's own column never changes its status", () => {
+  const tr = (id, to) => ({ id, to: { name: to } });
+  const col = { name: "RD In Progress", statuses: ["In Progress", "Handling"] };
+  assert.deepEqual(columnDrop([tr("5", "Handling")], col, "In Progress"), { kind: "none" }, "a move to a sibling status is still no move");
+  assert.deepEqual(columnDrop([tr("1", "In Progress"), tr("5", "Handling")], col, "Handling"), { kind: "none" });
+  assert.deepEqual(columnDrop([tr("1", "In Progress")], col, "In Progress"), { kind: "none" });
 });
 
 const at = (y, m, d, h = 0, min = 0) => Date.UTC(y, m - 1, d, h, min);
@@ -188,4 +194,12 @@ test("sprintLabel: a day left across a month and a year end; without dates, just
   assert.equal(sprintLabel(s43, at(2026, 11, 22)), "Sprint 43");
   assert.equal(sprintLabel(S(2, "Sprint 2", "future", at(2026, 11, 30), null), at(2026, 11, 22)), "Sprint 2");
   assert.equal(sprintLabel(S(3, "Sprint 3", "active", null, at(2026, 11, 30)), at(2026, 11, 22)), "Sprint 3");
+});
+
+test("sprintLabel: a closed sprint reads ended whatever its end date; the count never shows on it", () => {
+  const early = S(41, "Sprint 41", "closed", at(2026, 11, 2, 9), at(2026, 11, 27, 18)); // closed before its end
+  assert.equal(sprintLabel(early, at(2026, 11, 22, 12)), "Sprint 41 · Nov 2 – Nov 27 · ended");
+  assert.equal(sprintLabel(early, at(2026, 11, 27, 9)), "Sprint 41 · Nov 2 – Nov 27 · ended", "not \"ends today\" either");
+  assert.equal(sprintLabel({ ...early, state: "active" }, at(2026, 11, 22, 12)), "Sprint 41 · Nov 2 – Nov 27 · 5 days left");
+  assert.equal(sprintLabel(S(40, "Sprint 40", "closed", null, null), at(2026, 11, 22)), "Sprint 40", "no dates: still just the name");
 });

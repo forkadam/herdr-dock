@@ -91,11 +91,13 @@ export function sprintRows(rows) {
 // ---- Drops ----
 
 // A drop on a board column (several statuses): { kind: "run", transition } when one move leads into one of its
-// statuses, { kind: "choose", transitions } when several do, { kind: "none" } when none does. The card's own status
-// is never a target. dropPlan's sibling (page.js), for a column instead of one status.
+// statuses, { kind: "choose", transitions } when several do, { kind: "none" } when none does or when the card is
+// already in that column (a drop on its own column never changes its status, as on Jira's board). dropPlan's sibling
+// (page.js), for a column instead of one status.
 export function columnDrop(transitions, column, current) {
   const into = new Set(list(column?.statuses));
-  const ways = list(transitions).filter((t) => t?.to?.name && into.has(t.to.name) && t.to.name !== current);
+  if (into.has(current)) return { kind: "none" };
+  const ways = list(transitions).filter((t) => t?.to?.name && into.has(t.to.name));
   if (!ways.length) return { kind: "none" };
   return ways.length === 1 ? { kind: "run", transition: ways[0] } : { kind: "choose", transitions: ways };
 }
@@ -107,13 +109,14 @@ const shortDate = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "sho
 const dayOf = (ms) => { const d = new Date(ms); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); };
 
 // "Sprint 42 · Nov 16 – Nov 27 · 5 days left": the name, the dates and how long is left, counted in local calendar
-// days. "· ends today" on the end date, "· ended" from the end on. Just the name when it has no (both) dates.
+// days. "· ends today" on the end date, "· ended" from the end on, or whenever the sprint is closed. Just the name
+// when it has no (both) dates.
 export function sprintLabel(sprint, now) {
   const name = String(sprint?.name ?? "");
   const start = num(sprint?.startMs), end = num(sprint?.endMs);
   if (start === null || end === null) return name;
   const head = `${name} · ${shortDate(start)} – ${shortDate(end)}`;
-  if (end - now <= 0) return `${head} · ended`;
+  if (sprint.state === "closed" || end - now <= 0) return `${head} · ended`;
   const days = Math.round((dayOf(end) - dayOf(now)) / DAY_MS);
   if (days <= 0) return `${head} · ends today`;
   return `${head} · ${days} ${days === 1 ? "day" : "days"} left`;
