@@ -27,6 +27,13 @@
    "displayName": "Kim Ortiz",
    "emailAddress": "kim@example.com",
    "active": true
+  },
+  "ana": {
+   "name": "ana",
+   "key": "ana",
+   "displayName": "Ana Lima",
+   "emailAddress": "ana@example.com",
+   "active": true
   }
  },
  "issues": [
@@ -2807,7 +2814,54 @@
      "startAt": 0
     },
     "issuelinks": []
-   }
+   },
+   "history": [
+    {
+     "id": "10501",
+     "author": "ana",
+     "created": "2026-11-16T09:20:00.000+0000",
+     "items": [
+      {
+       "field": "description",
+       "fieldtype": "jira",
+       "from": null,
+       "fromString": "h3. Goal\nRedesign the search results page.",
+       "to": null,
+       "toString": "h3. Goal\nRedesign the search results page: a filter bar that stays in view."
+      }
+     ]
+    },
+    {
+     "id": "10502",
+     "author": "me",
+     "created": "2026-11-17T10:05:00.000+0000",
+     "items": [
+      {
+       "field": "description",
+       "fieldtype": "jira",
+       "from": null,
+       "fromString": "h3. Goal\nRedesign the search results page: a filter bar that stays in view.",
+       "to": null,
+       "toString": "h3. Goal\nRedesign the search results page: a filter bar that stays in view and a clearer empty state."
+      }
+     ]
+    },
+    {
+     "id": "10503",
+     "author": "ana",
+     "created": "2026-11-18T13:40:00.000+0000",
+     "items": [
+      {
+       "field": "description",
+       "fieldtype": "jira",
+       "from": null,
+       "fromString": "h3. Goal\nRedesign the search results page: a filter bar that stays in view and a clearer empty state.",
+       "to": null,
+       "toString": "h3. Goal\nRedesign the search results page: a filter bar that stays in view and a clearer empty state.\n\n*Sub-tasks*\n# Build the new filter bar\n# Write tests for the filter bar"
+      }
+     ]
+    }
+   ]
   },
   {
    "id": "20031",
@@ -2928,6 +2982,490 @@
     },
     "created": "2026-11-16T03:00:00.000+0000",
     "updated": "2026-11-16T03:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20033",
+   "key": "WEB-43",
+   "self": "http://jira.mock/rest/api/2/issue/20033",
+   "rank": 34,
+   "sprints": [
+    42
+   ],
+   "history": [
+    {
+     "id": "10510",
+     "author": "ravi",
+     "created": "2026-11-17T10:30:00.000+0000",
+     "items": [
+      {
+       "field": "Sprint",
+       "fieldtype": "custom",
+       "from": "",
+       "fromString": "",
+       "to": "42",
+       "toString": "Sprint 42"
+      }
+     ]
+    }
+   ],
+   "fields": {
+    "summary": "Add keyboard shortcuts to the filter bar",
+    "description": "h3. Context\nPower users want to move between filters without the mouse.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "P2",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-12T09:00:00.000+0000",
+    "updated": "2026-11-17T11:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20034",
+   "key": "WEB-44",
+   "self": "http://jira.mock/rest/api/2/issue/20034",
+   "rank": 35,
+   "sprints": [
+    41,
+    42
+   ],
+   "history": [
+    {
+     "id": "10511",
+     "author": "dana",
+     "created": "2026-11-16T09:00:00.000+0000",
+     "items": [
+      {
+       "field": "Sprint",
+       "fieldtype": "custom",
+       "from": "41",
+       "fromString": "Sprint 41",
+       "to": "41, 42",
+       "toString": "Sprint 41, Sprint 42"
+      }
+     ]
+    }
+   ],
+   "fields": {
+    "summary": "Tidy the copy of the saved searches empty state",
+    "description": "h3. Context\nThe empty state still uses the placeholder text.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "P3",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-04T09:00:00.000+0000",
+    "updated": "2026-11-16T09:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20035",
+   "key": "WEB-45",
+   "self": "http://jira.mock/rest/api/2/issue/20035",
+   "rank": 36,
+   "sprints": [
+    42
+   ],
+   "history": [
+    {
+     "id": "10512",
+     "author": "ravi",
+     "created": "2026-11-17T14:00:00.000+0000",
+     "items": [
+      {
+       "field": "assignee",
+       "fieldtype": "jira",
+       "from": "dana",
+       "fromString": "Dana Lee",
+       "to": "me",
+       "toString": "Mock User"
+      }
+     ]
+    }
+   ],
+   "fields": {
+    "summary": "Retry failed profile photo uploads",
+    "description": "h3. Context\nAn upload that fails on a flaky connection should retry once.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "3",
+     "name": "Task",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/task.svg"
+    },
+    "priority": {
+     "id": "3",
+     "name": "P2",
+     "iconUrl": "http://jira.mock/images/icons/priorities/medium.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-10T09:00:00.000+0000",
+    "updated": "2026-11-17T14:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20036",
+   "key": "WEB-46",
+   "self": "http://jira.mock/rest/api/2/issue/20036",
+   "rank": 37,
+   "sprints": [
+    42
+   ],
+   "fields": {
+    "summary": "Show the active filters as chips",
+    "description": "h3. Context\nActive filters should be visible and removable at a glance.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "10001",
+     "name": "Story",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/story.svg"
+    },
+    "priority": {
+     "id": "4",
+     "name": "P3",
+     "iconUrl": "http://jira.mock/images/icons/priorities/low.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "ravi",
+     "key": "ravi",
+     "displayName": "Ravi Patel",
+     "emailAddress": "ravi@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-17T11:00:00.000+0000",
+    "updated": "2026-11-17T11:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20037",
+   "key": "WEB-47",
+   "self": "http://jira.mock/rest/api/2/issue/20037",
+   "rank": 38,
+   "fields": {
+    "summary": "Search crashes on an empty query",
+    "description": "h3. Context\nSubmitting the search box with nothing in it throws.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "1",
+     "name": "P0",
+     "iconUrl": "http://jira.mock/images/icons/priorities/highest.svg"
+    },
+    "status": {
+     "id": "3",
+     "name": "In Progress",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-14T10:00:00.000+0000",
+    "updated": "2026-11-18T08:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20038",
+   "key": "WEB-48",
+   "self": "http://jira.mock/rest/api/2/issue/20038",
+   "rank": 39,
+   "fields": {
+    "summary": "Saved search count is off by one",
+    "description": "h3. Context\nThe count in the sidebar includes the one being deleted.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "P1",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10003",
+     "name": "Resolved",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "kim",
+     "key": "kim",
+     "displayName": "Kim Ortiz",
+     "emailAddress": "kim@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-12T10:00:00.000+0000",
+    "updated": "2026-11-18T12:00:00.000+0000",
+    "comment": {
+     "comments": [],
+     "maxResults": 0,
+     "total": 0,
+     "startAt": 0
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "20039",
+   "key": "WEB-49",
+   "self": "http://jira.mock/rest/api/2/issue/20039",
+   "rank": 40,
+   "fields": {
+    "summary": "Autocomplete suggests a deleted tag",
+    "description": "h3. Context\nA tag removed last week still shows in the suggestions.\n\n*Done when*\n# It works on narrow screens\n# It has a test",
+    "issuetype": {
+     "id": "1",
+     "name": "Bug",
+     "subtask": false,
+     "iconUrl": "http://jira.mock/images/icons/issuetypes/bug.svg"
+    },
+    "priority": {
+     "id": "2",
+     "name": "P1",
+     "iconUrl": "http://jira.mock/images/icons/priorities/high.svg"
+    },
+    "status": {
+     "id": "10000",
+     "name": "To Do",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "resolution": null,
+    "assignee": {
+     "name": "me",
+     "key": "me",
+     "displayName": "Mock User",
+     "emailAddress": "me@example.com",
+     "active": true
+    },
+    "reporter": {
+     "name": "dana",
+     "key": "dana",
+     "displayName": "Dana Lee",
+     "emailAddress": "dana@example.com",
+     "active": true
+    },
+    "project": {
+     "id": "10100",
+     "key": "WEB",
+     "name": "Web app"
+    },
+    "created": "2026-11-17T09:00:00.000+0000",
+    "updated": "2026-11-17T09:00:00.000+0000",
     "comment": {
      "comments": [],
      "maxResults": 0,

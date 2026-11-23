@@ -46,17 +46,17 @@ for (const transport of ["fetch", "curl"]) {
     assert.equal((await c.myself()).data.name, "me");
     const s = await c.search("assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC", { maxResults: 5 });
     assert.equal(s.ok, true);
-    assert.equal(s.data.total, 12);
+    assert.equal(s.data.total, 19);
     assert.equal(s.data.issues.length, 5);
     const key = s.data.issues[0].key;
     const issue = await c.issue(key);
     assert.equal(issue.data.key, key);
     assert.ok("comment" in issue.data.fields && "description" in issue.data.fields);
     assert.equal((await c.favouriteFilters()).data.length, 2);
-    assert.deepEqual((await c.statuses()).data.map((x) => x.name), ["To Do", "In Progress", "In Review", "Done"]);
+    assert.deepEqual((await c.statuses()).data.map((x) => x.name), ["To Do", "In Progress", "In Review", "Resolved", "Done"]);
     const ps = await c.projectStatuses("API");
     assert.equal(ps.ok, true);
-    assert.deepEqual(ps.data, [{ name: "To Do", category: "new" }, { name: "In Progress", category: "indeterminate" }, { name: "In Review", category: "indeterminate" }, { name: "Done", category: "done" }]);
+    assert.deepEqual(ps.data, [{ name: "To Do", category: "new" }, { name: "In Progress", category: "indeterminate" }, { name: "In Review", category: "indeterminate" }, { name: "Resolved", category: "indeterminate" }, { name: "Done", category: "done" }]);
     const tr = await c.transitions(key);
     assert.ok(tr.ok && Array.isArray(tr.data) && tr.data.length);
     const comment = await c.comment(key, `from ${transport}`);
@@ -85,7 +85,7 @@ for (const transport of ["fetch", "curl"]) {
   test(`${transport}: boards, configuration, sprints`, { skip }, async () => {
     const c = client(transport);
     assert.deepEqual((await c.boards("WEB")).data.map((b) => b.id), [1]);
-    assert.deepEqual((await c.boardConfiguration(1)).data.columns[1], { name: "In Progress", statusIds: ["3", "10001"] });
+    assert.deepEqual((await c.boardConfiguration(1)).data.columns[1], { name: "In Progress", statusIds: ["3", "10001", "10003"] });
     assert.equal((await c.boardConfiguration(1)).data.name, "WEB board");
     const s = (await c.sprints(1, ["active"])).data;
     assert.deepEqual(s.map((x) => x.name), ["Sprint 42", "Otter Sprint 7"]);

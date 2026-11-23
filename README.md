@@ -263,7 +263,7 @@ board, your team's sprint board on **Today**, an issue's detail beside them, qui
   `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
   `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
-  `mock-token`) with 33 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
+  `mock-token`) with 40 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.
 
 ## Render

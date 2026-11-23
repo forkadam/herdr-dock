@@ -2,7 +2,8 @@
 // A mock Jira Server / Data Center for developing and testing the Jira page without the company's Jira.
 // It answers the REST v2 endpoints the page uses and Jira Software's agile REST (boards, their columns, sprints), with
 // Jira's JSON shapes, from tests/fixtures/jira/*.json, and keeps changes in memory (a transition moves the issue, a
-// comment appears) until it stops. No dependencies.
+// comment appears) until it stops. An issue's history (`expand=changelog`) is the fixture's own: a change made here
+// (a transition, an assignment) adds none. No dependencies.
 //
 //   npm run mock:jira                       http://127.0.0.1:8089, token mock-token
 //   node scripts/mock-jira.mjs --port 9000 --slow 3000 --status 500 --token other
@@ -41,6 +42,7 @@ function shiftDates(issues, now) {
     i.fields.created = shift(i.fields.created);
     i.fields.updated = shift(i.fields.updated);
     for (const c of i.fields.comment.comments) { c.created = shift(c.created); c.updated = shift(c.updated); }
+    for (const h of i.history ?? []) h.created = shift(h.created);
   }
   return by;
 }
@@ -96,7 +98,7 @@ function clause(text, ctx) {
     if (field === "project") for (const v of values) checkProject(v, ctx);
     return (i) => values.some((v) => matches(i, field, v)) !== not;
   }
-  if ((m = /^(project|status|issuetype|type|priority|statuscategory|resolution)\s*(!=|=)\s*(.+)$/i.exec(text))) {
+  if ((m = /^(project|key|status|issuetype|type|priority|statuscategory|resolution)\s*(!=|=)\s*(.+)$/i.exec(text))) {
     const field = m[1].toLowerCase(), not = m[2] === "!=", value = unquote(m[3]);
     if (field === "project") checkProject(value, ctx);
     return (i) => matches(i, field, value) !== not;
@@ -186,8 +188,8 @@ const parentField = (p) => ({ id: p.id, key: p.key, self: p.self,
   fields: { summary: p.fields.summary, status: p.fields.status, priority: p.fields.priority, issuetype: p.fields.issuetype } });
 
 // The fields an issue response carries: all, or only those asked for (`fields=a,b`; `*all` / `*navigable` = all).
-// Only `fields` is copied: the fixture's own `rank`, `sprints` and `parentKey` never go out. A sub-task's `parent` is
-// built from the parent as it is now (`parentOf(key)`), as Jira does; other issues have none.
+// Only `fields` is copied: the fixture's own `rank`, `sprints`, `history` and `parentKey` never go out. A sub-task's
+// `parent` is built from the parent as it is now (`parentOf(key)`), as Jira does; other issues have none.
 function pick(issue, fields, parentOf) {
   const want = (fields ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const all = !want.length || want.some((f) => f.startsWith("*"));
@@ -232,7 +234,16 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
   const viewed = new Map(); // issue key -> when GET /issue last returned it (issueHistory(), lastViewed)
 
   const find = (key) => issues.find((i) => i.key.toLowerCase() === String(key).toLowerCase());
-  const show = (issue, fields) => pick(issue, fields, find);
+  // An issue's history, as Jira's `expand=changelog` gives it: the fixture's `history`, oldest first (none is an empty list).
+  const changelog = (issue) => {
+    const histories = (issue.history ?? []).map((h) => ({ id: h.id, author: { name: users[h.author].name, displayName: users[h.author].displayName }, created: h.created, items: clone(h.items) }));
+    return { startAt: 0, maxResults: histories.length, total: histories.length, histories };
+  };
+  const show = (issue, fields, expand) => {
+    const out = pick(issue, fields, find);
+    if ((expand ?? "").split(",").map((s) => s.trim()).includes("changelog")) out.changelog = changelog(issue);
+    return out;
+  };
   const available = (issue) => workflow.transitions.filter((t) => t.from.includes(issue.fields.status.id));
 
   async function route(req, url, body) {
@@ -251,7 +262,8 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
     }
     if (req.method === "GET" && p("/search")) {
       const startAt = Math.max(0, Number(url.searchParams.get("startAt") ?? 0) || 0);
-      const maxResults = Math.min(100, Math.max(0, Number(url.searchParams.get("maxResults") ?? 50) || 50));
+      const asked = url.searchParams.get("maxResults"); // 0 is a count only: the total and no issues
+      const maxResults = Math.min(100, Math.max(0, asked === null || asked.trim() === "" || !Number.isFinite(Number(asked)) ? 50 : Number(asked)));
       let q;
       try { q = parseJql(url.searchParams.get("jql") ?? "", { me, now: clock(), projects, viewed, sprints }); } catch (e) {
         if (e instanceof JqlError) return [400, err([e.message])];
@@ -259,7 +271,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
       }
       const hits = issues.filter(q.filter).sort(q.sort);
       return [200, { expand: "names,schema", startAt, maxResults, total: hits.length,
-        issues: hits.slice(startAt, startAt + maxResults).map((i) => show(i, url.searchParams.get("fields"))) }];
+        issues: hits.slice(startAt, startAt + maxResults).map((i) => show(i, url.searchParams.get("fields"), url.searchParams.get("expand"))) }];
     }
     if (req.method === "GET" && p("/status")) return [200, workflow.statuses.map(statusObj)];
     const ps = new RegExp(`^${API}/project/([A-Za-z]+)/statuses$`).exec(path);
@@ -305,7 +317,7 @@ export async function startMock({ port = 8089, host = "127.0.0.1", token = "mock
     if (req.method === "GET" && sub === "") {
       viewed.delete(issue.key); // most recent last, whatever the clock's resolution
       viewed.set(issue.key, clock() + viewed.size * 1e-3);
-      return [200, show(issue, url.searchParams.get("fields"))];
+      return [200, show(issue, url.searchParams.get("fields"), url.searchParams.get("expand"))];
     }
     if (req.method === "GET" && sub === "/transitions") {
       // expand=transitions.fields: each step's screen fields, as Jira lists them (required, allowed values).
