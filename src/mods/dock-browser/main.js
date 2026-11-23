@@ -18,7 +18,7 @@ import { browserOf } from "../../shared/browser/config.js";
 import { isProduction } from "../../shared/browser/hosts.js";
 import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
-import { afterLoss, drawnHeight, isPaste, keyEvents, mouseEvents, textEvents, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
+import { afterLoss, drawnHeight, isPaste, keyEvents, mouseEvents, pasteEvents, PASTE_LIMIT, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
 import { fitWidth, inControl } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
@@ -365,8 +365,9 @@ export default class Browser extends View {
         .on_key_down((e, cx) => {
           // Paste (a password from a password manager): the clipboard typed into the page, over the stream only.
           if (isPaste(e, window()?.platform)) {
-            const text = cx.read_from_clipboard();
-            if (text) send(textEvents(text));
+            const p = pasteEvents(cx.read_from_clipboard() ?? "");
+            if (p.tooLong) { this.error = `Clipboard too long to paste (${p.tooLong} characters; the limit is ${PASTE_LIMIT})`; cx.notify(); }
+            else send(p.events);
             cx.stop_propagation();
             return;
           }

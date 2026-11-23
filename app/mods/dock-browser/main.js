@@ -416,6 +416,12 @@ function textEvents(text) {
   }
   return out;
 }
+var PASTE_LIMIT = 2e3;
+function pasteEvents(text, limit2 = PASTE_LIMIT) {
+  const t = String(text ?? "").replace(/(\r\n|\n|\r)$/, "");
+  const n = [...t].length;
+  return n > limit2 ? { tooLong: n } : { events: textEvents(t) };
+}
 function wheelEvent(e, frameW, drawnW) {
   const { x, y } = toPage(e.local_position, frameW, drawnW);
   return { type: "input_mouse", eventType: "mouseWheel", x, y, deltaX: -e.delta.x, deltaY: -e.delta.y };
@@ -1352,8 +1358,11 @@ var Browser = class extends View {
       send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
     }).on_key_down((e, cx) => {
       if (isPaste(e, window()?.platform)) {
-        const text = cx.read_from_clipboard();
-        if (text) send(textEvents(text));
+        const p = pasteEvents(cx.read_from_clipboard() ?? "");
+        if (p.tooLong) {
+          this.error = `Clipboard too long to paste (${p.tooLong} characters; the limit is ${PASTE_LIMIT})`;
+          cx.notify();
+        } else send(p.events);
         cx.stop_propagation();
         return;
       }

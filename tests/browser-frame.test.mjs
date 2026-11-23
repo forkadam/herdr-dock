@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { jpegSize, toPage, drawnHeight, keyEvents, isPaste, textEvents, wheelEvent, mouseEvents, FrameRing, streamStep, afterLoss } from "../src/shared/browser/frame.js";
+import { jpegSize, toPage, drawnHeight, keyEvents, isPaste, textEvents, pasteEvents, PASTE_LIMIT, wheelEvent, mouseEvents, FrameRing, streamStep, afterLoss } from "../src/shared/browser/frame.js";
 
 function jpeg(w, h) {
   return new Uint8Array([
@@ -178,4 +178,22 @@ test("textEvents: one key per character, line breaks as Enter", () => {
   assert.equal(textEvents("é😀").filter((x) => x.eventType === "keyDown").length, 2);
   assert.deepEqual(textEvents(""), []);
   assert.deepEqual(textEvents(undefined), []);
+});
+
+test("pasteEvents: capped at 2000 characters, one trailing line break dropped", () => {
+  assert.equal(PASTE_LIMIT, 2000);
+  const keys = (p) => p.events.filter((x) => x.eventType === "keyDown").map((x) => x.key);
+  assert.deepEqual(keys(pasteEvents("pw\n")), ["p", "w"]);
+  assert.deepEqual(keys(pasteEvents("pw\r\n")), ["p", "w"]);
+  assert.deepEqual(keys(pasteEvents("pw\r")), ["p", "w"]);
+  assert.deepEqual(keys(pasteEvents("pw\n\n")), ["p", "w", "Enter"]); // only one dropped
+  assert.deepEqual(keys(pasteEvents("a\nb")), ["a", "Enter", "b"]); // inner breaks stay
+  assert.deepEqual(pasteEvents("").events, []);
+  assert.deepEqual(pasteEvents(undefined).events, []);
+  assert.equal(pasteEvents("x".repeat(2000)).events.length, 4000);
+  assert.deepEqual(pasteEvents("x".repeat(2000) + "\n"), { events: pasteEvents("x".repeat(2000)).events });
+  assert.deepEqual(pasteEvents("x".repeat(2001)), { tooLong: 2001 });
+  assert.deepEqual(pasteEvents("x".repeat(100_000)), { tooLong: 100000 });
+  assert.deepEqual(pasteEvents("abc", 2), { tooLong: 3 });
+  assert.deepEqual(pasteEvents("😀😀", 2).events.length, 4); // characters, not UTF-16 units
 });

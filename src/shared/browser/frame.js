@@ -76,6 +76,15 @@ export function textEvents(text) {
   return out;
 }
 
+// A paste: the clipboard text without one trailing line break (password managers often copy one, and Enter would
+// submit early), typed as key events. Over `limit` characters nothing is typed: { tooLong: n }.
+export const PASTE_LIMIT = 2000;
+export function pasteEvents(text, limit = PASTE_LIMIT) {
+  const t = String(text ?? "").replace(/(\r\n|\n|\r)$/, "");
+  const n = [...t].length;
+  return n > limit ? { tooLong: n } : { events: textEvents(t) };
+}
+
 export function wheelEvent(e, frameW, drawnW) {
   const { x, y } = toPage(e.local_position, frameW, drawnW);
   return { type: "input_mouse", eventType: "mouseWheel", x, y, deltaX: -e.delta.x, deltaY: -e.delta.y };
