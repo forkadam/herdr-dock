@@ -85,3 +85,41 @@ test("afterLoss: socket lost with no session → closed", () => {
   assert.equal(afterLoss(s, true, 11000), "wait");
   assert.equal(afterLoss(s, true, 12000), "reconnect");
 });
+
+test("decodeBase64 matches Buffer", async () => {
+  const { decodeBase64 } = await import("../src/shared/browser/frame.js");
+  for (const len of [0, 1, 2, 3, 4, 5, 100, 257]) {
+    const bytes = Uint8Array.from({ length: len }, (_, i) => (i * 37 + 11) & 255);
+    const b64 = Buffer.from(bytes).toString("base64");
+    assert.deepEqual([...decodeBase64(b64)], [...bytes], `length ${len}`);
+  }
+});
+
+test("streamPort: only a connected daemon's port", async () => {
+  const { streamPort } = await import("../src/shared/browser/frame.js");
+  assert.equal(streamPort('{"success":true,"data":{"connected":true,"port":33781}}'), 33781);
+  assert.equal(streamPort('{"success":true,"data":{"connected":false,"port":36095}}'), 0);
+  assert.equal(streamPort('{"success":false,"data":null,"error":"x"}'), 0);
+  assert.equal(streamPort(""), 0);
+});
+
+test("pageHeading: active tab, record title while the URL is the record's", async () => {
+  const { pageHeading } = await import("../src/shared/browser/frame.js");
+  const rec = { url: "https://en.wikipedia.org/wiki/Web_browser", title: "Web browser - Wikipedia" };
+  const bare = { tabs: [{ active: true, title: "en.wikipedia.org/wiki/Web_browser", url: rec.url }] };
+  assert.deepEqual(pageHeading(rec, bare), { title: "Web browser - Wikipedia", url: rec.url });
+  const moved = { tabs: [{ active: false, title: "Old", url: rec.url }, { active: true, title: "Example Domain", url: "https://example.com/" }] };
+  assert.deepEqual(pageHeading(rec, moved), { title: "Example Domain", url: "https://example.com/" });
+  assert.deepEqual(pageHeading(rec, {}), { title: "Web browser - Wikipedia", url: rec.url });
+  assert.deepEqual(pageHeading(rec, { tabs: [{ active: true, title: "example.com/", url: "https://example.com/" }] }), { title: "example.com/", url: "https://example.com/" });
+});
+
+test("streamStep: a console error sent twice counts once", () => {
+  const m = { type: "console", level: "error", text: "boom", timestamp: 5 };
+  let s = streamStep({}, m);
+  s = streamStep(s, { ...m });
+  assert.equal(s.errors, 1);
+  s = streamStep(s, { ...m, timestamp: 6 });
+  assert.equal(s.errors, 2);
+  assert.deepEqual(s.errorTexts, ["boom", "boom"]);
+});

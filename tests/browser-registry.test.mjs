@@ -102,3 +102,12 @@ test("bad handoffMinutes counts as 15", () => {
     assert.equal(personHas(s, free, T0 + 16 * MIN, m), false);
   }
 });
+
+test("liveTerminals: herdr-app ls ids, null when unreadable", async () => {
+  const { liveTerminals } = await import("../src/shared/browser/registry.js");
+  const ls = JSON.stringify({ spaces: [{ tabs: [{ terminals: [{ terminal: "t1" }, { terminal: "t4" }] }, { terminals: [] }] }, { tabs: [] }] });
+  assert.deepEqual([...liveTerminals(ls)], ["t1", "t4"]);
+  assert.deepEqual([...liveTerminals('{"spaces":[]}')], []);
+  assert.equal(liveTerminals("not json"), null);
+  assert.equal(liveTerminals("{}"), null);
+});

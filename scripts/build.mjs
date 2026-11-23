@@ -23,7 +23,7 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
     mkdirSync(dest, { recursive: true });
     await build({
       entryPoints: [join(src, "main.js")], outfile: join(dest, "main.js"),
-      bundle: true, format: "esm", external: ["gpui-kit", "gpui-base", "herdr"], logLevel: "warning",
+      bundle: true, format: "esm", external: ["gpui-kit", "gpui-base", "herdr", "websocket", "buffer", "fs/promises"], logLevel: "warning",
       absWorkingDir: ROOT, // the bundle's path comments are relative to the repo, whatever the cwd
     });
     for (const f of readdirSync(src)) {

@@ -94,8 +94,11 @@ export function streamStep(state, msg) {
     case "status": return { ...state, status: msg };
     case "console":
       if ((msg.level ?? msg.type) === "error" || msg.level === "error") {
+        // agent-browser sends each console message twice: the same one again (timestamp and text) counts once.
+        const key = `${msg.timestamp ?? ""}|${consoleText(msg)}`;
+        if (msg.timestamp !== undefined && state.lastError === key) return state;
         const errorTexts = [...(state.errorTexts ?? []), consoleText(msg)].slice(-MAX_ERRORS);
-        return { ...state, errors: (state.errors ?? 0) + 1, errorTexts };
+        return { ...state, errors: (state.errors ?? 0) + 1, errorTexts, lastError: key };
       }
       return state;
     default: return state;
@@ -108,4 +111,46 @@ export function afterLoss(state, sessionExists, now) {
   if (state.lastReconnect !== undefined && now - state.lastReconnect < 2000) return "wait";
   state.lastReconnect = now;
   return "reconnect";
+}
+
+// Base64 to bytes in plain JS (the runtime's Buffer may lack base64); invalid characters count as 0.
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const LUT = new Uint8Array(128);
+for (let i = 0; i < 64; i++) LUT[B64.charCodeAt(i)] = i;
+export function decodeBase64(s) {
+  s = String(s ?? "");
+  let n = s.length;
+  while (n && s[n - 1] === "=") n--;
+  const out = new Uint8Array((n * 3) >> 2);
+  let o = 0;
+  const at = (i) => (i < n ? LUT[s.charCodeAt(i) & 127] : 0);
+  for (let i = 0; i < n; i += 4) {
+    const v = (at(i) << 18) | (at(i + 1) << 12) | (at(i + 2) << 6) | at(i + 3);
+    if (o < out.length) out[o++] = v >> 16;
+    if (o < out.length) out[o++] = (v >> 8) & 255;
+    if (o < out.length) out[o++] = v & 255;
+  }
+  return out;
+}
+
+// The stream port from `agent-browser --session S stream status --json`, or 0. A daemon without a browser
+// (connected false: the command itself starts an empty daemon when the session is gone) has no page to stream.
+export function streamPort(stdout) {
+  let o;
+  try { o = JSON.parse(String(stdout ?? "")); } catch { return 0; }
+  const d = o?.data;
+  return o?.success && d?.connected && Number.isInteger(d.port) && d.port > 0 ? d.port : 0;
+}
+
+export const activeTab = (tabs) => (Array.isArray(tabs) ? tabs.find((t) => t?.active) ?? null : null);
+
+// The header's title and url: the stream's active tab first, else the session record. The stream's tab title is
+// often the bare URL until the page sets one, so the record's title stands while the URL is the record's.
+export function pageHeading(record, state) {
+  const tab = activeTab(state?.tabs);
+  const url = String(tab?.url || state?.url || record?.url || "");
+  const tabTitle = String(tab?.title ?? "");
+  const fromRecord = record?.title && record.url === url ? record.title : "";
+  const bare = !tabTitle || url.replace(/^[a-z]+:\/\//i, "").startsWith(tabTitle);
+  return { title: (bare ? fromRecord || tabTitle : tabTitle) || url, url };
 }

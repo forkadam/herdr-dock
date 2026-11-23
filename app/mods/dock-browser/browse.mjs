@@ -387,7 +387,19 @@ function waitOutcome(session, control, now, handoffMinutes) {
   }
   return control.takeover ? "waiting" : "free";
 }
-var goneSessions = (sessions, liveTerminals) => sessions.filter((s) => !liveTerminals.has(s.terminal));
+var goneSessions = (sessions, liveTerminals2) => sessions.filter((s) => !liveTerminals2.has(s.terminal));
+function liveTerminals(stdout) {
+  let o;
+  try {
+    o = JSON.parse(String(stdout ?? ""));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(o?.spaces)) return null;
+  const live = /* @__PURE__ */ new Set();
+  for (const s of o.spaces) for (const tab of s?.tabs ?? []) for (const x of tab?.terminals ?? []) if (x?.terminal) live.add(x.terminal);
+  return live;
+}
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
@@ -550,7 +562,7 @@ async function main(argv, env = process.env, io = defaultIo()) {
       if (url && url !== session.url) {
         if (!isProduction(session.url, cfg.production)) banner(url);
         const cur = readSession();
-        if (cur) save({ ...cur, url });
+        if (cur) save({ ...cur, url, title: query(session.session, ["get", "title"]) || cur.title });
       }
       return r.status ?? 1;
     }
@@ -659,9 +671,8 @@ function windowCmd(args, { io, ab, abs, terminal }) {
 function sweep(abs, bin, cfg, env) {
   try {
     const r = run("herdr-app", ["ls"], { env });
-    if (r.error || r.status !== 0) return;
-    const live = /* @__PURE__ */ new Set();
-    for (const s of JSON.parse(r.stdout).spaces ?? []) for (const tab of s.tabs ?? []) for (const x of tab.terminals ?? []) live.add(x.terminal);
+    const live = r.error || r.status !== 0 ? null : liveTerminals(r.stdout);
+    if (!live) return;
     const dir = abs(sessionsRel());
     const sessions = readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".control.json")).map((f) => parseSession(readText2(join2(dir, f)))).filter(Boolean);
     for (const g of goneSessions(sessions, live)) {

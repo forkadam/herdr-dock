@@ -76,6 +76,16 @@ export const handBack = (control) => ({ ...control, takeover: null });
 
 export const goneSessions = (sessions, liveTerminals) => sessions.filter((s) => !liveTerminals.has(s.terminal));
 
+// The terminal ids `herdr-app ls` lists (its stdout), or null when it can't be read (then nothing is swept).
+export function liveTerminals(stdout) {
+  let o;
+  try { o = JSON.parse(String(stdout ?? "")); } catch { return null; }
+  if (!Array.isArray(o?.spaces)) return null;
+  const live = new Set();
+  for (const s of o.spaces) for (const tab of s?.tabs ?? []) for (const x of tab?.terminals ?? []) if (x?.terminal) live.add(x.terminal);
+  return live;
+}
+
 export function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }

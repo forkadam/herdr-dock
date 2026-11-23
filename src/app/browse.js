@@ -13,7 +13,7 @@ import { UsageError, parseBrowse, refused } from "../shared/browser/args.js";
 import { isProduction, hostOf } from "../shared/browser/hosts.js";
 import { BROWSER_REL, binRel, controlFileRel, framesRel, normalizeUrl, sessionFileRel, sessionName, sessionsRel, signedInRel } from "../shared/browser/session.js";
 import {
-  clearHandoff, goneSessions, isStale, newId, parseControl, parseSession, personHas, startHandoff, waitOutcome,
+  clearHandoff, goneSessions, isStale, liveTerminals, newId, parseControl, parseSession, personHas, startHandoff, waitOutcome,
 } from "../shared/browser/registry.js";
 
 const USAGE = `browse: drive a real browser from this terminal.
@@ -139,7 +139,7 @@ export async function main(argv, env = process.env, io = defaultIo()) {
       if (url && url !== session.url) {
         if (!isProduction(session.url, cfg.production)) banner(url);
         const cur = readSession();
-        if (cur) save({ ...cur, url });
+        if (cur) save({ ...cur, url, title: query(session.session, ["get", "title"]) || cur.title });
       }
       return r.status ?? 1;
     }
@@ -232,9 +232,8 @@ function windowCmd(args, { io, ab, abs, terminal }) {
 function sweep(abs, bin, cfg, env) {
   try {
     const r = run("herdr-app", ["ls"], { env });
-    if (r.error || r.status !== 0) return;
-    const live = new Set();
-    for (const s of JSON.parse(r.stdout).spaces ?? []) for (const tab of s.tabs ?? []) for (const x of tab.terminals ?? []) live.add(x.terminal);
+    const live = r.error || r.status !== 0 ? null : liveTerminals(r.stdout);
+    if (!live) return;
     const dir = abs(sessionsRel());
     const sessions = readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".control.json"))
       .map((f) => parseSession(readText(join(dir, f)))).filter(Boolean);
