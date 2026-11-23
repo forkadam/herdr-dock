@@ -97506,12 +97506,12 @@ function labelBars(svg, theme) {
   const bars = [...svg.matchAll(/<[a-z]+\b[^>]*>/g)].map((m) => m[0]).filter((tag) => classesOf(tag).includes("xychart-bar") && attrOf(tag, "data-value") !== void 0);
   if (!bars.length) return svg;
   const values = bars.map((tag) => Number(attrOf(tag, "data-value")));
-  const highlight = values.reduce((best, v, i) => Math.abs(v) > Math.abs(values[best]) ? i : best, 0);
+  const highlight = Math.max(...values.filter(Number.isFinite).map(Math.abs));
   const labels = [];
   let out2 = svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
     const i = bars.indexOf(tag);
     if (i < 0) return tag;
-    const c = i === highlight ? accent : muted;
+    const c = Math.abs(values[i]) === highlight ? accent : muted;
     const box = barBox(tag);
     if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) throw new Error("bar without a box");
     const y = values[i] < 0 ? box.bottom + LABEL_GAP + LABEL_SIZE : box.top - LABEL_GAP;

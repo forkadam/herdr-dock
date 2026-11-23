@@ -152,3 +152,10 @@ test("paintDiagram: in an all-negative bar chart the bar of largest magnitude ta
 test("styledIds: a hyphenated id right after an unspaced open link is read whole", () => {
   assert.deepEqual([...styledIds("flowchart LR\n  A---my-node:::x").ids], ["my-node"]);
 });
+
+test("paintDiagram: bars tied for the largest magnitude are all highlighted; a value that isn't a number never is", () => {
+  const marks = (src) => tagsWith(paintDiagram(draw(src), src, THEME), "xychart-bar").filter((a) => a["data-value"] !== undefined)
+    .map((b) => b.style.includes(`stroke:${THEME.accent}`));
+  assert.deepEqual(marks("xychart-beta\n  x-axis [a, b, c]\n  bar [5, 5, 2]"), [true, true, false]);
+  assert.deepEqual(marks("xychart-beta\n  x-axis [a, b, c]\n  bar [x, 1, 2]"), [false, false, true]);
+});

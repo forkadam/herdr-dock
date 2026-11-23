@@ -182,13 +182,14 @@ function labelBars(svg, theme) {
     .filter((tag) => classesOf(tag).includes("xychart-bar") && attrOf(tag, "data-value") !== undefined);
   if (!bars.length) return svg;
   const values = bars.map((tag) => Number(attrOf(tag, "data-value")));
-  // The highlighted bar: the largest magnitude (in an all-negative chart, the most negative one).
-  const highlight = values.reduce((best, v, i) => (Math.abs(v) > Math.abs(values[best]) ? i : best), 0);
+  // The highlighted bars: the largest magnitude (in an all-negative chart, the most negative), every one of a tie; a
+  // value that isn't a number is never it.
+  const highlight = Math.max(...values.filter(Number.isFinite).map(Math.abs));
   const labels = [];
   let out = svg.replace(/<[a-z]+\b[^>]*>/g, (tag) => {
     const i = bars.indexOf(tag);
     if (i < 0) return tag;
-    const c = i === highlight ? accent : muted;
+    const c = Math.abs(values[i]) === highlight ? accent : muted;
     const box = barBox(tag);
     if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) throw new Error("bar without a box");
     const y = values[i] < 0 ? box.bottom + LABEL_GAP + LABEL_SIZE : box.top - LABEL_GAP;
