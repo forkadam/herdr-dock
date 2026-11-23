@@ -1220,10 +1220,13 @@ export default class Jira extends View {
 
   // ---- drawing ----
 
-  button(t, id, label, onClick, { primary = false, enabled = true, tip } = {}) {
+  // `accent`: the theme's accent colour for the outline and text, for a button that should stand out a little without
+  // being the page's primary action (a tab's own button).
+  button(t, id, label, onClick, { primary = false, accent = false, enabled = true, tip } = {}) {
     return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5)
       .when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground))
-      .when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground))
+      .when(!primary && accent, (el) => el.border_1().border_color(t.accent).text_color(t.accent))
+      .when(!primary && !accent, (el) => el.border_1().border_color(t.border).text_color(t.foreground))
       .when(enabled, (el) => el.cursor_pointer().on_click((_e, cx) => onClick(cx)).hover((s) => (primary ? s.opacity(0.9) : s.bg(t.hover))))
       .when(!enabled, (el) => el.opacity(0.45))
       .when(Boolean(tip), (el) => el.tooltip(tip))
@@ -1364,7 +1367,7 @@ export default class Jira extends View {
       .when(Boolean(picker), (el) => el.child(picker))
       .when(!today, (el) => el.child(h_flex().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
         .child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground))))
-      .when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { tip: tabButtonWork(tab.button).args.task })))
+      .when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { accent: true, tip: tabButtonWork(tab.button).args.task })))
       .child(div().flex_1())
       .child(div().text_size(11.5).text_color(t.dim).child(list.loading ? "loading…" : list.fetchedAt ? [countText(shownCount, total), `updated ${ago(list.fetchedAt, Date.now())}`].filter(Boolean).join(" · ") : ""))
       .when(!today, (el) => el.child(h_flex().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board"))))
