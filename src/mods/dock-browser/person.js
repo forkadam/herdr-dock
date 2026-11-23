@@ -1,10 +1,11 @@
-// The Browser panel's buttons: Take over / Hand back, a handoff's Done / Cancel / Open in a real window, tabs, sizes
-// and Enlarge. Mixed into the panel's class (main.js): `this` is the panel. Each button's work runs through act(), one
+// The Browser panel's buttons: Take over / Hand back (which also ends Pick and Notes), a handoff's Done / Cancel /
+// Open in a real window, tabs, sizes and Enlarge. Mixed into the panel's class (main.js): `this` is the panel. Each button's work runs through act(), one
 // at a time; the control record is written through writeControl (actions.js), the only writer.
 import { openOverlay } from "herdr";
 import { realSessionName } from "../../shared/browser/session.js";
 import { activeTab, pageHeading } from "../../shared/browser/frame.js";
 import { bigWindow, changes, finishOf, inControl, newTabId, panelMode, sizeCommands } from "../../shared/browser/panel.js";
+import { STOP_SCRIPT } from "../../shared/browser/pick-script.js";
 import { browse, readControl, run, writeControl } from "./actions.js";
 
 export const personControls = {
@@ -18,7 +19,7 @@ export const personControls = {
     this.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      try { await work(t, rec); } catch (e) { if (this.terminal === t) this.error = String(e?.message ?? e); }
+      try { await work(t, rec, cx); } catch (e) { if (this.terminal === t) this.error = String(e?.message ?? e); }
       this.busy = null;
       cx.notify();
     });
@@ -37,8 +38,9 @@ export const personControls = {
 
   takeOver(cx) { this.act("Taking over…", cx, (t) => this.setControl(t, changes.takeOver(Date.now()))); },
 
-  // Size tabs closed and the agent's tab and viewport back, the real window finished, then the page is the agent's
-  // again. What to finish comes from the control record, so it doesn't matter which copy opened it.
+  // The real window finished, size tabs closed and the agent's tab and viewport back, Pick or Notes' script taken out,
+  // then the page is the agent's again. What to finish comes from the control record, so it doesn't matter which copy
+  // opened it.
   handBack(cx) {
     this.act("Handing back…", cx, async (t, rec) => {
       await this.finish(t, rec, true);
@@ -54,6 +56,8 @@ export const personControls = {
       else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
     }
     for (const args of f.restore) await this.ab(rec, args).catch(() => null);
+    // Pick or Notes' script out of the page, once the agent's tab is the active one again (size tabs just closed).
+    if (f.stopPick) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
   },
 
   answer(value, cx) {

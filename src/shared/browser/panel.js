@@ -10,8 +10,11 @@ export function panelMode(session, control, now, handoffMinutes) {
   const c = control ?? parseControl(null);
   const h = session?.handoff;
   if (h && personHas(session, { ...c, takeover: null }, now, handoffMinutes)) return { kind: "handoff", handoff: h };
-  return { kind: c.takeover ? "takeover" : "view" };
+  return c.takeover ? { kind: "takeover", reason: c.takeover.reason } : { kind: "view" };
 }
+
+// "pick" or "notes" while the person is pointing at the page (a take-over with that reason), else null.
+export const pickKind = (mode) => (mode?.kind === "takeover" && (mode.reason === "pick" || mode.reason === "notes") ? mode.reason : null);
 
 // The person drives the page (clicks and keys go to it) in a handoff or a take-over.
 export const inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
@@ -36,6 +39,7 @@ const release = (c) => ({ ...handBack(c), window: null, sizes: null });
 // in the record, so any panel copy, or one reloaded, finishes it.
 export const changes = {
   takeOver: (now) => (c) => (c.takeover ? c : takeOver(c, "person", now)),
+  pick: (kind, now) => (c) => takeOver(c, kind, now), // Pick or Notes: the person points at the page
   window: (now) => (c) => takeOver(c, "window", now), // before window-open runs: the agent waits
   windowOpened: (now) => (c) => ({ ...c, window: { since: now } }), // window-open succeeded: Done runs window-done
   // A size tab opened: remembered with the agent's tab and viewport (the first size's, kept for later ones).
@@ -48,8 +52,12 @@ export const changes = {
 };
 
 // What finishing the person's turn takes, from the control record: the commands that put the agent's tab and size
-// back, and whether the real window is open (Done keeps what was done there; Cancel just closes it).
-export const finishOf = (control) => ({ restore: restoreCommands(control?.sizes), window: !!control?.window });
+// back, whether the real window is open (Done keeps what was done there; Cancel just closes it), and whether Pick or
+// Notes' script is in the page (STOP_SCRIPT takes it out).
+export const finishOf = (control) => ({
+  restore: restoreCommands(control?.sizes), window: !!control?.window,
+  stopPick: control?.takeover?.reason === "pick" || control?.takeover?.reason === "notes",
+});
 
 // Handoffs to announce: open ones (not answered, not timed out) whose id isn't in `notified`.
 // entries: [{ session, control }] for every terminal with a session record.

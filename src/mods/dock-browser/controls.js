@@ -1,6 +1,6 @@
-// The Browser panel's control rows: Take over / Hand back, the sizes, Enlarge (or Close in the big window), and the
-// handoff bar (the agent's message, Done, Cancel, Open in a real window). Drawing only: the panel passes what to
-// show and what each button does.
+// The Browser panel's control rows: Take over / Hand back, Pick and Notes, the sizes, Enlarge (or Close in the big
+// window), and the handoff bar (the agent's message, Done, Cancel, Open in a real window). Drawing only: the panel
+// passes what to show and what each button does.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { SIZES } from "../../shared/browser/panel.js";
@@ -17,15 +17,20 @@ export function button(t, id, label, onClick, { busy = false, primary = false, t
     .child(label);
 }
 
-// The row under the header. state: { control: "view" | "takeover" | "handoff", big, busy }.
-// on: { takeOver, handBack, size(kind), enlarge, close }.
+// The row under the header. state: { control: "view" | "takeover" | "handoff", reason (the take-over's), big, busy }.
+// on: { takeOver, handBack, pick(kind), size(kind), enlarge, close }.
 export function controlBar(t, state, on) {
   const busy = !!state.busy;
   const row = h_flex().flex_none().flex_wrap().gap(4).px(12).py(6).items_center().border_b(1).border_color(t.border);
+  const pointing = state.reason === "pick" || state.reason === "notes";
   if (state.control === "view") {
     row.child(button(t, "browser-takeover", "Take over", on.takeOver, { busy, tip: "Use the page yourself; the agent waits until you hand back" }));
-  } else if (state.control === "takeover") {
+  } else if (state.control === "takeover" && !pointing) {
     row.child(button(t, "browser-handback", "Hand back", on.handBack, { busy, primary: true, tip: "Give the page back to the agent" }));
+  }
+  if (state.control !== "handoff" && !pointing) {
+    row.child(button(t, "browser-pick", "Pick", (cx) => on.pick("pick", cx), { busy, tip: "Click one element and tell the agent what to change" }));
+    row.child(button(t, "browser-notes", "Notes", (cx) => on.pick("notes", cx), { busy, tip: "Notes on several elements, sent together" }));
   }
   row.child(div().flex_none().w(6));
   for (const [kind, s] of Object.entries(SIZES)) {

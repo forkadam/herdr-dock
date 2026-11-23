@@ -3,8 +3,9 @@
 // while the panel shows, holds the session's stream: frames drawn as two stacked image() layers (the previous one
 // under the new one, so a frame still loading never shows as nothing). Only the wheel reaches the page until the
 // person has it (Take over, or a handoff the agent asked for): then clicks and keys go to it too, over the stream
-// and nowhere else. It announces new handoffs, and every 30 s while shown closes the browsers of terminals that are
-// gone. Enlarge opens a copy of it as a big window (props { big, terminal }) on the same terminal.
+// and nowhere else. Pick and Notes (pick.js) point at elements and send them to the agent as Design Feedback. It
+// announces new handoffs, and every 30 s while shown closes the browsers of terminals that are gone. Enlarge opens
+// a copy of it as a big window (props { big, terminal }) on the same terminal.
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, appHome, checking, closeOverlay, exec, focused, hc, nextCommand, props, readTextFile, shared, theme, watchFolder, window } from "herdr";
@@ -19,11 +20,13 @@ import { isProduction } from "../../shared/browser/hosts.js";
 import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessionsRel } from "../../shared/browser/session.js";
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
 import { afterLoss, drawnHeight, isPaste, keyEvents, mouseEvents, pasteEvents, PASTE_LIMIT, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
-import { fitWidth, inControl } from "../../shared/browser/panel.js";
+import { fitWidth, inControl, pickKind } from "../../shared/browser/panel.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
 import { announceHandoffs } from "./actions.js";
 import { personControls } from "./person.js";
+import { pickControls } from "./pick.js";
+import { pickBar } from "./pick-view.js";
 
 const MOD = "dock-browser";
 const PAD = 12;
@@ -56,20 +59,24 @@ export default class Browser extends View {
     this.showErrors = false;
     this.browser = browserOf(null);
     this.watch = null;
+    this.flash = null; // Pick and Notes' last word ("Copied")
+    this.makeNoteInputs();
     if (checking()) return;
     cx.timer.every(SWEEP_MS, (cx) => {
       if (this.big) { cx.notify(); return; } // a handoff timing out redraws
-      if (this.shown()) cx.spawn(async () => this.sweep());
+      if (this.shown()) cx.spawn(async () => { await this.sweep(); await this.sweepPictures(); });
       cx.notify();
     });
     if (!this.big) this.watchHandoffs(cx);
     // Commands: "focus" (pane.go onto this copy, or a popup over it closed): the keyboard goes to the page while the
-    // person has it. "enlarge" (keys.json can bind "dock-browser.enlarge"): the big window.
+    // person has it. "enlarge" (keys.json can bind "dock-browser.enlarge"): the big window. "pick", "notes": start
+    // Pick or Notes in the right panel's copy (when it shows).
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
         if (c === "focus" && this.record && inControl(this.mode())) this.h.focus();
         if (c === "enlarge" && !this.big && this.terminal) this.enlarge();
+        if ((c === "pick" || c === "notes") && !this.big && this.record && this.shown() && !pickKind(this.mode())) this.startPick(c, cx);
         cx.notify();
       }
     });
@@ -277,10 +284,16 @@ export default class Browser extends View {
   }
 
   // The control record changed (read, or written by this copy): a drag in progress ends when the person no longer
-  // has the page.
+  // has the page, and this copy's Pick or Notes ends when the record no longer says so (handed back here or in
+  // another copy).
   controlChanged() {
-    if (!this.record || !inControl(this.mode())) this.pressed = false;
+    const mode = this.mode();
+    if (!this.record || !inControl(mode)) this.pressed = false;
+    if (this.picking && this.picking.t === this.terminal && pickKind(mode) !== this.picking.kind) this.dropPicks();
   }
+
+  // This copy's Pick or Notes, on the terminal shown.
+  myPick() { return this.picking && this.picking.t === this.terminal ? this.picking : null; }
 
   // ---- drawing ----
 
@@ -332,6 +345,10 @@ export default class Browser extends View {
     const layer = (rel) => div().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
     const live = inControl(mode);
     const edge = mode.kind === "handoff" ? t.working : t.accent;
+    // Pointing (Pick, Notes): moves and clicks go to the page's script, keys stay in the panel (the note fields). A
+    // copy that didn't start it sends moves only, so its clicks aren't picks nobody reads.
+    const pointing = !!pickKind(mode), mine = !!this.myPick();
+    const clicks = !pointing || mine;
     // Input goes to the stream only (Stream.send): never logged, kept or sent anywhere else.
     const send = (msgs) => { for (const m of msgs) s.send(m); };
     return div().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4)
@@ -344,16 +361,17 @@ export default class Browser extends View {
       })
       .when(live, (el) => el.track_focus(this.h)
         .on_mouse_down("left", (e, cx) => {
-          this.h.focus();
-          if (!s.size || !e.local_position) return;
+          if (!pointing) this.h.focus();
+          if (!s.size || !e.local_position || !clicks) return;
           this.pressed = true;
           send(mouseEvents("down", e, s.size.w, drawnW));
           cx.stop_propagation();
         })
         .on_mouse_up("left", (e, cx) => {
           this.pressed = false;
-          if (!s.size || !e.local_position) return;
+          if (!s.size || !e.local_position || !clicks) return;
           send(mouseEvents("up", e, s.size.w, drawnW));
+          if (pointing) this.pickClicked(cx);
           cx.stop_propagation();
         })
         .on_mouse_move((e) => {
@@ -363,6 +381,7 @@ export default class Browser extends View {
           send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
         })
         .on_key_down((e, cx) => {
+          if (pointing) return;
           // Paste (a password from a password manager): the clipboard typed into the page, over the stream only.
           if (isPaste(e, window()?.platform)) {
             const p = pasteEvents(cx.read_from_clipboard() ?? "");
@@ -397,10 +416,16 @@ export default class Browser extends View {
       .when(handoff, (el) => el.child(handoffBar(t, { message: mode.handoff.message, windowOpen, busy: this.busy }, {
         done: (cx) => this.answer("done", cx), cancel: (cx) => this.answer("cancel", cx), openWindow: (cx) => this.openWindow(cx),
       })))
-      .child(controlBar(t, { control: mode.kind, big: this.big, busy: this.busy }, {
+      .child(controlBar(t, { control: mode.kind, reason: mode.reason ?? null, big: this.big, busy: this.busy }, {
         takeOver: (cx) => this.takeOver(cx), handBack: (cx) => this.handBack(cx), size: (kind, cx) => this.size(kind, cx),
+        pick: (kind, cx) => this.startPick(kind, cx),
         enlarge: () => this.enlarge(), close: () => closeOverlay(props()?.overlay),
       }))
+      .when(!!pickKind(mode), (el) => el.child(pickBar(t,
+        { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode) }, {
+          send: (cx) => this.sendFeedback(cx), copy: (cx) => this.copyNotes(cx), leave: (cx) => this.leavePick(cx),
+          remove: (i, cx) => this.removeNote(i, cx), field: (i, name, value, cx) => this.setNoteField(i, name, value, cx),
+        })))
       .when(!!this.error, (el) => el.child(errorLine(t, this.error)))
       .child(v_flex().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD)
         .on_size_change((size, cx) => { if (Math.abs((size?.height ?? 0) - this.bodyH) > 2) { this.bodyH = size.height; cx.notify(); } })
@@ -415,4 +440,4 @@ export default class Browser extends View {
   }
 }
 
-Object.assign(Browser.prototype, personControls);
+Object.assign(Browser.prototype, personControls, pickControls);

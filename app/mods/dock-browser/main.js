@@ -1,8 +1,8 @@
 // src/mods/dock-browser/main.js
-import { View, div as div2, image } from "gpui-kit";
-import { h_flex as h_flex2, v_flex as v_flex2 } from "gpui-base";
-import { agents, appHome as appHome3, checking, closeOverlay, exec as exec2, focused, hc, nextCommand, props, readTextFile as readTextFile2, shared as shared2, theme, watchFolder, window } from "herdr";
-import * as fs3 from "fs/promises";
+import { View, div as div3, image } from "gpui-kit";
+import { h_flex as h_flex3, v_flex as v_flex3 } from "gpui-base";
+import { agents, appHome as appHome4, checking, closeOverlay, exec as exec2, focused, hc as hc2, nextCommand, props, readTextFile as readTextFile2, shared as shared2, theme, watchFolder, window } from "herdr";
+import * as fs4 from "fs/promises";
 
 // src/shared/path.js
 function slashPath(p) {
@@ -40,10 +40,10 @@ function modeOf(src) {
   if (src.mode === "app") return "app";
   return null;
 }
-function installOf(src, home3) {
+function installOf(src, home4) {
   const mode = modeOf(src);
   if (mode === "app") {
-    return { mode, configPath: `${home3}/mods/dock-core/config.json`, repo: null, versionPath: `${home3}/mods/dock-core/VERSION.json` };
+    return { mode, configPath: `${home4}/mods/dock-core/config.json`, repo: null, versionPath: `${home4}/mods/dock-core/VERSION.json` };
   }
   if (mode !== "clone" || !isText(src.config)) return null;
   const configPath = slashPath(src.config);
@@ -234,6 +234,7 @@ var sessionFileRel = (t) => `${sessionsRel()}/${t}.json`;
 var controlFileRel = (t) => `${sessionsRel()}/${t}.control.json`;
 var framesRel = (t) => `${BROWSER_REL}/frames/${t}`;
 var bigFramesRel = (t) => `${framesRel(t)}-big`;
+var picksRel = () => `${BROWSER_REL}/picks`;
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 
 // src/shared/browser/registry.js
@@ -532,9 +533,9 @@ function pageHeading(record, state) {
 
 // src/shared/gitcmd.js
 var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-function utf8(str) {
+function utf8(str2) {
   const out = [];
-  for (const ch of str) {
+  for (const ch of str2) {
     const c = ch.codePointAt(0);
     if (c < 128) out.push(c);
     else if (c < 2048) out.push(192 | c >> 6, 128 | c & 63);
@@ -543,8 +544,8 @@ function utf8(str) {
   }
   return out;
 }
-function b64urlEncode(str) {
-  const b = utf8(String(str));
+function b64urlEncode(str2) {
+  const b = utf8(String(str2));
   let s = "";
   for (let i = 0; i < b.length; i += 3) {
     const n = b[i] << 16 | (b[i + 1] ?? 0) << 8 | (b[i + 2] ?? 0);
@@ -560,8 +561,9 @@ function panelMode(session, control, now, handoffMinutes) {
   const c = control ?? parseControl(null);
   const h = session?.handoff;
   if (h && personHas(session, { ...c, takeover: null }, now, handoffMinutes)) return { kind: "handoff", handoff: h };
-  return { kind: c.takeover ? "takeover" : "view" };
+  return c.takeover ? { kind: "takeover", reason: c.takeover.reason } : { kind: "view" };
 }
+var pickKind = (mode) => mode?.kind === "takeover" && (mode.reason === "pick" || mode.reason === "notes") ? mode.reason : null;
 var inControl = (mode) => mode?.kind === "handoff" || mode?.kind === "takeover";
 function controlOf(text, created2) {
   const c = parseControl(text);
@@ -574,6 +576,8 @@ function controlText(text, created2, change) {
 var release = (c) => ({ ...handBack(c), window: null, sizes: null });
 var changes = {
   takeOver: (now) => (c) => c.takeover ? c : takeOver(c, "person", now),
+  pick: (kind, now) => (c) => takeOver(c, kind, now),
+  // Pick or Notes: the person points at the page
   window: (now) => (c) => takeOver(c, "window", now),
   // before window-open runs: the agent waits
   windowOpened: (now) => (c) => ({ ...c, window: { since: now } }),
@@ -586,7 +590,11 @@ var changes = {
   handBack: () => release,
   answer: (id, value) => (c) => release(answer(c, id, value))
 };
-var finishOf = (control) => ({ restore: restoreCommands(control?.sizes), window: !!control?.window });
+var finishOf = (control) => ({
+  restore: restoreCommands(control?.sizes),
+  window: !!control?.window,
+  stopPick: control?.takeover?.reason === "pick" || control?.takeover?.reason === "notes"
+});
 function handoffNotices(entries, notified, now, handoffMinutes) {
   const seen = new Set(Array.isArray(notified) ? notified : []);
   const out = [];
@@ -711,13 +719,13 @@ var Stream = class {
   start(cx) {
     if (this.stopped) return;
     const gen = ++this.gen;
-    const home3 = slashPath(appHome());
+    const home4 = slashPath(appHome());
     cx.spawn(async () => {
       let ws = null;
       try {
         await (clearing.get(this.framesRel) ?? Promise.resolve()).catch(() => {
         });
-        await fs.mkdir(`${home3}/${this.framesRel}`, { recursive: true });
+        await fs.mkdir(`${home4}/${this.framesRel}`, { recursive: true });
         ws = await WebSocket.connect(`ws://127.0.0.1:${this.port}/?maxFps=${MAX_FPS}`);
         if (this.stopped || gen !== this.gen) {
           ws.close().catch(() => {
@@ -736,7 +744,7 @@ var Stream = class {
             continue;
           }
           if (m?.type === "frame") {
-            await this.write(m, home3);
+            await this.write(m, home4);
             continue;
           }
           const next = streamStep(this.state, m);
@@ -759,28 +767,28 @@ var Stream = class {
     this.set({ ...this.state, phase: "connecting" });
     this.start(cx);
   }
-  async write(m, home3) {
+  async write(m, home4) {
     if (typeof m.data !== "string") return;
     const bytes = bytesOf(m.data);
     const size = jpegSize(bytes);
     if (!size) return;
     const { rel, drop } = this.ring.next(`${this.epoch}-${++this.count}`);
-    const file = `${home3}/${rel}`;
+    const file = `${home4}/${rel}`;
     try {
       await fs.writeFile(file, bytes);
     } catch {
       try {
-        await fs.mkdir(`${home3}/${this.framesRel}`, { recursive: true });
+        await fs.mkdir(`${home4}/${this.framesRel}`, { recursive: true });
         await fs.writeFile(file, bytes);
       } catch {
         this.ring.list = this.ring.list.filter((r) => r !== rel);
         return;
       }
     }
-    for (const d of drop) fs.unlink(`${home3}/${d}`).catch(() => {
+    for (const d of drop) fs.unlink(`${home4}/${d}`).catch(() => {
     });
     if (this.stopped) {
-      fs.unlink(`${home3}/${rel}`).catch(() => {
+      fs.unlink(`${home4}/${rel}`).catch(() => {
       });
       return;
     }
@@ -813,19 +821,24 @@ var Stream = class {
 // src/mods/dock-browser/controls.js
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-function button(t, id, label, onClick, { busy = false, primary = false, tip = null } = {}) {
+function button(t, id, label2, onClick, { busy = false, primary = false, tip = null } = {}) {
   return div().id(id).flex_none().px(8).h(22).flex().items_center().rounded(4).text_size(11.5).when(primary, (el) => el.bg(t.accent).text_color(t.background)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(!!tip, (el) => el.tooltip(tip)).when(busy, (el) => el.opacity(0.5)).when(!busy, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
     cx.stop_propagation();
     onClick(cx);
-  })).child(label);
+  })).child(label2);
 }
 function controlBar(t, state, on) {
   const busy = !!state.busy;
   const row = h_flex().flex_none().flex_wrap().gap(4).px(12).py(6).items_center().border_b(1).border_color(t.border);
+  const pointing = state.reason === "pick" || state.reason === "notes";
   if (state.control === "view") {
     row.child(button(t, "browser-takeover", "Take over", on.takeOver, { busy, tip: "Use the page yourself; the agent waits until you hand back" }));
-  } else if (state.control === "takeover") {
+  } else if (state.control === "takeover" && !pointing) {
     row.child(button(t, "browser-handback", "Hand back", on.handBack, { busy, primary: true, tip: "Give the page back to the agent" }));
+  }
+  if (state.control !== "handoff" && !pointing) {
+    row.child(button(t, "browser-pick", "Pick", (cx) => on.pick("pick", cx), { busy, tip: "Click one element and tell the agent what to change" }));
+    row.child(button(t, "browser-notes", "Notes", (cx) => on.pick("notes", cx), { busy, tip: "Notes on several elements, sent together" }));
   }
   row.child(div().flex_none().w(6));
   for (const [kind, s] of Object.entries(SIZES)) {
@@ -913,20 +926,307 @@ async function announceHandoffs(handoffMinutes) {
 
 // src/mods/dock-browser/person.js
 import { openOverlay } from "herdr";
+
+// src/shared/browser/feedback.js
+var INTENTS = ["fix", "change", "question", "approve"];
+var PRIORITIES = ["low", "normal", "high"];
+var NOTES_MAX = 20;
+var TEXT_MAX = 200;
+var PICTURE_DAYS = 1;
+var R = "[redacted]";
+var PAIR = /\b(password|passwd|pwd|pass|token|access_token|refresh_token|id_token|auth_token|api_key|apikey|secret|client_secret|session_id|sessionid|auth)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
+var JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+var BEARER = /\b(Bearer|Basic|Token)(\s+)[A-Za-z0-9._~+/=-]{4,}/g;
+var HEX = /\b[0-9a-fA-F]{32,}\b/g;
+var B642 = /[A-Za-z0-9+_-]{32,}={0,2}/g;
+var looksRandom = (m) => /[0-9]/.test(m) && /[a-z]/.test(m) && /[A-Z]/.test(m) && m.split(/[-_]/).some((p) => p.length >= 16);
+function redact(s) {
+  let out = String(s ?? "");
+  if (!out) return "";
+  out = out.replace(PAIR, (_m, k, sep) => `${k}${sep}${R}`);
+  out = out.replace(JWT, R);
+  out = out.replace(BEARER, (_m, k, sp) => `${k}${sp}${R}`);
+  out = out.replace(HEX, R);
+  out = out.replace(B642, (m) => looksRandom(m) ? R : m);
+  return out;
+}
+var oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+function code(s) {
+  const runs = String(s).match(/`+/g) ?? [];
+  const n = Math.max(0, ...runs.map((r) => r.length)) + 1;
+  const pad = s.startsWith("`") || s.endsWith("`") ? " " : "";
+  return "`".repeat(n) + pad + s + pad + "`".repeat(n);
+}
+function designFeedback({ url, items }) {
+  const lines = ["## Design Feedback", "", `Page: ${oneLine(redact(url)) || "(unknown)"}`];
+  (items ?? []).forEach((it, i) => {
+    lines.push("", `### ${i + 1}. ${code(oneLine(it.selector) || "(element)")}`);
+    const src = it.source;
+    if (src?.file) lines.push(`Source: ${oneLine(src.file)}${Number.isFinite(src.line) ? `:${src.line}` : ""}`);
+    const text = oneLine(redact(oneLine(it.text))).slice(0, TEXT_MAX);
+    if (text) lines.push(`Text: "${text}"`);
+    lines.push(`Note: ${oneLine(redact(it.note)) || "(no note)"}`);
+    if (it.intent) lines.push(`Intent: ${it.intent}`);
+    if (it.priority) lines.push(`Priority: ${it.priority}`);
+    if (it.picture) lines.push(`Picture: ${it.picture}`);
+  });
+  return lines.join("\n");
+}
+function addPicks(items, picks, kind, max = NOTES_MAX) {
+  const list = Array.isArray(picks) ? picks : [];
+  if (kind === "pick") return { added: list.slice(-1), dropped: 0 };
+  const room = Math.max(0, max - (items?.length ?? 0));
+  return { added: list.slice(0, room), dropped: Math.max(0, list.length - room) };
+}
+var pictureName = (t, now, n) => `${t}-${Math.floor(now).toString(36)}-${n}.png`;
+function stalePicks(names, now) {
+  const out = [];
+  for (const name of names ?? []) {
+    const m = /-([0-9a-z]+)-\d+\.png$/.exec(String(name));
+    if (!m) continue;
+    const at = parseInt(m[1], 36);
+    if (Number.isFinite(at) && at > 1e12 && now - at > PICTURE_DAYS * 864e5) out.push(name);
+  }
+  return out;
+}
+
+// src/shared/browser/pick-script.js
+var SECRET_WORDS = [
+  "access_token",
+  "auth_token",
+  "api_key",
+  "apikey",
+  "client_secret",
+  "oauth_state",
+  "x-amz-",
+  "session_id",
+  "sessionid",
+  "csrf",
+  "secret",
+  "password",
+  "token"
+];
+var PICK_SCRIPT = `(function () {
+  if (window.__dockPick) return 'ok';
+  var SECRET = ${JSON.stringify(SECRET_WORDS)};
+  var TEXT_MAX = ${TEXT_MAX};
+  var root = document.documentElement;
+  var picks = [], els = {}, badges = [], count = 0, held = null;
+
+  function layer(border, bg) {
+    var d = document.createElement('div');
+    d.setAttribute('data-dock-pick', '');
+    d.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;box-sizing:border-box;display:none;' +
+      'border-radius:2px;border:' + border + ';background:' + bg;
+    root.appendChild(d);
+    return d;
+  }
+  var hover = layer('2px solid #3b82f6', 'rgba(59,130,246,0.12)');
+  var hold = layer('3px solid #f59e0b', 'rgba(245,158,11,0.15)');
+
+  function place(d, el) {
+    var r = el.getBoundingClientRect();
+    d.style.left = r.left + 'px'; d.style.top = r.top + 'px';
+    d.style.width = r.width + 'px'; d.style.height = r.height + 'px';
+    d.style.display = 'block';
+  }
+
+  function containsSecret(v) {
+    var s = String(v || '').toLowerCase();
+    for (var i = 0; i < SECRET.length; i++) if (s.indexOf(SECRET[i]) !== -1) return true;
+    return false;
+  }
+  function cssEscape(v) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(v);
+    return String(v).replace(/[^a-zA-Z0-9_-]/g, function (c) { return '\\\\' + c; });
+  }
+  function looksHashy(v) { return /^[A-Za-z0-9_-]{12,}$/.test(v) && /\\d/.test(v) && /[A-Z]/.test(v); }
+  function stableClasses(el, max) {
+    var out = [];
+    if (!el.classList) return out;
+    for (var i = 0; i < el.classList.length && out.length < max; i++) {
+      var c = el.classList[i];
+      if (!c || c.length > 60 || containsSecret(c) || /^css-[a-z0-9]+$/i.test(c) || looksHashy(c)) continue;
+      out.push(c);
+    }
+    return out;
+  }
+  function part(el) {
+    var tag = el.tagName.toLowerCase();
+    if (el.id && !containsSecret(el.id)) return tag + '#' + cssEscape(el.id);
+    var cls = stableClasses(el, 2);
+    return cls.length ? tag + cls.map(function (c) { return '.' + cssEscape(c); }).join('') : tag;
+  }
+  function unique(sel) { try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; } }
+  function nth(el) {
+    var i = 1, s = el.previousElementSibling;
+    while (s) { if (s.tagName === el.tagName) i++; s = s.previousElementSibling; }
+    if (i > 1) return ':nth-of-type(' + i + ')';
+    s = el.nextElementSibling;
+    while (s) { if (s.tagName === el.tagName) return ':nth-of-type(1)'; s = s.nextElementSibling; }
+    return '';
+  }
+  function selectorOf(el) {
+    var parts = [], cur = el;
+    while (cur && cur.nodeType === 1 && cur !== document.body && cur !== root && parts.length < 10) {
+      var p = part(cur);
+      if (cur.parentElement && !unique([p].concat(parts).join(' > '))) p += nth(cur);
+      parts.unshift(p);
+      var sel = parts.join(' > ');
+      if (unique(sel)) return sel.slice(0, 400);
+      cur = cur.parentElement;
+    }
+    return (parts.join(' > ') || el.tagName.toLowerCase()).slice(0, 400);
+  }
+
+  function cleanPath(p) {
+    return String(p || '').replace(/[?#].*$/, '')
+      .replace(/^turbopack:\\/\\/\\/\\[project\\]\\//, '').replace(/^webpack-internal:\\/\\/\\/(\\.\\/)?/, '')
+      .replace(/^webpack:\\/\\/\\/(\\.\\/)?/, '').replace(/^turbopack:\\/\\/\\//, '')
+      .replace(/^https?:\\/\\/[^/]+\\//, '').replace(/^file:\\/\\/\\//, '/')
+      .replace(/^\\([^)]+\\)\\/\\.\\//, '').replace(/^\\.\\//, '');
+  }
+  // A React dev build: the element's fiber (__reactFiber$...) and the first _debugSource up its owners.
+  function sourceOf(el) {
+    try {
+      var keys = Object.keys(el), fiber = null;
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) { fiber = el[keys[i]]; break; }
+      }
+      for (var d = 0; fiber && d < 35; d++, fiber = fiber.return) {
+        var s = fiber._debugSource || (fiber._debugOwner && fiber._debugOwner._debugSource);
+        if (s && s.fileName && s.lineNumber) {
+          var file = cleanPath(s.fileName);
+          return containsSecret(file) ? null : { file: file.slice(0, 300), line: s.lineNumber };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function textOf(el) {
+    var t = '';
+    try { t = el.innerText || el.textContent || ''; } catch (e) {}
+    t = String(t).replace(/\\s+/g, ' ').trim();
+    if (!t) t = el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || el.getAttribute('placeholder') || '';
+    return String(t).replace(/\\s+/g, ' ').trim().slice(0, TEXT_MAX);
+  }
+
+  function target(e) {
+    var el = e.target;
+    while (el && el.nodeType !== 1) el = el.parentNode;
+    return el && el !== root ? el : null;
+  }
+  function stop(e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
+  function onMove(e) {
+    var el = target(e);
+    if (el && !held) place(hover, el);
+  }
+  function onClick(e) {
+    stop(e);
+    var el = target(e);
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    var n = ++count;
+    els[n] = el;
+    picks.push({ n: n, selector: selectorOf(el), text: textOf(el), tag: el.tagName.toLowerCase(),
+      box: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }, source: sourceOf(el) });
+    hover.style.display = 'none';
+    held = el;
+    place(hold, el);
+  }
+  var swallow = ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'dblclick', 'auxclick', 'contextmenu'];
+  window.addEventListener('mousemove', onMove, true);
+  window.addEventListener('click', onClick, true);
+  for (var i = 0; i < swallow.length; i++) window.addEventListener(swallow[i], stop, true);
+
+  function badge(n, label) {
+    var el = els[n];
+    if (!el || !el.isConnected) return;
+    var r = el.getBoundingClientRect();
+    var b = document.createElement('div');
+    b.setAttribute('data-dock-pick', '');
+    b.textContent = String(label);
+    b.style.cssText = 'position:absolute;pointer-events:none;z-index:2147483647;min-width:18px;height:18px;padding:0 4px;' +
+      'box-sizing:border-box;border-radius:9px;background:#f59e0b;color:#111;font:bold 11px/18px sans-serif;text-align:center;' +
+      'left:' + Math.max(0, r.left + window.scrollX - 9) + 'px;top:' + Math.max(0, r.top + window.scrollY - 9) + 'px';
+    root.appendChild(b);
+    badges.push(b);
+  }
+
+  window.__dockPick = {
+    read: function () { return JSON.stringify(picks.splice(0)); },
+    hold: function (n) { var el = els[n]; if (!el || !el.isConnected) return false; hover.style.display = 'none'; held = el; place(hold, el); return true; },
+    release: function () { held = null; hold.style.display = 'none'; return true; },
+    mark: function (list) {
+      for (var i = 0; i < badges.length; i++) badges[i].remove();
+      badges = [];
+      for (var j = 0; j < list.length; j++) badge(list[j].n, list[j].label);
+      return true;
+    },
+    stop: function () {
+      window.removeEventListener('mousemove', onMove, true);
+      window.removeEventListener('click', onClick, true);
+      for (var i = 0; i < swallow.length; i++) window.removeEventListener(swallow[i], stop, true);
+      var all = document.querySelectorAll('[data-dock-pick]');
+      for (var j = 0; j < all.length; j++) all[j].remove();
+      delete window.__dockPick;
+      return true;
+    }
+  };
+  return 'ok';
+})()`;
+var READ_PICKS = "(function () { return window.__dockPick ? window.__dockPick.read() : '[]'; })()";
+var RELEASE_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.release()); })()";
+var STOP_SCRIPT = "(function () { return !!(window.__dockPick && window.__dockPick.stop()); })()";
+var holdScript = (n) => `(function () { return !!(window.__dockPick && window.__dockPick.hold(${Math.floor(Number(n)) || 0})); })()`;
+function markScript(list) {
+  const safe = (list ?? []).map((x) => ({ n: Math.floor(Number(x.n)) || 0, label: Math.floor(Number(x.label)) || 0 }));
+  return `(function () { return !!(window.__dockPick && window.__dockPick.mark(${JSON.stringify(safe)})); })()`;
+}
+var str = (v, max) => typeof v === "string" ? v.slice(0, max) : "";
+function pickOf(o) {
+  if (!o || typeof o !== "object" || typeof o.selector !== "string" || !o.selector) return null;
+  const b = o.box;
+  const box = b && typeof b === "object" && ["x", "y", "w", "h"].every((k) => Number.isFinite(b[k])) ? { x: b.x, y: b.y, w: b.w, h: b.h } : null;
+  const s = o.source;
+  const source = s && typeof s === "object" && typeof s.file === "string" && s.file && Number.isFinite(s.line) ? { file: s.file, line: s.line } : null;
+  return { n: Number.isFinite(o.n) ? o.n : 0, selector: str(o.selector, 400), text: str(o.text, TEXT_MAX), tag: str(o.tag, 40), box, source };
+}
+function parsePicks(text) {
+  let v;
+  try {
+    v = JSON.parse(String(text ?? ""));
+  } catch {
+    return [];
+  }
+  if (v && typeof v === "object" && !Array.isArray(v) && v.data && "result" in v.data) v = v.data.result;
+  for (let i = 0; i < 2 && typeof v === "string"; i++) {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(v)) return [];
+  return v.map(pickOf).filter(Boolean);
+}
+
+// src/mods/dock-browser/person.js
 var personControls = {
   mode() {
     return this.record ? panelMode(this.record, this.control, Date.now(), this.browser.handoffMinutes) : { kind: "view" };
   },
   // Runs one button's work, one at a time, with its label shown; a failure is shown under the buttons.
-  act(label, cx, work) {
+  act(label2, cx, work) {
     if (this.busy || !this.terminal || !this.record) return;
     const t = this.terminal, rec = this.record;
-    this.busy = label;
+    this.busy = label2;
     this.error = null;
     cx.notify();
     cx.spawn(async (cx2) => {
       try {
-        await work(t, rec);
+        await work(t, rec, cx2);
       } catch (e) {
         if (this.terminal === t) this.error = String(e?.message ?? e);
       }
@@ -949,8 +1249,9 @@ var personControls = {
   takeOver(cx) {
     this.act("Taking over\u2026", cx, (t) => this.setControl(t, changes.takeOver(Date.now())));
   },
-  // Size tabs closed and the agent's tab and viewport back, the real window finished, then the page is the agent's
-  // again. What to finish comes from the control record, so it doesn't matter which copy opened it.
+  // The real window finished, size tabs closed and the agent's tab and viewport back, Pick or Notes' script taken out,
+  // then the page is the agent's again. What to finish comes from the control record, so it doesn't matter which copy
+  // opened it.
   handBack(cx) {
     this.act("Handing back\u2026", cx, async (t, rec) => {
       await this.finish(t, rec, true);
@@ -965,6 +1266,7 @@ var personControls = {
       else await run(this.bin(), ["--session", realSessionName(rec.session), "close"]).catch(() => null);
     }
     for (const args of f.restore) await this.ab(rec, args).catch(() => null);
+    if (f.stopPick) await this.ab(rec, ["eval", STOP_SCRIPT]).catch(() => null);
   },
   answer(value, cx) {
     const h = this.mode().handoff;
@@ -1014,6 +1316,246 @@ var personControls = {
   }
 };
 
+// src/mods/dock-browser/pick.js
+import { appHome as appHome3, hc } from "herdr";
+import { InputState } from "gpui-base";
+import * as fs3 from "fs/promises";
+var home2 = () => slashPath(appHome3());
+var READ_TRIES = 6;
+var BACKSTOP_MS = 2e3;
+var READ_AGAIN = `${PICK_SCRIPT};
+${READ_PICKS}`;
+var pickControls = {
+  // The note fields, made once (InputState needs a live host call, not render): one per element Notes can hold.
+  makeNoteInputs() {
+    this.noteInputs = Array.from({ length: NOTES_MAX }, () => InputState.new({ placeholder: "What should change here?" }));
+    for (const input of this.noteInputs) input.on("submit", (_e, cx) => {
+      if (this.picking?.kind === "pick") this.sendFeedback(cx);
+    });
+    this.freeSlots = this.noteInputs.map((_x, i) => i);
+    this.pickWanted = false;
+    this.pickReading = false;
+    this.picking = null;
+  },
+  startPick(kind, cx) {
+    this.act(kind === "pick" ? "Starting Pick\u2026" : "Starting Notes\u2026", cx, async (t, rec, cx2) => {
+      this.dropPicks();
+      await this.setControl(t, changes.pick(kind, Date.now()));
+      this.picking = { kind, t, items: [] };
+      this.flash = null;
+      await this.ab(rec, ["eval", PICK_SCRIPT]);
+      this.pickBackstop(this.picking, cx2);
+    });
+  },
+  // Besides the read after each click here: one every few seconds while it runs (a click that reached the page
+  // another way, one whose read gave up early, or a page that lost the script).
+  pickBackstop(p, cx) {
+    if (!p) return;
+    cx.spawn(async (cx2) => {
+      for (; ; ) {
+        await cx2.sleep(BACKSTOP_MS);
+        if (this.picking !== p) return;
+        if (this.terminal === p.t && !this.pickReading) this.pickClicked(cx2, 1);
+      }
+    });
+  },
+  // A click went to the page while picking: read what the script recorded (one read loop at a time; a click during
+  // it runs the loop once more).
+  pickClicked(cx, tries = READ_TRIES) {
+    if (!this.myPick()) return;
+    this.pickWanted = true;
+    if (this.pickReading) return;
+    this.pickReading = true;
+    cx.spawn(async (cx2) => {
+      try {
+        while (this.pickWanted) {
+          this.pickWanted = false;
+          await this.readPicks(cx2, tries);
+        }
+      } catch (e) {
+        this.error = String(e?.message ?? e);
+      }
+      this.pickReading = false;
+      cx2.notify();
+    });
+  },
+  async readPicks(cx, tries) {
+    const p = this.picking, rec = this.record;
+    for (let i = 0; i < tries && this.picking === p && rec; i++) {
+      await cx.sleep(i ? 150 : 80);
+      const r = await this.ab(rec, ["eval", READ_AGAIN]).catch(() => null);
+      const picks = parsePicks(r?.stdout);
+      if (!picks.length) continue;
+      await this.addPicked(p, rec, picks);
+      cx.notify();
+      return;
+    }
+  },
+  async addPicked(p, rec, picks) {
+    const { added, dropped } = addPicks(p.items, picks, p.kind);
+    this.error = dropped ? `Notes holds ${NOTES_MAX} elements: send or remove some first` : null;
+    if (p.kind === "pick" && added.length) this.dropItems(p.items.splice(0));
+    for (const pick of added) {
+      const picture = await this.takePicture(rec, p.t, pick);
+      if (this.picking !== p) {
+        if (picture) await fs3.unlink(picture).catch(() => {
+        });
+        return;
+      }
+      const slot = this.freeSlots.shift();
+      if (slot === void 0) break;
+      this.noteInputs[slot].set_value("");
+      const notes = p.kind === "notes";
+      p.items.push({ ...pick, picture, slot, intent: notes ? "fix" : null, priority: notes ? "normal" : null });
+      this.noteInputs[slot].focus();
+    }
+    this.flash = null;
+    if (p.kind === "notes") await this.markNotes(rec);
+  },
+  // The whole page with the element outlined (agent-browser takes no element shot), under picks/; null on failure.
+  async takePicture(rec, t, pick) {
+    const dir = `${home2()}/${picksRel()}`;
+    await fs3.mkdir(dir, { recursive: true }).catch(() => {
+    });
+    const path = `${dir}/${pictureName(t, Date.now(), pick.n)}`;
+    try {
+      await this.ab(rec, ["eval", holdScript(pick.n)]);
+      await this.ab(rec, ["screenshot", path]);
+      return path;
+    } catch (e) {
+      console.log(`dock-browser: no picture: ${e?.message ?? e}`);
+      return null;
+    } finally {
+      await this.ab(rec, ["eval", RELEASE_SCRIPT]).catch(() => null);
+    }
+  },
+  // Notes' numbered badges in the page, numbered as the list is.
+  async markNotes(rec) {
+    const p = this.picking;
+    if (!p || p.kind !== "notes") return;
+    await this.ab(rec, ["eval", markScript(p.items.map((it, i) => ({ n: it.n, label: i + 1 })))]).catch(() => null);
+  },
+  removeNote(i, cx) {
+    const p = this.picking;
+    if (!p?.items[i]) return;
+    this.dropItems(p.items.splice(i, 1));
+    const rec = this.record;
+    if (rec) cx.spawn(async () => this.markNotes(rec));
+    cx.notify();
+  },
+  setNoteField(i, field, value, cx) {
+    const it = this.picking?.items[i];
+    if (!it) return;
+    it[field] = value;
+    cx.notify();
+  },
+  // The prompt for what is listed, with the notes as typed.
+  feedbackText() {
+    const p = this.picking;
+    const { url } = pageHeading(this.record, this.stream?.state ?? {});
+    return designFeedback({ url, items: p.items.map((it) => ({ ...it, note: this.noteInputs[it.slot].value() })) });
+  },
+  copyNotes(cx) {
+    if (!this.picking?.items.length) return;
+    cx.write_to_clipboard(this.feedbackText());
+    this.flash = "Copied";
+    cx.notify();
+  },
+  // Typed into the agent's terminal as its next prompt; then the script leaves the page and the page is handed back
+  // (finish: size tabs closed, the agent's tab and size back). The pictures stay for the agent to open.
+  sendFeedback(cx) {
+    const p = this.picking;
+    if (!p?.items.length || this.busy) return;
+    const text = this.feedbackText();
+    this.act("Sending\u2026", cx, async (t, rec) => {
+      const r = await hc(["send", t, text]);
+      if (r.code !== 0) throw new Error(String(r.stderr || r.stdout || "").trim().split("\n")[0] || "The agent's terminal didn't take it");
+      this.releaseSlots(p.items);
+      if (this.picking === p) this.picking = null;
+      await this.finish(t, rec, true);
+      await this.setControl(t, changes.handBack());
+    });
+  },
+  // Leaving Pick or Notes without sending: the same as Hand back (its finish takes the script out of the page).
+  leavePick(cx) {
+    this.handBack(cx);
+  },
+  // This copy's Pick or Notes ended (sent, or the record no longer says so): what wasn't sent goes, pictures included.
+  dropPicks() {
+    const p = this.picking;
+    this.picking = null;
+    if (p) this.dropItems(p.items);
+  },
+  dropItems(items) {
+    this.releaseSlots(items);
+    for (const it of items) if (it.picture) fs3.unlink(it.picture).catch(() => {
+    });
+  },
+  releaseSlots(items) {
+    for (const it of items) {
+      if (!Number.isInteger(it.slot) || this.freeSlots.includes(it.slot)) continue;
+      this.noteInputs[it.slot].set_value("");
+      this.freeSlots.push(it.slot);
+    }
+    this.freeSlots.sort((a, b) => a - b);
+  },
+  // Pictures older than a day (sent long ago): deleted with the sweep.
+  async sweepPictures() {
+    const dir = `${home2()}/${picksRel()}`;
+    let names = [];
+    try {
+      names = await fs3.readdir(dir);
+    } catch {
+      return;
+    }
+    for (const n of stalePicks(names, Date.now())) await fs3.unlink(`${dir}/${n}`).catch(() => {
+    });
+  }
+};
+
+// src/mods/dock-browser/pick-view.js
+import { div as div2 } from "gpui-kit";
+import { h_flex as h_flex2, v_flex as v_flex2, Input } from "gpui-base";
+function choice(t, id, values, current, onPick) {
+  return h_flex2().flex_none().gap(2).children(values.map((v) => div2().id(`${id}-${v}`).px(6).h(18).flex().items_center().rounded(4).text_size(10.5).cursor_pointer().when(v === current, (e) => e.bg(t.accent).text_color(t.background)).when(v !== current, (e) => e.border_1().border_color(t.border).text_color(t.muted).hover((s) => s.bg(t.hover))).on_click((_e, cx) => {
+    cx.stop_propagation();
+    onPick(v, cx);
+  }).child(v)));
+}
+function noteField(t, input) {
+  return div2().flex_1().min_w(0).h(26).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).bg(t.background).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(input).w_full().h(20).text_size(12).text_color(t.foreground));
+}
+var label = (it) => `${it.tag || "element"}${it.text ? ` "${it.text.slice(0, 40)}"` : ""}`;
+function pickBar(t, state, on) {
+  const busy = !!state.busy;
+  const bar = v_flex2().flex_none().gap(6).px(12).py(8).border_b(1).border_color(t.accent);
+  const p = state.picking;
+  if (!p) {
+    const what = state.elsewhere === "notes" ? "Notes" : "Pick";
+    return bar.child(div2().text_size(11.5).text_color(t.dim).child(`${what} is running in another copy of this panel.`)).child(h_flex2().child(button(t, "browser-pick-leave", "Cancel", on.leave, { busy, tip: "End it and hand the page back; nothing is sent" })));
+  }
+  const items = p.items;
+  if (p.kind === "pick") {
+    const it = items[0];
+    bar.child(div2().text_size(11.5).text_color(t.dim).child(it ? `Picked ${label(it)}. Say what should change, then Send (Enter). Click another element to pick it instead.` : "Point at an element in the page and click it. The page doesn't get the click."));
+    if (it) bar.child(div2().truncate().text_size(11).text_color(t.muted).child(it.selector));
+    if (it) bar.child(h_flex2().gap(4).items_center().child(noteField(t, state.inputs[it.slot])));
+  } else {
+    bar.child(div2().text_size(11.5).text_color(t.dim).child(items.length ? `${items.length} of ${NOTES_MAX}. Click more elements, write a note on each, then Send them together.` : `Click elements in the page (up to ${NOTES_MAX}); each gets a numbered badge and a note here.`));
+    if (items.length) {
+      bar.child(v_flex2().id("browser-notes").max_h(320).overflow_y_scrollbar().gap(8).children(items.map((it, i) => v_flex2().gap(3).child(h_flex2().gap(6).items_center().child(div2().flex_none().min_w(18).h(18).px(4).rounded(9).bg(t.working).text_color(t.background).text_size(10.5).font_semibold().flex().items_center().justify_center().child(String(i + 1))).child(div2().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.foreground).child(label(it))).child(div2().id(`browser-note-remove-${i}`).flex_none().px(5).h(18).flex().items_center().rounded(4).text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Remove this element").on_click((_e, cx) => {
+        cx.stop_propagation();
+        on.remove(i, cx);
+      }).child("\u2715"))).child(div2().truncate().text_size(10.5).text_color(t.dim).child(it.selector)).child(noteField(t, state.inputs[it.slot])).child(h_flex2().flex_wrap().gap(6).items_center().child(choice(t, `browser-note-intent-${i}`, INTENTS, it.intent, (v, cx) => on.field(i, "intent", v, cx))).child(choice(t, `browser-note-priority-${i}`, PRIORITIES, it.priority, (v, cx) => on.field(i, "priority", v, cx)))))));
+    }
+  }
+  const row = h_flex2().flex_wrap().gap(4).items_center().child(button(t, "browser-pick-send", "Send", on.send, { busy: busy || !items.length, primary: true, tip: "Send to the agent as its next prompt, then hand the page back" }));
+  if (p.kind === "notes") row.child(button(t, "browser-pick-copy", "Copy", on.copy, { busy: busy || !items.length, tip: "Copy the Design Feedback as Markdown" }));
+  row.child(button(t, "browser-pick-leave", "Cancel", on.leave, { busy, tip: "Stop pointing and hand the page back; nothing is sent" }));
+  if (state.flash) row.child(div2().text_size(11).text_color(t.dim).child(state.flash));
+  return bar.child(row);
+}
+
 // src/mods/dock-browser/main.js
 var MOD = "dock-browser";
 var PAD = 12;
@@ -1022,7 +1564,7 @@ var LOSS_GRACE_MS = 1e3;
 var CLOSED_MS = 3e3;
 var EMPTY = "No page yet. The agent opens one with browse open.";
 var MOVE_MS = 30;
-var home2 = () => slashPath(appHome3());
+var home3 = () => slashPath(appHome4());
 var nodePlatform = (p) => p === "windows" ? "win32" : p === "macos" ? "darwin" : "linux";
 var Browser = class extends View {
   init(_props, cx) {
@@ -1044,13 +1586,18 @@ var Browser = class extends View {
     this.showErrors = false;
     this.browser = browserOf(null);
     this.watch = null;
+    this.flash = null;
+    this.makeNoteInputs();
     if (checking()) return;
     cx.timer.every(SWEEP_MS, (cx2) => {
       if (this.big) {
         cx2.notify();
         return;
       }
-      if (this.shown()) cx2.spawn(async () => this.sweep());
+      if (this.shown()) cx2.spawn(async () => {
+        await this.sweep();
+        await this.sweepPictures();
+      });
       cx2.notify();
     });
     if (!this.big) this.watchHandoffs(cx);
@@ -1059,6 +1606,7 @@ var Browser = class extends View {
         const c = await nextCommand();
         if (c === "focus" && this.record && inControl(this.mode())) this.h.focus();
         if (c === "enlarge" && !this.big && this.terminal) this.enlarge();
+        if ((c === "pick" || c === "notes") && !this.big && this.record && this.shown() && !pickKind(this.mode())) this.startPick(c, cx2);
         cx2.notify();
       }
     });
@@ -1069,7 +1617,7 @@ var Browser = class extends View {
     return rightShownOf(shared2("dock.right.shown"), applied) && rightActiveOf(shared2("dock.right.active"), applied?.right?.features ?? []) === MOD;
   }
   bin() {
-    return `${home2()}/${binRel(nodePlatform(window()?.platform))}`;
+    return `${home3()}/${binRel(nodePlatform(window()?.platform))}`;
   }
   framesOf(t) {
     return this.big ? bigFramesRel(t) : framesRel(t);
@@ -1120,7 +1668,7 @@ var Browser = class extends View {
   // The merged config's browser section, read the way dock-core does (source.json → config + local.json).
   async loadConfig() {
     try {
-      const h = home2();
+      const h = home3();
       const src = JSON.parse(await readTextFile2(`${h}/mods/dock-core/source.json`) ?? "null");
       const install = installOf(src, h);
       if (!install) return;
@@ -1135,7 +1683,7 @@ var Browser = class extends View {
   }
   async createdOf(t) {
     try {
-      const r = await hc(["get", t]);
+      const r = await hc2(["get", t]);
       const c = r.code === 0 ? JSON.parse(r.stdout).created_ms : null;
       return Number.isFinite(c) ? c : null;
     } catch {
@@ -1144,14 +1692,14 @@ var Browser = class extends View {
   }
   // This terminal's session record, or null (none, unreadable, or left by an older terminal with the same id).
   async sessionOf(t) {
-    const rec = parseSession(await readTextFile2(`${home2()}/${sessionFileRel(t)}`).catch(() => null));
+    const rec = parseSession(await readTextFile2(`${home3()}/${sessionFileRel(t)}`).catch(() => null));
     return rec && this.created != null && isStale(rec, this.created) ? null : rec;
   }
   async readRecords(cx) {
     const t = this.terminal;
     if (!t) return;
     const rec = await this.sessionOf(t);
-    const text = await readTextFile2(`${home2()}/${controlFileRel(t)}`).catch(() => null);
+    const text = await readTextFile2(`${home3()}/${controlFileRel(t)}`).catch(() => null);
     if (this.terminal !== t) return;
     const control = parseControl(text);
     this.control = text != null && this.created != null && isStale(control, this.created) ? parseControl(null) : control;
@@ -1164,11 +1712,11 @@ var Browser = class extends View {
   }
   // Re-reads the records when the sessions folder changes, while the panel shows.
   watchSessions(cx) {
-    const dir = `${home2()}/${sessionsRel()}`;
+    const dir = `${home3()}/${sessionsRel()}`;
     const gen = this.watchGen = (this.watchGen ?? 0) + 1;
     const done = () => this.key === "hidden" || this.watchGen !== gen;
     cx.spawn(async (cx2) => {
-      await fs3.mkdir(dir, { recursive: true }).catch(() => {
+      await fs4.mkdir(dir, { recursive: true }).catch(() => {
       });
       for (; ; ) {
         if (done()) return;
@@ -1256,10 +1804,10 @@ var Browser = class extends View {
     const r = await exec2("herdr-app", ["ls"]).catch(() => null);
     const live = r?.code === 0 ? liveTerminals(r.stdout) : null;
     if (!live) return;
-    const dir = `${home2()}/${sessionsRel()}`;
+    const dir = `${home3()}/${sessionsRel()}`;
     let names = [];
     try {
-      names = await fs3.readdir(dir);
+      names = await fs4.readdir(dir);
     } catch {
       return;
     }
@@ -1272,9 +1820,9 @@ var Browser = class extends View {
     for (const g of goneSessions(sessions, live)) {
       const chrome = this.browser.chrome ? ["--executable-path", this.browser.chrome] : [];
       await exec2(this.bin(), ["--session", g.session, ...chrome, "close"]).catch(() => null);
-      await fs3.unlink(`${home2()}/${sessionFileRel(g.terminal)}`).catch(() => {
+      await fs4.unlink(`${home3()}/${sessionFileRel(g.terminal)}`).catch(() => {
       });
-      await fs3.unlink(`${home2()}/${controlFileRel(g.terminal)}`).catch(() => {
+      await fs4.unlink(`${home3()}/${controlFileRel(g.terminal)}`).catch(() => {
       });
       await clearFolder(framesRel(g.terminal));
       await clearFolder(bigFramesRel(g.terminal));
@@ -1282,10 +1830,10 @@ var Browser = class extends View {
   }
   // New handoffs, announced whether or not the panel shows (the notification is how the person finds out).
   watchHandoffs(cx) {
-    const dir = `${home2()}/${sessionsRel()}`;
+    const dir = `${home3()}/${sessionsRel()}`;
     cx.spawn(async (cx2) => {
       await this.loadConfig();
-      await fs3.mkdir(dir, { recursive: true }).catch(() => {
+      await fs4.mkdir(dir, { recursive: true }).catch(() => {
       });
       for (; ; ) {
         await announceHandoffs(this.browser.handoffMinutes).catch((e) => console.log(`${MOD}: handoffs not read: ${e?.message ?? e}`));
@@ -1302,16 +1850,23 @@ var Browser = class extends View {
     });
   }
   // The control record changed (read, or written by this copy): a drag in progress ends when the person no longer
-  // has the page.
+  // has the page, and this copy's Pick or Notes ends when the record no longer says so (handed back here or in
+  // another copy).
   controlChanged() {
-    if (!this.record || !inControl(this.mode())) this.pressed = false;
+    const mode = this.mode();
+    if (!this.record || !inControl(mode)) this.pressed = false;
+    if (this.picking && this.picking.t === this.terminal && pickKind(mode) !== this.picking.kind) this.dropPicks();
+  }
+  // This copy's Pick or Notes, on the terminal shown.
+  myPick() {
+    return this.picking && this.picking.t === this.terminal ? this.picking : null;
   }
   // ---- drawing ----
   note(t, text) {
-    return div2().p(PAD + 2).text_size(12.5).text_color(t.dim).child(text);
+    return div3().p(PAD + 2).text_size(12.5).text_color(t.dim).child(text);
   }
   chip(t, text, color) {
-    return div2().flex_none().px(6).h(18).flex().items_center().rounded(4).border_1().border_color(color ?? t.border).text_size(10.5).text_color(color ?? t.muted).child(text);
+    return div3().flex_none().px(6).h(18).flex().items_center().rounded(4).border_1().border_color(color ?? t.border).text_size(10.5).text_color(color ?? t.muted).child(text);
   }
   header(t, cx) {
     const rec = this.record, st = this.stream?.state ?? {};
@@ -1319,10 +1874,10 @@ var Browser = class extends View {
     const prod = isProduction(url, this.browser.production);
     const errors = st.errors ?? 0;
     const tabs = Array.isArray(st.tabs) ? st.tabs : [];
-    return v_flex2().flex_none().px(PAD).pt(10).pb(8).gap(4).border_b(1).border_color(t.border).child(h_flex2().gap(6).items_center().child(div2().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(title || "Browser")).when(!!prod, (el) => el.child(this.chip(t, "Production", t.blocked))).child(this.chip(t, rec.profile === "signed-in" ? "signed-in" : "clean")).when(errors > 0, (el) => el.child(div2().id("browser-errors").flex_none().px(6).h(18).flex().items_center().rounded(4).cursor_pointer().bg(t.blocked).text_size(10.5).text_color(t.background).tooltip(this.showErrors ? "Hide the errors" : "The page's last console errors").on_click((_e, cx2) => {
+    return v_flex3().flex_none().px(PAD).pt(10).pb(8).gap(4).border_b(1).border_color(t.border).child(h_flex3().gap(6).items_center().child(div3().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(title || "Browser")).when(!!prod, (el) => el.child(this.chip(t, "Production", t.blocked))).child(this.chip(t, rec.profile === "signed-in" ? "signed-in" : "clean")).when(errors > 0, (el) => el.child(div3().id("browser-errors").flex_none().px(6).h(18).flex().items_center().rounded(4).cursor_pointer().bg(t.blocked).text_size(10.5).text_color(t.background).tooltip(this.showErrors ? "Hide the errors" : "The page's last console errors").on_click((_e, cx2) => {
       this.showErrors = !this.showErrors;
       cx2.notify();
-    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div2().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex2().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div2().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Switch to this tab (you take the page)").on_click((_e, cx2) => this.switchTab(String(tab.tabId), cx2))).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => el.child(v_flex2().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar().gap(2).p(6).rounded(6).border_1().border_color(t.border).children((st.errorTexts ?? []).slice().reverse().map((e, i) => div2().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
+    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div3().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex3().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div3().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Switch to this tab (you take the page)").on_click((_e, cx2) => this.switchTab(String(tab.tabId), cx2))).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => el.child(v_flex3().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar().gap(2).p(6).rounded(6).border_1().border_color(t.border).children((st.errorTexts ?? []).slice().reverse().map((e, i) => div3().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
   }
   picture(t, mode) {
     const s = this.stream;
@@ -1330,26 +1885,29 @@ var Browser = class extends View {
     const drawnW = fitWidth(s?.size, this.width - PAD * 2, room);
     if (!s?.frame || !s.size || drawnW <= 0) return this.note(t, s?.state.phase === "connecting" && s.loss.lastReconnect ? "Reconnecting\u2026" : "Connecting\u2026");
     const h = Math.round(drawnHeight(s.size, drawnW));
-    const layer = (rel) => div2().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
+    const layer = (rel) => div3().absolute().top(0).left(0).child(image(rel).w(drawnW).h(h));
     const live = inControl(mode);
     const edge = mode.kind === "handoff" ? t.working : t.accent;
+    const pointing = !!pickKind(mode), mine = !!this.myPick();
+    const clicks = !pointing || mine;
     const send = (msgs) => {
       for (const m of msgs) s.send(m);
     };
-    return div2().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4).when(live, (el) => el.border_2().border_color(edge)).when(!live, (el) => el.border_1().border_color(t.border)).on_scroll_wheel((e, cx) => {
+    return div3().id("browser-page").relative().w(drawnW).h(h).overflow_hidden().rounded(4).when(live, (el) => el.border_2().border_color(edge)).when(!live, (el) => el.border_1().border_color(t.border)).on_scroll_wheel((e, cx) => {
       if (!s.size || !e.local_position) return;
       s.send(wheelEvent(e, s.size.w, drawnW));
       cx.stop_propagation();
     }).when(live, (el) => el.track_focus(this.h).on_mouse_down("left", (e, cx) => {
-      this.h.focus();
-      if (!s.size || !e.local_position) return;
+      if (!pointing) this.h.focus();
+      if (!s.size || !e.local_position || !clicks) return;
       this.pressed = true;
       send(mouseEvents("down", e, s.size.w, drawnW));
       cx.stop_propagation();
     }).on_mouse_up("left", (e, cx) => {
       this.pressed = false;
-      if (!s.size || !e.local_position) return;
+      if (!s.size || !e.local_position || !clicks) return;
       send(mouseEvents("up", e, s.size.w, drawnW));
+      if (pointing) this.pickClicked(cx);
       cx.stop_propagation();
     }).on_mouse_move((e) => {
       const now = Date.now();
@@ -1357,6 +1915,7 @@ var Browser = class extends View {
       this.lastMove = now;
       send(mouseEvents("move", e, s.size.w, drawnW, this.pressed));
     }).on_key_down((e, cx) => {
+      if (pointing) return;
       if (isPaste(e, window()?.platform)) {
         const p = pasteEvents(cx.read_from_clipboard() ?? "");
         if (p.tooLong) {
@@ -1375,7 +1934,7 @@ var Browser = class extends View {
   render(cx) {
     const t = theme();
     this.follow(cx);
-    const root = v_flex2().id("dock-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
+    const root = v_flex3().id("dock-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
       if (Math.abs((size?.width ?? 0) - this.width) > 2) {
         this.width = size.width;
         cx2.notify();
@@ -1393,13 +1952,24 @@ var Browser = class extends View {
       done: (cx2) => this.answer("done", cx2),
       cancel: (cx2) => this.answer("cancel", cx2),
       openWindow: (cx2) => this.openWindow(cx2)
-    }))).child(controlBar(t, { control: mode.kind, big: this.big, busy: this.busy }, {
+    }))).child(controlBar(t, { control: mode.kind, reason: mode.reason ?? null, big: this.big, busy: this.busy }, {
       takeOver: (cx2) => this.takeOver(cx2),
       handBack: (cx2) => this.handBack(cx2),
       size: (kind, cx2) => this.size(kind, cx2),
+      pick: (kind, cx2) => this.startPick(kind, cx2),
       enlarge: () => this.enlarge(),
       close: () => closeOverlay(props()?.overlay)
-    })).when(!!this.error, (el) => el.child(errorLine(t, this.error))).child(v_flex2().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD).on_size_change((size, cx2) => {
+    })).when(!!pickKind(mode), (el) => el.child(pickBar(
+      t,
+      { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode) },
+      {
+        send: (cx2) => this.sendFeedback(cx2),
+        copy: (cx2) => this.copyNotes(cx2),
+        leave: (cx2) => this.leavePick(cx2),
+        remove: (i, cx2) => this.removeNote(i, cx2),
+        field: (i, name, value, cx2) => this.setNoteField(i, name, value, cx2)
+      }
+    ))).when(!!this.error, (el) => el.child(errorLine(t, this.error))).child(v_flex3().id("browser-body").flex_1().min_h(0).overflow_y_scrollbar().p(PAD).on_size_change((size, cx2) => {
       if (Math.abs((size?.height ?? 0) - this.bodyH) > 2) {
         this.bodyH = size.height;
         cx2.notify();
@@ -1413,7 +1983,7 @@ var Browser = class extends View {
     await s?.stop();
   }
 };
-Object.assign(Browser.prototype, personControls);
+Object.assign(Browser.prototype, personControls, pickControls);
 export {
   Browser as default
 };

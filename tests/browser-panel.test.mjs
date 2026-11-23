@@ -125,12 +125,12 @@ test("the record keeps the size tabs and the real window; any copy finishes them
   assert.deepEqual(c.sizes, { tabs: ["t4", "t5"], agentTab: "t1", viewport: { w: 1280, h: 633 } });
   assert.deepEqual(finishOf(c), {
     restore: [["tab", "close", "t4"], ["tab", "close", "t5"], ["tab", "t1"], ["set", "viewport", "1280", "633"]],
-    window: false,
+    window: false, stopPick: false,
   });
   // Hand back clears them, so a second Hand back (another copy) undoes nothing twice.
   const back = parseControl(controlText(text, 5, changes.handBack()));
   assert.equal(back.sizes, null);
-  assert.deepEqual(finishOf(back), { restore: [], window: false });
+  assert.deepEqual(finishOf(back), { restore: [], window: false, stopPick: false });
   // The real window: open only once window-open succeeded; Done or Cancel (answer) ends it.
   let w = controlText(null, 5, changes.window(T0));
   assert.equal(finishOf(parseControl(w)).window, false);
@@ -141,5 +141,5 @@ test("the record keeps the size tabs and the real window; any copy finishes them
   assert.equal(done.window, null);
   assert.equal(done.takeover, null);
   assert.deepEqual(done.answer, { id: "h1", value: "done" });
-  assert.deepEqual(finishOf(null), { restore: [], window: false });
+  assert.deepEqual(finishOf(null), { restore: [], window: false, stopPick: false });
 });

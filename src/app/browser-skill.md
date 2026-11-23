@@ -54,7 +54,7 @@ Check sizes in a tab of its own so your main tab keeps its size: `{{BROWSE}} act
 
 ## Design Feedback
 
-A prompt headed `## Design Feedback` comes from the person picking elements in the panel. It lists pictures to open (open each with the image path given) and, per element, a selector, its text, the person's note and, on a dev build, the source file and line to change. Make the changes in those sources, then reload the page in the browser and check the result against the note.
+A prompt headed `## Design Feedback` comes from the person picking elements in the panel. Per element it gives a selector, its text, the person's note, an intent and priority when they set one, on a dev build the source file and line to change, and a `Picture:` path: open it to see the whole page as it was, with that element outlined in orange. `[redacted]` stands where something looked like a secret. Make the changes in those sources, then reload the page in the browser and check the result against the note.
 
 ## Leave it to the person
 
