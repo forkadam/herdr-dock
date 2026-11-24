@@ -338,5 +338,52 @@ test("deploy exits 1 when the browser can't be set up (Chrome install fails), af
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.match(r.stdout + r.stderr, /Chrome install failed \(exit 3\)/);
     assert.ok(existsSync(join(tmp, "mods/dock-core/main.js")));
+    const res = JSON.parse(readFileSync(join(tmp, "herdr-dock/browser/setup-result.json"), "utf8"));
+    assert.deepEqual({ ...res, at: typeof res.at }, { state: "failed", at: "number", action: "on", message: "Chrome couldn't be set up" });
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// A deploy with the browser on, agent-browser already at the pinned version in `tmp` and a Chrome path that exists.
+function browserReadyHome(tmp, local) {
+  const pins = JSON.parse(readFileSync("src/shared/browser/pins.json", "utf8"));
+  const bin = join(tmp, "herdr-dock/browser/bin/agent-browser");
+  mkdirSync(join(tmp, "herdr-dock/browser/bin"), { recursive: true });
+  writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  writeFileSync(`${bin}.version`, `${pins.version}\n`);
+  writeFileSync(join(tmp, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: local }));
+}
+const setupResult = (tmp) => JSON.parse(readFileSync(join(tmp, "herdr-dock/browser/setup-result.json"), "utf8"));
+
+test("deploy records the browser setup: ok when it is on, ok with action off when it is turned off; a dry run writes nothing", () => {
+  const tmp = tmpHome();
+  try {
+    browserReadyHome(tmp, { enabled: true, chrome: process.execPath });
+    const dry = run(["--app-home", tmp, "--dry-run", "--no-skills", "--no-statusline"]);
+    assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+    assert.equal(existsSync(join(tmp, "herdr-dock/browser/setup-result.json")), false);
+    const on = run(["--app-home", tmp, "--no-skills", "--no-statusline"], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(on.status, 0, on.stderr + on.stdout);
+    const a = setupResult(tmp);
+    assert.deepEqual({ ...a, at: typeof a.at }, { state: "ok", at: "number", action: "on", message: "" });
+    writeFileSync(join(tmp, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: { enabled: false } }));
+    const off = run(["--app-home", tmp, "--no-statusline"], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(off.status, 0, off.stderr + off.stdout);
+    const b = setupResult(tmp);
+    assert.deepEqual({ ...b, at: typeof b.at }, { state: "ok", at: "number", action: "off", message: "" });
+    assert.equal(existsSync(join(tmp, "herdr-dock/browser/bin")), false);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy that stops before the browser step leaves a failed result, not a running one", () => {
+  const tmp = tmpHome();
+  try {
+    mkdirSync(join(tmp, "herdr-dock"), { recursive: true });
+    writeFileSync(join(tmp, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: { enabled: true } }));
+    writeFileSync(join(tmp, "keys.json"), "{nope");
+    const r = run(["--app-home", tmp, "--no-statusline"], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.match(r.stderr, /keys\.json is not valid JSON/);
+    const res = setupResult(tmp);
+    assert.deepEqual({ ...res, at: typeof res.at }, { state: "failed", at: "number", action: "on", message: "deploy stopped before the browser step finished" });
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });

@@ -8,8 +8,9 @@ import { gzipSync } from "node:zlib";
 import { tarFile } from "../src/shared/browser/tar.js";
 import pins from "../src/shared/browser/pins.json" with { type: "json" };
 import {
-  SKILL_MARK, ensureChrome, installAgentBrowser, installSkills, main, pinFor, removeBrowser, removeSkills, skillTargets, skillText,
+  SKILL_MARK, ensureChrome, installAgentBrowser, installSkills, main, pinFor, removeBrowser, removeSkills, skillTargets, skillText, writeSetupResult,
 } from "../src/app/browser-install.js";
+import { SETUP_RESULT_REL, endResult } from "../src/shared/browser/setup-result.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "dock-bi-"));
 const enc = new TextEncoder();
@@ -273,4 +274,75 @@ test("main: a checksum mismatch exits 1 with the message", async () => {
     fetchBytes: async () => enc.encode("not a tarball"), run: () => ({ status: 0 }), template, platform: "linux", arch: "x64" });
   assert.equal(code, 1);
   assert.match(out.join("\n"), /does not match the pinned checksum/);
+});
+
+// What each setup run records for the Dock layout dialog's Browser section.
+const resultOf = (home) => JSON.parse(readFileSync(join(home, SETUP_RESULT_REL), "utf8"));
+const envFor = (home) => ({ DOCK_CLAUDE_HOME: join(home, "c"), DOCK_CODEX_HOME: join(home, "x"), DOCK_AGY_HOME: join(home, "y") });
+
+test("main: a computer agent-browser has no build for records `unsupported` (exit 0)", async () => {
+  const home = appHome({ enabled: true });
+  const code = await main(["--app-home", home], { env: envFor(home), io: sink().io, fetchBytes: async () => { throw new Error("fetched"); }, template, platform: "sunos", arch: "x64", now: () => 42 });
+  assert.equal(code, 0);
+  assert.deepEqual(resultOf(home), { state: "unsupported", at: 42, action: "on", message: "no agent-browser build for this computer" });
+});
+
+test("main: a Chrome step that fails records `failed` (exit 1)", async () => {
+  const home = appHome({ enabled: true });
+  const { tgz, integrity } = fakeDownload();
+  await withPin(integrity, async () => {
+    const code = await main(["--app-home", home], { env: envFor(home), io: sink().io, fetchBytes: async () => tgz, run: () => ({ status: 1 }), template, platform: "linux", arch: "x64", now: () => 7 });
+    assert.equal(code, 1);
+    assert.deepEqual(resultOf(home), { state: "failed", at: 7, action: "on", message: "Chrome couldn't be set up" });
+  });
+});
+
+test("main: a thrown error records `failed` with its first line", async () => {
+  const home = appHome({ enabled: true });
+  await main(["--app-home", home], { env: envFor(home), io: sink().io, fetchBytes: async () => { throw new Error("first line\nsecond line"); }, template, platform: "linux", arch: "x64", now: () => 9 });
+  assert.deepEqual(resultOf(home), { state: "failed", at: 9, action: "on", message: "first line" });
+});
+
+test("main: records running before it installs, then ok; turning off records ok with action off", async () => {
+  const home = appHome({ enabled: true, chrome: process.execPath });
+  const { tgz, integrity } = fakeDownload();
+  await withPin(integrity, async () => {
+    let clock = 100, seen = null;
+    const deps = { env: envFor(home), io: sink().io, template, platform: "linux", arch: "x64", run: () => { throw new Error("ran"); }, now: () => clock++,
+      fetchBytes: async () => { seen = resultOf(home); return tgz; } };
+    assert.equal(await main(["--app-home", home, "--no-skills"], deps), 0);
+    assert.deepEqual(seen, { state: "running", startedAt: 100, action: "on" });
+    assert.deepEqual(resultOf(home), { state: "ok", at: 101, action: "on", message: "" });
+    writeFileSync(join(home, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: { enabled: false } }));
+    assert.equal(await main(["--app-home", home], deps), 0);
+    assert.deepEqual(resultOf(home), { state: "ok", at: 103, action: "off", message: "" });
+    assert.equal(await main(["--app-home", home, "--remove"], deps), 0);
+    assert.deepEqual(resultOf(home), { state: "ok", at: 105, action: "off", message: "" });
+  });
+});
+
+test("main --check writes no result file, enabled or not", async () => {
+  const off = appHome();
+  const on = appHome({ enabled: true });
+  for (const home of [off, on]) {
+    const code = await main(["--app-home", home, "--check"], { env: envFor(home), io: sink().io, fetchBytes: async () => { throw new Error("fetched"); }, run: () => { throw new Error("ran"); }, template, platform: "linux", arch: "x64" });
+    assert.equal(code, 0);
+    assert.equal(existsSync(join(home, "herdr-dock/browser")), false);
+  }
+});
+
+test("main: a result that can't be written never fails the setup", async () => {
+  const home = appHome({ enabled: true });
+  mkdirSync(join(home, SETUP_RESULT_REL), { recursive: true }); // a folder where the file goes: the write throws
+  const code = await main(["--app-home", home], { env: envFor(home), io: sink().io, fetchBytes: async () => { throw new Error("fetched"); }, template, platform: "sunos", arch: "x64" });
+  assert.equal(code, 0);
+});
+
+test("writeSetupResult writes the whole file, creating the folder, and says whether it could", () => {
+  const home = tmp();
+  assert.equal(writeSetupResult(home, endResult("on", "ok", "", 1)), true);
+  assert.deepEqual(resultOf(home), { state: "ok", at: 1, action: "on", message: "" });
+  assert.equal(writeSetupResult(home, endResult("off", "failed", "x", 2)), true);
+  assert.deepEqual(resultOf(home), { state: "failed", at: 2, action: "off", message: "x" });
+  assert.equal(writeSetupResult(join(home, "herdr-dock/browser/setup-result.json"), endResult("on", "ok", "", 3)), false);
 });
