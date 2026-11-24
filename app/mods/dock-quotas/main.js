@@ -244,21 +244,32 @@ function scriptPaths(command, home2) {
   return out;
 }
 var writerCommand = (writer) => `node "${String(writer).replace(/\\/g, "/")}"`;
+function agyWriterCommand(writer) {
+  const w = String(writer).replace(/\\/g, "/");
+  if (!/^[A-Za-z]:\//.test(w)) return writerCommand(w);
+  if (!/\s/.test(w)) return `node ${w}`;
+  return `node -e import("file:///${encodeURI(w).replace(/[?#]/g, encodeURIComponent)}")`;
+}
 function statuslinePlan(settingsText, writer, scriptTexts = [], mark = WRITER_MARK) {
   const r = readSettings(settingsText);
   if (!r.ok) return { state: "invalid", error: r.error };
   const { settings, command } = r;
+  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
+  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
+  const agy = mark === AGY_MARK;
+  const ours = agy ? agyWriterCommand(writer) : writerCommand(writer);
+  if (agy && command && command.trim() === writerCommand(writer) && ours !== command.trim()) {
+    return { state: "missing", stale: true, text: write({ ...settings.statusLine, command: ours }) };
+  }
   if (command && (command.includes(mark) || scriptTexts.some((t) => typeof t === "string" && t.includes(mark)))) {
     return { state: "fed" };
   }
-  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
-  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
   if (!command) {
     const prev = isObj3(settings.statusLine) ? settings.statusLine : {};
-    return { state: "missing", text: write({ ...prev, type: "command", command: writerCommand(writer) }) };
+    return { state: "missing", text: write({ ...prev, type: "command", command: ours }) };
   }
   if (!isSimpleCommand(command)) return { state: "complex", command };
-  return { state: "other", command, text: write({ ...settings.statusLine, command: `${writerCommand(writer)} --tee | ${command}` }) };
+  return { state: "other", command, text: write({ ...settings.statusLine, command: `${ours} --tee | ${command}` }) };
 }
 
 // src/shared/platform.js

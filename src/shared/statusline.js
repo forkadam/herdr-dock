@@ -59,6 +59,17 @@ export function scriptPaths(command, home) {
 // bash, cmd and PowerShell).
 export const writerCommand = (writer) => `node "${String(writer).replace(/\\/g, "/")}"`;
 
+// Antigravity's writer command. On Windows agy runs its statusLine command without a shell: it splits it on
+// whitespace and keeps quotes, so `node "C:/Users/Adam Cheng/..."` reaches node as `"C:\Users\Adam`. A Windows path is
+// therefore never quoted, and one with whitespace is loaded as a file URL (%20 for a space) by `node -e import(...)`,
+// a single word. A POSIX path keeps the quoted form (agy runs it through a shell there).
+export function agyWriterCommand(writer) {
+  const w = String(writer).replace(/\\/g, "/");
+  if (!/^[A-Za-z]:\//.test(w)) return writerCommand(w);
+  if (!/\s/.test(w)) return `node ${w}`;
+  return `node -e import("file:///${encodeURI(w).replace(/[?#]/g, encodeURIComponent)}")`;
+}
+
 // What setup would do. `scriptTexts`: the texts of scriptPaths(command) (null for unreadable), to spot a writer
 // line already added by hand. Result:
 //   { state: "fed" }                     the writer is already in the command or its script
@@ -71,15 +82,21 @@ export function statuslinePlan(settingsText, writer, scriptTexts = [], mark = WR
   const r = readSettings(settingsText);
   if (!r.ok) return { state: "invalid", error: r.error };
   const { settings, command } = r;
+  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
+  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
+  const agy = mark === AGY_MARK;
+  const ours = agy ? agyWriterCommand(writer) : writerCommand(writer);
+  // herdr-dock's own older Antigravity command (quoted; agy on Windows can't run it): rewrite it.
+  if (agy && command && command.trim() === writerCommand(writer) && ours !== command.trim()) {
+    return { state: "missing", stale: true, text: write({ ...settings.statusLine, command: ours }) };
+  }
   if (command && (command.includes(mark) || scriptTexts.some((t) => typeof t === "string" && t.includes(mark)))) {
     return { state: "fed" };
   }
-  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
-  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
   if (!command) {
     const prev = isObj(settings.statusLine) ? settings.statusLine : {};
-    return { state: "missing", text: write({ ...prev, type: "command", command: writerCommand(writer) }) };
+    return { state: "missing", text: write({ ...prev, type: "command", command: ours }) };
   }
   if (!isSimpleCommand(command)) return { state: "complex", command };
-  return { state: "other", command, text: write({ ...settings.statusLine, command: `${writerCommand(writer)} --tee | ${command}` }) };
+  return { state: "other", command, text: write({ ...settings.statusLine, command: `${ours} --tee | ${command}` }) };
 }

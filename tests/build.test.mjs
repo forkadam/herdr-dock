@@ -1,3 +1,4 @@
+import { agyWriterCommand } from "../src/shared/statusline.js";
 import { slashPath } from "../src/shared/path.js";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -272,7 +273,7 @@ test("deploy sets up Antigravity's status line too, when its folder exists", () 
     assert.equal(r.status, 0, r.stderr);
     const s = JSON.parse(readFileSync(join(agy, "settings.json"), "utf8"));
     assert.deepEqual(s.trustedWorkspaces, ["/p"]);
-    assert.equal(s.statusLine.command, `node "${slashPath(join(tmp, "mods/dock-quotas/herdr-agy-statusline.mjs"))}"`);
+    assert.equal(s.statusLine.command, agyWriterCommand(slashPath(join(tmp, "mods/dock-quotas/herdr-agy-statusline.mjs"))));
     assert.ok(existsSync(join(tmp, "mods/dock-quotas/herdr-agy-statusline.mjs")));
     assert.match(r.stdout, /Antigravity status line: /);
     // No Antigravity folder: nothing is created.

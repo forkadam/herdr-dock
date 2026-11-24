@@ -34,7 +34,9 @@ export function setupStatusline({ claudeHome, writer, home = homedir(), dry = fa
     case "complex": return { state: "complex", changed: false,
       message: `your status line (${plan.command}) is more than one command; add the herdr-dock line to it by hand (README, "Where the quota and context numbers come from")` };
   }
-  const what = plan.state === "missing"
+  const what = plan.stale
+    ? `fix herdr-dock's status line in ${where} (${name} on Windows runs it without a shell, so the quoted path broke at its space)`
+    : plan.state === "missing"
     ? `add a status line that feeds herdr-dock and prints nothing to ${where} (${name})`
     : `put herdr-dock's writer in front of your status line in ${where} (${name}; it prints the same)`;
   if (dry) return { state: plan.state, changed: false, message: `would ${what}` };

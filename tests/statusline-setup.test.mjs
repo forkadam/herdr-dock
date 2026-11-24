@@ -175,3 +175,56 @@ test("agySetupNotice: Antigravity's own wording and settings file", () => {
   assert.match(agySetupNotice("invalid").text, /antigravity-cli\/settings\.json/);
   assert.match(agySetupNotice("missing", { busy: true }).tip, /antigravity-cli/);
 });
+
+// Antigravity on Windows runs its statusLine command without a shell: it splits on whitespace and keeps quotes, so
+// `node "C:/Users/Adam Cheng/..."` reached node as `"C:\Users\Adam`. A Windows path is never quoted, and one with a
+// space is loaded through `node -e import("file:///...%20...")`, a single word.
+import { agyWriterCommand } from "../src/shared/statusline.js";
+
+test("agyWriterCommand: POSIX quoted as before; Windows unquoted, or a file-URL import when it has a space", () => {
+  assert.equal(agyWriterCommand("/home/u/x/herdr-agy-statusline.mjs"), 'node "/home/u/x/herdr-agy-statusline.mjs"');
+  assert.equal(agyWriterCommand("D:\\apps\\herdr\\herdr-agy-statusline.mjs"), "node D:/apps/herdr/herdr-agy-statusline.mjs");
+  const c = agyWriterCommand("C:/Users/Adam Cheng/.config/herdr-app/mods/dock-quotas/herdr-agy-statusline.mjs");
+  assert.equal(c, 'node -e import("file:///C:/Users/Adam%20Cheng/.config/herdr-app/mods/dock-quotas/herdr-agy-statusline.mjs")');
+  assert.deepEqual(c.split(/\s+/).length, 3);
+  assert.equal(agyWriterCommand("C:/a b/#1?/w.mjs"), 'node -e import("file:///C:/a%20b/%231%3F/w.mjs")');
+});
+
+test("statuslinePlan for Antigravity: a Windows path gets the shell-free command, and the old quoted one is rewritten", () => {
+  const AW = "C:/Users/Adam Cheng/.config/herdr-app/mods/dock-quotas/herdr-agy-statusline.mjs";
+  const p = statuslinePlan(JSON.stringify({ trustedWorkspaces: ["D:\p"] }), AW, [], AGY_MARK);
+  assert.equal(p.state, "missing");
+  assert.equal(JSON.parse(p.text).statusLine.command, agyWriterCommand(AW));
+  const old = JSON.stringify({ trustedWorkspaces: ["D:\p"], statusLine: { type: "command", command: `node "${AW}"` } });
+  const s = statuslinePlan(old, AW, [], AGY_MARK);
+  assert.equal(s.state, "missing");
+  assert.equal(s.stale, true);
+  assert.deepEqual(JSON.parse(s.text), { trustedWorkspaces: ["D:\p"], statusLine: { type: "command", command: agyWriterCommand(AW) } });
+  assert.equal(statuslinePlan(s.text, AW, [], AGY_MARK).state, "fed");
+  // Claude Code runs its command through a shell: its quoted form stays.
+  const CW = "C:/Users/Adam Cheng/.claude/herdr-statusline-cache.mjs";
+  assert.equal(JSON.parse(statuslinePlan(null, CW).text).statusLine.command, `node "${CW}"`);
+});
+
+test("setupStatusline for Antigravity rewrites the old quoted Windows command and says so", () => {
+  const home = mkdtempSync(join(tmpdir(), "sls-"));
+  const dir = join(home, ".gemini", "antigravity-cli");
+  mkdirSync(dir, { recursive: true });
+  const AW = "C:/Users/Adam Cheng/mods/dock-quotas/herdr-agy-statusline.mjs";
+  writeFileSync(join(dir, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `node "${AW}"` } }));
+  const r = setupStatusline({ claudeHome: dir, writer: AW, home, mark: AGY_MARK, name: "Antigravity" });
+  assert.equal(r.changed, true);
+  assert.match(r.message, /^Fix herdr-dock's status line/);
+  assert.equal(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).statusLine.command, agyWriterCommand(AW));
+});
+
+test("the shell-free Antigravity command runs the writer from a folder with a space", { skip: process.platform !== "win32" && "a Windows path" }, () => {
+  const home = mkdtempSync(join(tmpdir(), "sls home-"));
+  const at = join(home, "w x", "herdr-agy-statusline.mjs").replace(/\\/g, "/");
+  mkdirSync(join(home, "w x"));
+  writeFileSync(at, 'process.stdout.write("ran:" + require("fs").readFileSync(0, "utf8"))'.replace('require("fs")', "(await import('node:fs'))"));
+  const [, ...args] = agyWriterCommand(at).split(/\s+/);
+  const r = spawnSync(process.execPath, args, { input: "{}", encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "ran:{}");
+});

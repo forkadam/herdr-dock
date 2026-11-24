@@ -52,21 +52,32 @@ function scriptPaths(command, home) {
   return out;
 }
 var writerCommand = (writer) => `node "${String(writer).replace(/\\/g, "/")}"`;
+function agyWriterCommand(writer) {
+  const w = String(writer).replace(/\\/g, "/");
+  if (!/^[A-Za-z]:\//.test(w)) return writerCommand(w);
+  if (!/\s/.test(w)) return `node ${w}`;
+  return `node -e import("file:///${encodeURI(w).replace(/[?#]/g, encodeURIComponent)}")`;
+}
 function statuslinePlan(settingsText, writer, scriptTexts = [], mark = WRITER_MARK) {
   const r = readSettings(settingsText);
   if (!r.ok) return { state: "invalid", error: r.error };
   const { settings, command } = r;
+  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
+  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
+  const agy = mark === AGY_MARK;
+  const ours = agy ? agyWriterCommand(writer) : writerCommand(writer);
+  if (agy && command && command.trim() === writerCommand(writer) && ours !== command.trim()) {
+    return { state: "missing", stale: true, text: write({ ...settings.statusLine, command: ours }) };
+  }
   if (command && (command.includes(mark) || scriptTexts.some((t) => typeof t === "string" && t.includes(mark)))) {
     return { state: "fed" };
   }
-  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
-  const write = (statusLine) => JSON.stringify({ ...settings, statusLine }, null, 2).replace(/\n/g, nl) + nl;
   if (!command) {
     const prev = isObj(settings.statusLine) ? settings.statusLine : {};
-    return { state: "missing", text: write({ ...prev, type: "command", command: writerCommand(writer) }) };
+    return { state: "missing", text: write({ ...prev, type: "command", command: ours }) };
   }
   if (!isSimpleCommand(command)) return { state: "complex", command };
-  return { state: "other", command, text: write({ ...settings.statusLine, command: `${writerCommand(writer)} --tee | ${command}` }) };
+  return { state: "other", command, text: write({ ...settings.statusLine, command: `${ours} --tee | ${command}` }) };
 }
 
 // src/shared/path.js
@@ -107,7 +118,7 @@ function setupStatusline({ claudeHome, writer, home = homedir(), dry = false, ma
         message: `your status line (${plan.command}) is more than one command; add the herdr-dock line to it by hand (README, "Where the quota and context numbers come from")`
       };
   }
-  const what = plan.state === "missing" ? `add a status line that feeds herdr-dock and prints nothing to ${where} (${name})` : `put herdr-dock's writer in front of your status line in ${where} (${name}; it prints the same)`;
+  const what = plan.stale ? `fix herdr-dock's status line in ${where} (${name} on Windows runs it without a shell, so the quoted path broke at its space)` : plan.state === "missing" ? `add a status line that feeds herdr-dock and prints nothing to ${where} (${name})` : `put herdr-dock's writer in front of your status line in ${where} (${name}; it prints the same)`;
   if (dry) return { state: plan.state, changed: false, message: `would ${what}` };
   if (text != null) copyFileSync(settingsPath, settingsPath + ".bak-herdr-dock");
   const tmp = `${settingsPath}.tmp-herdr-dock-${process.pid}`;
