@@ -564,7 +564,7 @@ function browserSection({ enabled, modInstalled, binInstalled, result, updateRun
 function browserRun({ mode, repo, home }) {
   const tab = (folder, argv) => ({ command: "tab.new", args: { name: "Set up the browser", folder, argv } });
   if (mode === "app") return tab(home, ["node", `${home}/mods/dock-browser/herdr-browser-setup.mjs`]);
-  return tab(repo, ["npm", "run", "deploy"]);
+  return tab(repo, ["node", `${repo}/scripts/deploy.mjs`]);
 }
 function withBrowserSetting(localText, { enabled, chrome }) {
   let file = { v: 1, regions: {} };

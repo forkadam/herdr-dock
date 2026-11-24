@@ -61,7 +61,9 @@ export function browserSection({ enabled, modInstalled, binInstalled, result, up
 export function browserRun({ mode, repo, home }) {
   const tab = (folder, argv) => ({ command: "tab.new", args: { name: "Set up the browser", folder, argv } });
   if (mode === "app") return tab(home, ["node", `${home}/mods/dock-browser/herdr-browser-setup.mjs`]);
-  return tab(repo, ["npm", "run", "deploy"]);
+  // node, not `npm run deploy`: on Windows Herdr runs argv through PowerShell as 'npm' 'run' 'deploy', and npm's
+  // npm.ps1 rebuilds its arguments from that text by cutting "npm".Length characters, leaving an unclosed quote.
+  return tab(repo, ["node", `${repo}/scripts/deploy.mjs`]);
 }
 
 // local.json's text with browser.enabled set and browser.chrome set (a string) or removed (anything else, like null);

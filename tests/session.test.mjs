@@ -507,7 +507,7 @@ test("setBrowser on: only the browser keys are written, unsaved edits stay unsav
   assert.equal(r.session.browserEnabled, true);
   assert.ok(r.session.inventory.some((i) => i.id === "dock-browser" && i.installed));
   assert.deepEqual(JSON.parse(files.get(RESULT)), { state: "running", startedAt: 5, action: "on" });
-  assert.deepEqual(runs, [["tab.new", { name: "Set up the browser", folder: REPO, argv: ["npm", "run", "deploy"] }]]);
+  assert.deepEqual(runs, [["tab.new", { name: "Set up the browser", folder: REPO, argv: ["node", `${REPO}/scripts/deploy.mjs`] }]]);
   // A later Save writes the edits and keeps the browser block.
   const saved = await saveSession(r.session, io);
   assert.equal(saved.error, null);

@@ -76,7 +76,7 @@ test("browserSection: unsupported says why and offers off", () => {
 });
 
 test("browserRun: deploy in a clone, the setup script in an app install", () => {
-  assert.deepEqual(browserRun({ mode: "clone", repo: "/r", home: "/h" }).args, { name: "Set up the browser", folder: "/r", argv: ["npm", "run", "deploy"] });
+  assert.deepEqual(browserRun({ mode: "clone", repo: "/r", home: "/h" }).args, { name: "Set up the browser", folder: "/r", argv: ["node", "/r/scripts/deploy.mjs"] });
   assert.deepEqual(browserRun({ mode: "app", repo: null, home: "/h" }).args.argv, ["node", "/h/mods/dock-browser/herdr-browser-setup.mjs"]);
 });
 
