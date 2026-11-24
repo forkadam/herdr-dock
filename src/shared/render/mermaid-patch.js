@@ -41,7 +41,7 @@ export const CLASS_ASSIGN_WIDE = "line.match(/^class\\s+([\\w,-]+)\\s+([\\w-]+)$
 export const ARROW_START = 'hasArrowStart = Boolean(arrowMatch[1]);';
 export const ARROW_START_KIND = 'hasArrowStart = arrowMatch[1] === "o" ? "circle" : arrowMatch[1] === "x" ? "cross" : Boolean(arrowMatch[1]);';
 export const ARROW_END = 'hasArrowEnd = arrowOp.endsWith(">");';
-export const ARROW_END_KIND = 'hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;';
+export const ARROW_END_KIND = 'hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;\n      linkLen = linkLength(arrowOp);';
 export const RENDER_EDGE = 'function renderEdge(edge) {\n  if (edge.points.length < 2) return "";';
 export const RENDER_EDGE_INVISIBLE = 'function renderEdge(edge) {\n  if (edge.points.length < 2 || edge.style === "invisible") return "";';
 export const END_MARKER = 'if (edge.hasArrowEnd) markers += ` marker-end="url(#arrowhead${suffix})"`;';
@@ -61,6 +61,25 @@ export const START_HEAD = '  <marker id="arrowhead-start" markerWidth="${w}" mar
 export const START_HEAD_TURNED = '  <marker id="arrowhead-start" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />';
 export const START_HEAD_COLOURED = '  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="1" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="${w} 0, 0 ${h / 2}, ${w} ${h}" ${arrowStyle} />';
 export const START_HEAD_COLOURED_TURNED = '  <marker id="arrowhead-start-${suffix}" markerWidth="${w}" markerHeight="${h}" refX="${refX}" refY="${h / 2}" orient="auto-start-reverse">\n    <polygon points="0 0, ${w} ${h / 2}, 0 ${h}" ${arrowStyle} />';
+// Long links drawn at their length: ELK has no per-edge length, so a link of length n runs through n - 1 invisible
+// 0 x 0 waypoint nodes (shape "waypoint", drawn as nothing), which make it lay out the extra layers. Length as in
+// Mermaid: the dots of a dotted link; else the - / = / ~ count, minus 1 with a head, minus 2 without. The first hop
+// takes the start head, the last the end head, the middle one the label; every hop carries its link's index, so
+// linkStyle N still names the N-th link.
+export const LINK_HELPERS = 'function consumeNodeGroup(text, graph, subgraphStack) {';
+export const LINK_HELPERS_ADDED = 'function linkLength(op) {\n  const dots = (op.match(/\\./g) || []).length;\n  if (dots) return dots;\n  const n = (op.match(/[-=~]/g) || []).length;\n  return Math.max(1, /[>ox]$/.test(op) ? n - 1 : n - 2);\n}\nfunction addLinkWaypoint(graph, subgraphStack) {\n  graph.linkWaypoints = (graph.linkWaypoints || 0) + 1;\n  const id = "__bm_link_" + graph.linkWaypoints;\n  registerNode(graph, subgraphStack, { id, label: "", shape: "waypoint" });\n  return id;\n}\n' + LINK_HELPERS;
+export const LINK_LOOP = '  while (remaining.length > 0) {\n    let hasArrowStart;';
+export const LINK_LOOP_LENGTH = '  while (remaining.length > 0) {\n    let linkLen = 1;\n    let hasArrowStart;';
+export const TEXT_LINK_END = 'hasArrowEnd = closeOp.endsWith(">");';
+export const TEXT_LINK_END_LENGTH = 'hasArrowEnd = closeOp.endsWith(">");\n      linkLen = linkLength(closeOp);';
+export const LINK_EDGES = '      for (const targetId of nextGroup.ids) {\n        graph.edges.push({\n          source: sourceId,\n          target: targetId,\n          label: edgeLabel,\n          style,\n          hasArrowStart,\n          hasArrowEnd\n        });\n      }';
+export const LINK_EDGES_CHAIN = '      for (const targetId of nextGroup.ids) {\n        const linkIndex = graph.linkCount = (graph.linkCount ?? -1) + 1;\n        const stops = [sourceId, ...Array.from({ length: linkLen - 1 }, () => addLinkWaypoint(graph, subgraphStack)), targetId];\n        const labelled = Math.floor((stops.length - 2) / 2);\n        for (let i = 0; i + 1 < stops.length; i++) {\n          graph.edges.push({\n            source: stops[i],\n            target: stops[i + 1],\n            label: i === labelled ? edgeLabel : void 0,\n            style,\n            hasArrowStart: i === 0 ? hasArrowStart : false,\n            hasArrowEnd: i + 2 === stops.length ? hasArrowEnd : false,\n            linkIndex\n          });\n        }\n      }';
+export const NODE_SIZE = 'function estimateNodeSize(id, label, shape) {';
+export const NODE_SIZE_WAYPOINT = NODE_SIZE + '\n  if (shape === "waypoint") return { width: 0, height: 0 };';
+export const NODE_DRAW = 'function renderNode(node, font) {';
+export const NODE_DRAW_WAYPOINT = NODE_DRAW + '\n  if (node.shape === "waypoint") return "";';
+export const LINK_STYLE = 'inlineStyle: resolveEdgeStyle(edgeIndex, graph)';
+export const LINK_STYLE_INDEX = 'inlineStyle: resolveEdgeStyle(originalEdge.linkIndex ?? edgeIndex, graph)';
 // Each must be in the source exactly once, or the build fails.
 export const LINE_REWRITES = [
   { name: "class shorthand pattern", from: CLASS_SHORTHAND, to: CLASS_SHORTHAND_BEFORE_ARROW },
@@ -79,6 +98,13 @@ export const LINE_REWRITES = [
   { name: "invisible label", from: EDGE_LABEL, to: EDGE_LABEL_VISIBLE },
   { name: "start marker shape", from: START_HEAD, to: START_HEAD_TURNED },
   { name: "coloured start marker shape", from: START_HEAD_COLOURED, to: START_HEAD_COLOURED_TURNED },
+  { name: "link helpers", from: LINK_HELPERS, to: LINK_HELPERS_ADDED },
+  { name: "link length variable", from: LINK_LOOP, to: LINK_LOOP_LENGTH },
+  { name: "text link length", from: TEXT_LINK_END, to: TEXT_LINK_END_LENGTH },
+  { name: "link waypoint chain", from: LINK_EDGES, to: LINK_EDGES_CHAIN },
+  { name: "waypoint size", from: NODE_SIZE, to: NODE_SIZE_WAYPOINT },
+  { name: "waypoint drawing", from: NODE_DRAW, to: NODE_DRAW_WAYPOINT },
+  { name: "link style index", from: LINK_STYLE, to: LINK_STYLE_INDEX },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.

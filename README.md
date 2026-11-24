@@ -385,7 +385,7 @@ terminal, so you keep Claude Code's own terminal UI:
   written without spaces (`A-->B`, the id rule [prismantis](https://github.com/NahumLitvin/prismantis) uses, MIT) and
   long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
   invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
-  drawn at the usual length.
+  drawn longer, one layer per extra character, as in Mermaid.
 - **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
 
 ### Where Render keeps its diagrams

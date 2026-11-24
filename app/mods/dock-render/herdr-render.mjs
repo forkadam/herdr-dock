@@ -93116,6 +93116,7 @@ function parseEdgeLine(line, graph, subgraphStack) {
   remaining = firstGroup.remaining.trim();
   let prevGroupIds = firstGroup.ids;
   while (remaining.length > 0) {
+    let linkLen = 1;
     let hasArrowStart;
     let style;
     let hasArrowEnd;
@@ -93129,6 +93130,7 @@ function parseEdgeLine(line, graph, subgraphStack) {
       remaining = remaining.slice(arrowMatch[0].length).trim();
       style = arrowStyleFromOp(arrowOp);
       hasArrowEnd = arrowOp.endsWith(">") ? true : arrowOp.endsWith("o") ? "circle" : arrowOp.endsWith("x") ? "cross" : false;
+      linkLen = linkLength(arrowOp);
     } else {
       const textMatch = remaining.match(TEXT_ARROW_REGEX);
       if (!textMatch) break;
@@ -93140,24 +93142,43 @@ function parseEdgeLine(line, graph, subgraphStack) {
       remaining = remaining.slice(textMatch[0].length).trim();
       style = textArrowStyleFromOps(openOp, closeOp);
       hasArrowEnd = closeOp.endsWith(">");
+      linkLen = linkLength(closeOp);
     }
     const nextGroup = consumeNodeGroup(remaining, graph, subgraphStack);
     if (!nextGroup || nextGroup.ids.length === 0) break;
     remaining = nextGroup.remaining.trim();
     for (const sourceId of prevGroupIds) {
       for (const targetId of nextGroup.ids) {
-        graph.edges.push({
-          source: sourceId,
-          target: targetId,
-          label: edgeLabel,
-          style,
-          hasArrowStart,
-          hasArrowEnd
-        });
+        const linkIndex = graph.linkCount = (graph.linkCount ?? -1) + 1;
+        const stops = [sourceId, ...Array.from({ length: linkLen - 1 }, () => addLinkWaypoint(graph, subgraphStack)), targetId];
+        const labelled = Math.floor((stops.length - 2) / 2);
+        for (let i = 0; i + 1 < stops.length; i++) {
+          graph.edges.push({
+            source: stops[i],
+            target: stops[i + 1],
+            label: i === labelled ? edgeLabel : void 0,
+            style,
+            hasArrowStart: i === 0 ? hasArrowStart : false,
+            hasArrowEnd: i + 2 === stops.length ? hasArrowEnd : false,
+            linkIndex
+          });
+        }
       }
     }
     prevGroupIds = nextGroup.ids;
   }
+}
+function linkLength(op) {
+  const dots = (op.match(/\./g) || []).length;
+  if (dots) return dots;
+  const n = (op.match(/[-=~]/g) || []).length;
+  return Math.max(1, /[>ox]$/.test(op) ? n - 1 : n - 2);
+}
+function addLinkWaypoint(graph, subgraphStack) {
+  graph.linkWaypoints = (graph.linkWaypoints || 0) + 1;
+  const id = "__bm_link_" + graph.linkWaypoints;
+  registerNode(graph, subgraphStack, { id, label: "", shape: "waypoint" });
+  return id;
 }
 function consumeNodeGroup(text, graph, subgraphStack) {
   const first = consumeNode(text, graph, subgraphStack);
@@ -94009,6 +94030,7 @@ function directionToElk(dir) {
   }
 }
 function estimateNodeSize(id, label, shape) {
+  if (shape === "waypoint") return { width: 0, height: 0 };
   const metrics = measureMultilineText(label, FONT_SIZES.nodeLabel, FONT_WEIGHTS.nodeLabel);
   let width2 = metrics.width + NODE_PADDING.horizontal * 2;
   let height = metrics.height + NODE_PADDING.vertical * 2;
@@ -94450,7 +94472,7 @@ function extractEdgesRecursively(elkNode, graph, edges, offsetX, offsetY, margin
       hasArrowEnd: originalEdge.hasArrowEnd,
       points: orthogonalPoints,
       labelPosition,
-      inlineStyle: resolveEdgeStyle(edgeIndex, graph)
+      inlineStyle: resolveEdgeStyle(originalEdge.linkIndex ?? edgeIndex, graph)
     });
   }
 }
@@ -95003,6 +95025,7 @@ function dist(a, b) {
   return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
 }
 function renderNode(node, font) {
+  if (node.shape === "waypoint") return "";
   const shape = renderNodeShape(node);
   const label = renderNodeLabel(node, font);
   const parts = [];
@@ -97330,7 +97353,7 @@ function splitSegments(text) {
 var pictureBlocks = (text) => splitSegments(text).filter((s) => s.kind !== "md").map(({ kind, source }) => ({ kind, source }));
 
 // src/shared/render/cache.js
-var LOOK_VERSION = 10;
+var LOOK_VERSION = 11;
 var themeKey = (theme) => hashText(`look${LOOK_VERSION}|${JSON.stringify(theme)}`);
 var CACHE_MAX_AGE_MS = 14 * 864e5;
 var CACHE_MAX_COUNT = 300;

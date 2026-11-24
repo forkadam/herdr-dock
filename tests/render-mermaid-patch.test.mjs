@@ -17,7 +17,7 @@ test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied on
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW) - added(NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID) + added(NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 16);
+  assert.equal(LINE_REWRITES.length, 23);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -126,12 +126,13 @@ const edgeStyle = (svg) => {
   return /stroke-dasharray/.test(e) ? "dotted" : Number(/stroke-width="([\d.]+)"/.exec(e)[1]) > 1 ? "thick" : "solid";
 };
 
-test("the built Render helper draws long links as two nodes and one edge, in their style", () => {
+test("the built Render helper draws long links as two nodes and one hop per layer, every hop in their style", () => {
   const h = mkdtempSync(join(tmpdir(), "render-long-"));
   try {
-    const cases = [["A---->B", "solid"], ["A-----B", "solid"], ["A-..->B", "dotted"], ["A-...-B", "dotted"], ["A====>B", "thick"],
-      ["A=====B", "thick"], ["A<---->B", "solid"], ["A---->|x|B", "solid"], ["A-- text --->B", "solid"], ["A-. text ..->B", "dotted"],
-      ["A== text ===>B", "thick"], ["A-->B", "solid"], ["A-.->B", "dotted"], ["A==>B", "thick"]];
+    // [link, style, hops]: a link of length n is drawn as n hops (Mermaid's length table).
+    const cases = [["A---->B", "solid", 3], ["A-----B", "solid", 3], ["A-..->B", "dotted", 2], ["A-...-B", "dotted", 3], ["A====>B", "thick", 3],
+      ["A=====B", "thick", 3], ["A<---->B", "solid", 3], ["A---->|x|B", "solid", 3], ["A-- text --->B", "solid", 2], ["A-. text ..->B", "dotted", 2],
+      ["A== text ===>B", "thick", 2], ["A-->B", "solid", 1], ["A-.->B", "dotted", 1], ["A==>B", "thick", 1]];
     const f = join(h, "long.md");
     writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
@@ -141,8 +142,9 @@ test("the built Render helper draws long links as two nodes and one edge, in the
     segs.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
       assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2, cases[i][0]);
-      assert.equal((svg.match(/class="edge"/g) ?? []).length, 1, cases[i][0]);
-      assert.equal(edgeStyle(svg), cases[i][1], cases[i][0]);
+      const hops = [...svg.matchAll(/<polyline class="edge"[^>]*>/g)].map((m) => m[0]);
+      assert.equal(hops.length, cases[i][2], cases[i][0]);
+      for (const hop of hops) assert.equal(edgeStyle(hop), cases[i][1], cases[i][0]);
     });
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
@@ -285,4 +287,50 @@ test("the built Render helper: a two-way arrow's start head points at its node, 
       assert.ok(past >= 0 && past <= 2, `${id}: the apex sits at the line's end (${past} past refX)`);
     }
   }
+});
+
+// ---- Long links drawn at their length (through invisible waypoints) ----
+const xOf = (svg, id) => Number(new RegExp(`<g class="node" data-id="${id}"[^>]*>\\s*<rect[^>]*\\bx="([\\d.]+)"`).exec(svg)[1]);
+const gap = (svg) => xOf(svg, "B") - xOf(svg, "A");
+
+test("the built Render helper draws a long link one layer longer per extra character, in every link kind", () => {
+  const [one, two, three, dotted, thick, textShort, textLong] = drawAll(["A --> B", "A ---> B", "A ----> B", "A -..-> B", "A ===> B", "A -- t --> B", "A -- t ---> B"].map((l) => "flowchart LR\n  " + l));
+  const [g1, g2, g3] = [one, two, three].map(gap);
+  assert.ok(g2 > g1 && g3 > g2, `${g1} < ${g2} < ${g3}`);
+  assert.ok(Math.abs((g3 - g2) - (g2 - g1)) <= 1, "equal steps");
+  for (const svg of [dotted, thick]) assert.ok(Math.abs(gap(svg) - g2) <= 1, `${gap(svg)} ~ ${g2}`);
+  assert.ok(gap(textLong) > gap(textShort) + 20, `text link ${gap(textShort)} -> ${gap(textLong)}`);
+});
+
+test("the built Render helper: short links take today's path, with no waypoints", () => {
+  const [svg] = drawAll(["flowchart LR\n  A --> B --> C"]);
+  const e = edgeTags(svg);
+  assert.equal(e.length, 2);
+  assert.ok(e.every((t) => !/data-(from|to)="__bm_link_/.test(t)));
+});
+
+test("the built Render helper: a long link's hops carry one end head, one start head, its label once, and no drawn waypoint", () => {
+  const [plain, both, labelled] = drawAll(["A ----> B", "A <----> B", "A -- yes ----> B"].map((l) => "flowchart LR\n  " + l));
+  const e = edgeTags(plain);
+  assert.equal(e.length, 3);
+  const ends = e.filter((t) => /marker-end=/.test(t));
+  assert.equal(ends.length, 1);
+  assert.match(ends[0], /data-to="B"/);
+  assert.ok(!/data-id="__bm_link_/.test(plain), "no waypoint drawn");
+  const starts = edgeTags(both).filter((t) => /marker-start=/.test(t));
+  assert.equal(starts.length, 1);
+  assert.match(starts[0], /data-from="A"/);
+  assert.equal((labelled.match(/class="edge-label"/g) ?? []).length, 1);
+  assert.match(labelled, /class="edge-label"[^>]*data-label="yes"/);
+});
+
+test("the built Render helper: linkStyle still names the right link after a long one", () => {
+  const [second, first] = drawAll(["flowchart LR\n  A ----> B\n  B --> C\n  linkStyle 1 stroke:#ff0000", "flowchart LR\n  A ----> B\n  B --> C\n  linkStyle 0 stroke:#00ff00"]);
+  const strokeOf = (t) => /\sstroke="([^"]*)"/.exec(t)[1];
+  const e2 = edgeTags(second);
+  assert.equal(strokeOf(e2.find((t) => /data-from="B"/.test(t))), "#ff0000");
+  assert.ok(e2.filter((t) => !/data-from="B"/.test(t)).every((t) => strokeOf(t) !== "#ff0000"), "no hop of A→B is red");
+  const hops = edgeTags(first).filter((t) => !/data-from="B"/.test(t));
+  assert.equal(hops.length, 3);
+  assert.ok(hops.every((t) => strokeOf(t) === "#00ff00"), "every hop of A→B is green");
 });
