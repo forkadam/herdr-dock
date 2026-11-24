@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { updateStrip } from "../src/mods/dock-config/update-view.js";
+import { UPDATE_WAITS_TIP, updateStrip, updateWaits } from "../src/mods/dock-config/update-view.js";
 
 const NOW = 1_700_000_000_000;
 const H = 60 * 60 * 1000;
@@ -113,4 +113,13 @@ test("updateRuns: app mode runs update-app.mjs from the app home, no repo needed
     { command: "tab.new", args: { name: "Update herdr-dock", folder: home, argv: ["node", `${home}/mods/dock-core/update-app.mjs`] } },
   ]);
   assert.equal(updateRuns({ mode: "app", status: "available" }, { repo: null, home: "" }), null);
+});
+
+test("updateWaits: an update waits for saved layout edits (it replaces the mods, which reloads the dialog)", () => {
+  assert.equal(updateWaits({ kind: "update", dirty: true }), UPDATE_WAITS_TIP);
+  assert.equal(updateWaits({ kind: "update", dirty: false }), null);
+  // Check now deploys nothing, so it never waits.
+  assert.equal(updateWaits({ kind: "check", dirty: true }), null);
+  assert.equal(updateWaits({ kind: undefined, dirty: true }), null);
+  assert.match(UPDATE_WAITS_TIP, /^Save or cancel your layout edits first/);
 });

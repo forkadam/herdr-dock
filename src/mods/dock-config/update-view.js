@@ -60,3 +60,9 @@ export function updateRuns(state, { repo, home }) {
   if (!repo) return null;
   return [{ command: "dock-core.update.start" }, tab(repo, ["node", "scripts/update.mjs"])];
 }
+
+// An update replaces herdr-dock's mods (clone: scripts/update.mjs deploys; app: update-app.mjs swaps each mods/<name>),
+// and Herdr reloads a mod whose files change, so the open dialog would lose its unsaved edits: Update waits for a Save
+// or Cancel. Check now deploys nothing and never waits. -> the tip to show, or null.
+export const UPDATE_WAITS_TIP = "Save or cancel your layout edits first: updating replaces herdr-dock's mods, which reloads this dialog";
+export const updateWaits = ({ kind, dirty }) => (kind === "update" && dirty ? UPDATE_WAITS_TIP : null);

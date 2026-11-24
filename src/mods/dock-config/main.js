@@ -24,7 +24,7 @@ import {
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
-import { updateRuns, updateStrip } from "./update-view.js";
+import { updateRuns, updateStrip, updateWaits } from "./update-view.js";
 
 const REGIONS = ["top", "left", "right", "bottom"];
 const VIEW_KEY = "dock.config.view";
@@ -216,14 +216,20 @@ export default class DockConfig extends View {
     // Clone mode runs scripts/update.mjs in the repo; app mode runs the shipped update-app.mjs (no repo).
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    // Update waits for a browser setup run (both deploy in a clone): two deploys never overlap.
-    const canUpdate = action?.kind !== "update" || (Boolean(runs) && !this.browserRunning());
+    // Update waits for a browser setup run (both deploy in a clone): two deploys never overlap. It also waits for
+    // unsaved layout edits, which the reload an update causes would lose.
+    const waits = this.updateWaits(action?.kind);
+    const canUpdate = action?.kind !== "update" || (Boolean(runs) && !this.browserRunning() && !waits);
     return h_flex().id("dc-updates").gap(8).items_center().min_h(28)
       .child(div().flex_none().text_size(12.5).text_color(t.muted).child("Updates"))
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(color).truncate()
         .child(strip.tone === "accent" ? `● ${strip.text}` : strip.text))
       .when(Boolean(action), (el) => el.child(button(t, `dc-update-${action.kind}`, action.label,
-        { primary: action.kind === "update", enabled: canUpdate && !checking() }, () => this.updateAction(action.kind, runs))));
+        { primary: action.kind === "update", enabled: canUpdate && !checking(), tip: waits }, () => this.updateAction(action.kind, runs))));
+  }
+
+  updateWaits(kind) {
+    return updateWaits({ kind, dirty: Boolean(this.session) && isDirty(this.session) });
   }
 
   updateAction(kind, runs) {
@@ -231,7 +237,7 @@ export default class DockConfig extends View {
       run("dock-core.update.check");
       return;
     }
-    if (!runs || this.browserRunning()) return;
+    if (!runs || this.browserRunning() || this.updateWaits(kind)) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);

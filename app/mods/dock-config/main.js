@@ -1130,6 +1130,8 @@ function updateRuns(state, { repo, home }) {
   if (!repo) return null;
   return [{ command: "dock-core.update.start" }, tab(repo, ["node", "scripts/update.mjs"])];
 }
+var UPDATE_WAITS_TIP = "Save or cancel your layout edits first: updating replaces herdr-dock's mods, which reloads this dialog";
+var updateWaits = ({ kind, dirty }) => kind === "update" && dirty ? UPDATE_WAITS_TIP : null;
 
 // src/mods/dock-config/main.js
 var REGIONS = ["top", "left", "right", "bottom"];
@@ -1314,21 +1316,25 @@ var DockConfig = class extends View {
     const color = { accent: t.accent, ok: t.done ?? t.accent, bad: t.blocked, dim: t.dim }[strip.tone] ?? t.dim;
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(runs) && !this.browserRunning();
+    const waits = this.updateWaits(action?.kind);
+    const canUpdate = action?.kind !== "update" || Boolean(runs) && !this.browserRunning() && !waits;
     return h_flex5().id("dc-updates").gap(8).items_center().min_h(28).child(div5().flex_none().text_size(12.5).text_color(t.muted).child("Updates")).child(div5().flex_1().min_w(0).text_size(12.5).text_color(color).truncate().child(strip.tone === "accent" ? `\u25CF ${strip.text}` : strip.text)).when(Boolean(action), (el) => el.child(button2(
       t,
       `dc-update-${action.kind}`,
       action.label,
-      { primary: action.kind === "update", enabled: canUpdate && !checking() },
+      { primary: action.kind === "update", enabled: canUpdate && !checking(), tip: waits },
       () => this.updateAction(action.kind, runs)
     )));
+  }
+  updateWaits(kind) {
+    return updateWaits({ kind, dirty: Boolean(this.session) && isDirty(this.session) });
   }
   updateAction(kind, runs) {
     if (kind === "check") {
       run("dock-core.update.check");
       return;
     }
-    if (!runs || this.browserRunning()) return;
+    if (!runs || this.browserRunning() || this.updateWaits(kind)) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);
