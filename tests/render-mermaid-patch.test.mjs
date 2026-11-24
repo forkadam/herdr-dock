@@ -17,7 +17,7 @@ test("patchMermaidIds: the 13 node-id patterns and each line rewrite, applied on
   assert.equal(count(out, NODE_ID_BEFORE_ARROW) - count(src, NODE_ID_BEFORE_ARROW) - added(NODE_ID_BEFORE_ARROW), 13);
   assert.equal(count(src, NODE_ID) - count(out, NODE_ID) + added(NODE_ID), 13);
   let grow = 13 * (NODE_ID_BEFORE_ARROW.length - NODE_ID.length);
-  assert.equal(LINE_REWRITES.length, 23);
+  assert.equal(LINE_REWRITES.length, 24);
   for (const { name, from, to } of LINE_REWRITES) {
     assert.equal(count(src, from), 1, name);
     assert.equal(count(out, to), 1, name);
@@ -333,4 +333,26 @@ test("the built Render helper: linkStyle still names the right link after a long
   const hops = edgeTags(first).filter((t) => !/data-from="B"/.test(t));
   assert.equal(hops.length, 3);
   assert.ok(hops.every((t) => strokeOf(t) === "#00ff00"), "every hop of A→B is green");
+});
+
+test("the built Render helper keeps a long link inside the subgraph holding both its ends, even when written after end", () => {
+  const [td, lr] = drawAll(["flowchart TD\n  subgraph S\n    A\n    B\n  end\n  A ---> B", "flowchart TD\n  subgraph S\n    direction LR\n    A\n    B\n  end\n  A ---> B"]);
+  for (const svg of [td, lr]) {
+    const box = /<g class="subgraph" data-id="S"[^>]*>\s*<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(svg).slice(1).map(Number);
+    const hops = [...svg.matchAll(/<polyline class="edge"[^>]*points="([^"]*)"/g)].map((m) => m[1]);
+    assert.equal(hops.length, 2);
+    for (const pts of hops) {
+      for (const p of pts.split(" ")) {
+        const [x, y] = p.split(",").map(Number);
+        assert.ok(x >= box[0] - 0.5 && x <= box[0] + box[2] + 0.5 && y >= box[1] - 0.5 && y <= box[1] + box[3] + 0.5, `${p} inside S ${box}`);
+      }
+    }
+  }
+});
+
+test("the built Render helper draws a long link that closes a loop, or a long self-loop, as one edge (no U-turn)", () => {
+  const [back, retry, self] = drawAll(["flowchart TD\n  A --> B --> C\n  C ----> A", "flowchart TD\n  Check -->|no| Fix\n  Fix ---> Check", "flowchart TD\n  A ---> A"]);
+  for (const svg of [back, retry, self]) assert.ok(edgeTags(svg).every((t) => !/data-(from|to)="__bm_link_/.test(t)), "no waypoint hops");
+  assert.equal(edgeTags(back).length, 3);
+  assert.equal(edgeTags(retry).length, 2);
 });

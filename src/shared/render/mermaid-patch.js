@@ -16,7 +16,7 @@ export const CLASS_SHORTHAND = "var CLASS_SHORTHAND_REGEX = /^:::([\\w][\\w-]*)/
 export const CLASS_SHORTHAND_BEFORE_ARROW = "var CLASS_SHORTHAND_REGEX = /^:::(\\w(?:\\w|-(?![-.>]))*)/;";
 // Long links (A---->B, A-..->B, A====>B, A-- text --->B): beautiful-mermaid's arrow patterns know fixed lengths
 // only, so a longer link left a stray node and no edge; its style lookup compares exact operators, so a long one is
-// normalised to its short form first. A long link is drawn at the usual length.
+// normalised to its short form first. Its length is drawn through waypoints (the long-link rewrites below).
 export const ARROW = "var ARROW_REGEX = /^(<)?(-->|-.->|==>|---|-\\.-|===)(?:\\|([^|]*)\\|)?/;";
 // Also circle / cross heads (--o, --x, o--o, ==o, -.-o) and invisible links (~~~).
 export const ARROW_WIDE = "var ARROW_REGEX = /^([<ox])?(-{2,}>|-\\.+->|={2,}>|-{2,}[ox]|-\\.+-[ox]|={2,}[ox]|-{3,}|-\\.+-|={3,}|~{3,})(?:\\|([^|]*)\\|)?/;";
@@ -66,18 +66,94 @@ export const START_HEAD_COLOURED_TURNED = '  <marker id="arrowhead-start-${suffi
 // Mermaid: the dots of a dotted link; else the - / = / ~ count, minus 1 with a head, minus 2 without. The first hop
 // takes the start head, the last the end head, the middle one the label; every hop carries its link's index, so
 // linkStyle N still names the N-th link.
+// After parsing, each long link is settled. On a loop (its own node, or a target that can reach its source through
+// other links) it is one edge again: ELK reverses one hop of a chain, so a long loop link would U-turn. Otherwise its
+// waypoints go to the innermost subgraph holding both ends (or the root): written after a subgraph's end, they had
+// joined no subgraph, and the link left the box and came back.
+export const LONG_LINK_FINISH = `function finishLongLinks(graph) {
+  const links = graph.longLinks || [];
+  if (!links.length) return;
+  const parentOf = new Map(), containerOf = new Map();
+  const walk = (list, parent) => {
+    for (const sg of list) {
+      parentOf.set(sg.id, parent);
+      for (const id of sg.nodeIds) containerOf.set(id, sg);
+      walk(sg.children || [], sg);
+    }
+  };
+  walk(graph.subgraphs, null);
+  const holder = (id) => containerOf.has(id) ? containerOf.get(id) : parentOf.get(id) ?? null;
+  const unplace = (id) => {
+    const sg = containerOf.get(id);
+    if (sg) sg.nodeIds.splice(0, sg.nodeIds.length, ...sg.nodeIds.filter((n) => n !== id));
+    containerOf.delete(id);
+  };
+  for (const link of links) {
+    const own = new Set(link.hops);
+    const reaches = (from, to) => {
+      const seen = new Set([from]);
+      const queue = [from];
+      while (queue.length) {
+        const at = queue.shift();
+        if (at === to) return true;
+        for (const e of graph.edges) {
+          if (!own.has(e) && e.source === at && !seen.has(e.target)) { seen.add(e.target); queue.push(e.target); }
+        }
+      }
+      return false;
+    };
+    if (link.source === link.target || reaches(link.target, link.source)) {
+      const at = graph.edges.indexOf(link.hops[0]);
+      const kept = graph.edges.filter((e) => !own.has(e));
+      kept.splice(at, 0, { source: link.source, target: link.target, label: link.label, style: link.style, hasArrowStart: link.hasArrowStart, hasArrowEnd: link.hasArrowEnd, linkIndex: link.linkIndex });
+      graph.edges.splice(0, graph.edges.length, ...kept);
+      for (const id of link.waypoints) { graph.nodes.delete(id); unplace(id); }
+      continue;
+    }
+    const ancestors = new Set();
+    for (let sg = holder(link.source); sg; sg = parentOf.get(sg.id)) ancestors.add(sg);
+    let common = holder(link.target);
+    while (common && !ancestors.has(common)) common = parentOf.get(common.id) ?? null;
+    for (const id of link.waypoints) {
+      unplace(id);
+      if (common) { common.nodeIds.push(id); containerOf.set(id, common); }
+    }
+  }
+}
+`;
 export const LINK_HELPERS = 'function consumeNodeGroup(text, graph, subgraphStack) {';
-export const LINK_HELPERS_ADDED = 'function linkLength(op) {\n  const dots = (op.match(/\\./g) || []).length;\n  if (dots) return dots;\n  const n = (op.match(/[-=~]/g) || []).length;\n  return Math.max(1, /[>ox]$/.test(op) ? n - 1 : n - 2);\n}\nfunction addLinkWaypoint(graph, subgraphStack) {\n  graph.linkWaypoints = (graph.linkWaypoints || 0) + 1;\n  const id = "__bm_link_" + graph.linkWaypoints;\n  registerNode(graph, subgraphStack, { id, label: "", shape: "waypoint" });\n  return id;\n}\n' + LINK_HELPERS;
+export const LINK_HELPERS_ADDED = 'function linkLength(op) {\n  const dots = (op.match(/\\./g) || []).length;\n  if (dots) return dots;\n  const n = (op.match(/[-=~]/g) || []).length;\n  return Math.max(1, /[>ox]$/.test(op) ? n - 1 : n - 2);\n}\nfunction addLinkWaypoint(graph, subgraphStack) {\n  graph.linkWaypoints = (graph.linkWaypoints || 0) + 1;\n  const id = "__bm_link_" + graph.linkWaypoints;\n  registerNode(graph, subgraphStack, { id, label: "", shape: "waypoint" });\n  return id;\n}\n' + LONG_LINK_FINISH + LINK_HELPERS;
 export const LINK_LOOP = '  while (remaining.length > 0) {\n    let hasArrowStart;';
 export const LINK_LOOP_LENGTH = '  while (remaining.length > 0) {\n    let linkLen = 1;\n    let hasArrowStart;';
 export const TEXT_LINK_END = 'hasArrowEnd = closeOp.endsWith(">");';
 export const TEXT_LINK_END_LENGTH = 'hasArrowEnd = closeOp.endsWith(">");\n      linkLen = linkLength(closeOp);';
 export const LINK_EDGES = '      for (const targetId of nextGroup.ids) {\n        graph.edges.push({\n          source: sourceId,\n          target: targetId,\n          label: edgeLabel,\n          style,\n          hasArrowStart,\n          hasArrowEnd\n        });\n      }';
-export const LINK_EDGES_CHAIN = '      for (const targetId of nextGroup.ids) {\n        const linkIndex = graph.linkCount = (graph.linkCount ?? -1) + 1;\n        const stops = [sourceId, ...Array.from({ length: linkLen - 1 }, () => addLinkWaypoint(graph, subgraphStack)), targetId];\n        const labelled = Math.floor((stops.length - 2) / 2);\n        for (let i = 0; i + 1 < stops.length; i++) {\n          graph.edges.push({\n            source: stops[i],\n            target: stops[i + 1],\n            label: i === labelled ? edgeLabel : void 0,\n            style,\n            hasArrowStart: i === 0 ? hasArrowStart : false,\n            hasArrowEnd: i + 2 === stops.length ? hasArrowEnd : false,\n            linkIndex\n          });\n        }\n      }';
+export const LINK_EDGES_CHAIN = `      for (const targetId of nextGroup.ids) {
+        const linkIndex = graph.linkCount = (graph.linkCount ?? -1) + 1;
+        const stops = [sourceId, ...Array.from({ length: linkLen - 1 }, () => addLinkWaypoint(graph, subgraphStack)), targetId];
+        const labelled = Math.floor((stops.length - 2) / 2);
+        const hops = [];
+        for (let i = 0; i + 1 < stops.length; i++) {
+          const hop = {
+            source: stops[i],
+            target: stops[i + 1],
+            label: i === labelled ? edgeLabel : void 0,
+            style,
+            hasArrowStart: i === 0 ? hasArrowStart : false,
+            hasArrowEnd: i + 2 === stops.length ? hasArrowEnd : false,
+            linkIndex
+          };
+          hops.push(hop);
+          graph.edges.push(hop);
+        }
+        if (hops.length > 1) (graph.longLinks || (graph.longLinks = [])).push({ source: sourceId, target: targetId, waypoints: stops.slice(1, -1), hops, label: edgeLabel, style, hasArrowStart, hasArrowEnd, linkIndex });
+      }`;
 export const NODE_SIZE = 'function estimateNodeSize(id, label, shape) {';
 export const NODE_SIZE_WAYPOINT = NODE_SIZE + '\n  if (shape === "waypoint") return { width: 0, height: 0 };';
 export const NODE_DRAW = 'function renderNode(node, font) {';
 export const NODE_DRAW_WAYPOINT = NODE_DRAW + '\n  if (node.shape === "waypoint") return "";';
+export const PARSE_END = 'parseEdgeLine(line, graph, subgraphStack);\n  }\n  return graph;';
+export const PARSE_END_FINISH = 'parseEdgeLine(line, graph, subgraphStack);\n  }\n  finishLongLinks(graph);\n  return graph;';
 export const LINK_STYLE = 'inlineStyle: resolveEdgeStyle(edgeIndex, graph)';
 export const LINK_STYLE_INDEX = 'inlineStyle: resolveEdgeStyle(originalEdge.linkIndex ?? edgeIndex, graph)';
 // Each must be in the source exactly once, or the build fails.
@@ -105,6 +181,7 @@ export const LINE_REWRITES = [
   { name: "waypoint size", from: NODE_SIZE, to: NODE_SIZE_WAYPOINT },
   { name: "waypoint drawing", from: NODE_DRAW, to: NODE_DRAW_WAYPOINT },
   { name: "link style index", from: LINK_STYLE, to: LINK_STYLE_INDEX },
+  { name: "long link finish", from: PARSE_END, to: PARSE_END_FINISH },
 ];
 
 // beautiful-mermaid's dist/index.js -> the same with its node ids and class shorthand arrow-aware, and long links read.

@@ -92922,6 +92922,7 @@ function parseFlowchart(lines) {
     }
     parseEdgeLine(line, graph, subgraphStack);
   }
+  finishLongLinks(graph);
   return graph;
 }
 function parseStateDiagram(lines) {
@@ -93152,8 +93153,9 @@ function parseEdgeLine(line, graph, subgraphStack) {
         const linkIndex = graph.linkCount = (graph.linkCount ?? -1) + 1;
         const stops = [sourceId, ...Array.from({ length: linkLen - 1 }, () => addLinkWaypoint(graph, subgraphStack)), targetId];
         const labelled = Math.floor((stops.length - 2) / 2);
+        const hops = [];
         for (let i = 0; i + 1 < stops.length; i++) {
-          graph.edges.push({
+          const hop = {
             source: stops[i],
             target: stops[i + 1],
             label: i === labelled ? edgeLabel : void 0,
@@ -93161,8 +93163,11 @@ function parseEdgeLine(line, graph, subgraphStack) {
             hasArrowStart: i === 0 ? hasArrowStart : false,
             hasArrowEnd: i + 2 === stops.length ? hasArrowEnd : false,
             linkIndex
-          });
+          };
+          hops.push(hop);
+          graph.edges.push(hop);
         }
+        if (hops.length > 1) (graph.longLinks || (graph.longLinks = [])).push({ source: sourceId, target: targetId, waypoints: stops.slice(1, -1), hops, label: edgeLabel, style, hasArrowStart, hasArrowEnd, linkIndex });
       }
     }
     prevGroupIds = nextGroup.ids;
@@ -93179,6 +93184,65 @@ function addLinkWaypoint(graph, subgraphStack) {
   const id = "__bm_link_" + graph.linkWaypoints;
   registerNode(graph, subgraphStack, { id, label: "", shape: "waypoint" });
   return id;
+}
+function finishLongLinks(graph) {
+  const links = graph.longLinks || [];
+  if (!links.length) return;
+  const parentOf = /* @__PURE__ */ new Map(), containerOf = /* @__PURE__ */ new Map();
+  const walk = (list, parent) => {
+    for (const sg of list) {
+      parentOf.set(sg.id, parent);
+      for (const id of sg.nodeIds) containerOf.set(id, sg);
+      walk(sg.children || [], sg);
+    }
+  };
+  walk(graph.subgraphs, null);
+  const holder = (id) => containerOf.has(id) ? containerOf.get(id) : parentOf.get(id) ?? null;
+  const unplace = (id) => {
+    const sg = containerOf.get(id);
+    if (sg) sg.nodeIds.splice(0, sg.nodeIds.length, ...sg.nodeIds.filter((n) => n !== id));
+    containerOf.delete(id);
+  };
+  for (const link of links) {
+    const own = new Set(link.hops);
+    const reaches = (from, to) => {
+      const seen = /* @__PURE__ */ new Set([from]);
+      const queue = [from];
+      while (queue.length) {
+        const at = queue.shift();
+        if (at === to) return true;
+        for (const e of graph.edges) {
+          if (!own.has(e) && e.source === at && !seen.has(e.target)) {
+            seen.add(e.target);
+            queue.push(e.target);
+          }
+        }
+      }
+      return false;
+    };
+    if (link.source === link.target || reaches(link.target, link.source)) {
+      const at = graph.edges.indexOf(link.hops[0]);
+      const kept = graph.edges.filter((e) => !own.has(e));
+      kept.splice(at, 0, { source: link.source, target: link.target, label: link.label, style: link.style, hasArrowStart: link.hasArrowStart, hasArrowEnd: link.hasArrowEnd, linkIndex: link.linkIndex });
+      graph.edges.splice(0, graph.edges.length, ...kept);
+      for (const id of link.waypoints) {
+        graph.nodes.delete(id);
+        unplace(id);
+      }
+      continue;
+    }
+    const ancestors = /* @__PURE__ */ new Set();
+    for (let sg = holder(link.source); sg; sg = parentOf.get(sg.id)) ancestors.add(sg);
+    let common = holder(link.target);
+    while (common && !ancestors.has(common)) common = parentOf.get(common.id) ?? null;
+    for (const id of link.waypoints) {
+      unplace(id);
+      if (common) {
+        common.nodeIds.push(id);
+        containerOf.set(id, common);
+      }
+    }
+  }
 }
 function consumeNodeGroup(text, graph, subgraphStack) {
   const first = consumeNode(text, graph, subgraphStack);
