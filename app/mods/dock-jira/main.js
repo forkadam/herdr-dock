@@ -903,6 +903,36 @@ function slashPath(p) {
   return s === "" ? "/" : s;
 }
 
+// src/shared/jira/severity.js
+var COLOR_NAMES = Object.freeze(["red", "orange", "yellow", "green", "blue", "purple", "gray"]);
+var DEFAULT_UNRATED = "No severity";
+var HEX_COLOR = /^#[0-9a-f]{6}$/i;
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
+function parseLevel(l, at) {
+  if (!isObj(l)) return { error: `${at} is not an object` };
+  if (!Array.isArray(l.values) || !l.values.length || !l.values.every(nonEmpty)) return { error: `${at} needs a list of values` };
+  if (!nonEmpty(l.label)) return { error: `${at} needs a label` };
+  const color = typeof l.color === "string" ? l.color.trim() : "";
+  if (!COLOR_NAMES.includes(color) && !HEX_COLOR.test(color)) return { error: `${at} colour is not ${COLOR_NAMES.join(", ")} or #rrggbb` };
+  if (l.attention != null && typeof l.attention !== "boolean") return { error: `${at} attention is not true or false` };
+  return { level: { values: l.values.map((v) => v.trim()), label: l.label.trim(), color: color.toLowerCase(), attention: l.attention === true } };
+}
+function parseSeverity(value, at) {
+  const bad = (what) => ({ severity: null, warning: `${at}.severity: ${what}` });
+  if (!isObj(value)) return bad("not an object");
+  if (!nonEmpty(value.field)) return bad("needs a field");
+  if (!Array.isArray(value.levels) || !value.levels.length) return bad("needs a list of levels");
+  const levels = [];
+  for (const [i, l] of value.levels.entries()) {
+    const { level, error } = parseLevel(l, `levels[${i}]`);
+    if (error) return bad(error);
+    levels.push(level);
+  }
+  if (value.unrated != null && !nonEmpty(value.unrated)) return bad("unrated is not a name");
+  return { severity: { field: value.field.trim(), levels, unrated: nonEmpty(value.unrated) ? value.unrated.trim() : DEFAULT_UNRATED }, warning: null };
+}
+
 // src/shared/jira/settings.js
 var DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
 var TRANSPORTS = ["fetch", "curl"];
@@ -954,7 +984,7 @@ function validateToken(text) {
   if (/\s/.test(t)) return { ok: false, error: "A token is one word, without spaces." };
   return { ok: true, token: t };
 }
-var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 var str = (v) => typeof v === "string" ? v : "";
 function parseSettings(text) {
   if (text == null || !String(text).trim()) return { ok: true, settings: { ...DEFAULT_SETTINGS, filters: [] } };
@@ -964,7 +994,7 @@ function parseSettings(text) {
   } catch (e) {
     return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: `not valid JSON (${e.message})` };
   }
-  if (!isObj(raw)) return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: "not a JSON object" };
+  if (!isObj2(raw)) return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: "not a JSON object" };
   const { token: _never, ...rest } = raw;
   return {
     ok: true,
@@ -975,7 +1005,7 @@ function parseSettings(text) {
       transport: TRANSPORTS.includes(raw.transport) ? raw.transport : "fetch",
       caFile: str(raw.caFile).trim(),
       startTask: str(raw.startTask),
-      filters: (Array.isArray(raw.filters) ? raw.filters : []).filter((f) => isObj(f) && str(f.name).trim() && str(f.jql).trim()).map((f) => ({ name: f.name.trim(), jql: f.jql.trim() }))
+      filters: (Array.isArray(raw.filters) ? raw.filters : []).filter((f) => isObj2(f) && str(f.name).trim() && str(f.jql).trim()).map((f) => ({ name: f.name.trim(), jql: f.jql.trim() }))
     }
   };
 }
@@ -992,17 +1022,17 @@ var DEFAULT_HIGH_PRIORITIES = /* @__PURE__ */ Object.freeze(["Highest", "High"])
 var DEFAULT_BRIEF_BUGS = "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved";
 var DEFAULT_CHECK_TASK = "The description of {key} ({summary}) changed {when}. Read the change with your Jira tools and check it against my work on {mine} in this repo.";
 var VIEW_ID = /^[a-z][a-z0-9-]{0,23}$/;
-var nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
+var nonEmpty2 = (v) => typeof v === "string" && v.trim() !== "";
 function boardId(v) {
   const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v;
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 function parseRule(a) {
-  if (!isObj(a)) return { error: "not an object" };
+  if (!isObj2(a)) return { error: "not an object" };
   const rule = {};
   for (const k of ["project", "type"]) {
     if (a[k] == null) continue;
-    if (!nonEmpty(a[k])) return { error: `${k} is not a name` };
+    if (!nonEmpty2(a[k])) return { error: `${k} is not a name` };
     rule[k] = a[k].trim();
   }
   if (a.subtask != null) {
@@ -1011,15 +1041,15 @@ function parseRule(a) {
   }
   if (a.parentType != null) {
     const list3 = typeof a.parentType === "string" ? [a.parentType] : a.parentType;
-    if (!Array.isArray(list3) || !list3.length || !list3.every(nonEmpty)) return { error: "parentType is not a type name or a list of them" };
+    if (!Array.isArray(list3) || !list3.length || !list3.every(nonEmpty2)) return { error: "parentType is not a type name or a list of them" };
     rule.parentType = list3.map((t) => t.trim());
   }
-  for (const k of ["start", "finish"]) if (nonEmpty(a[k])) rule[k] = a[k];
+  for (const k of ["start", "finish"]) if (nonEmpty2(a[k])) rule[k] = a[k];
   if (rule.start === void 0 && rule.finish === void 0) return { error: "needs a start or a finish" };
   return { rule };
 }
 function jiraOptions(settings) {
-  const s = isObj(settings) ? settings : {};
+  const s = isObj2(settings) ? settings : {};
   const warnings = [];
   let board = null;
   if (s.board != null) {
@@ -1027,12 +1057,12 @@ function jiraOptions(settings) {
     if (board === null) warnings.push("board: not a board id");
   }
   const hp = s.highPriorities;
-  const highPriorities = Array.isArray(hp) && hp.length && hp.every(nonEmpty) ? hp.map((p) => p.trim()) : [...DEFAULT_HIGH_PRIORITIES];
+  const highPriorities = Array.isArray(hp) && hp.length && hp.every(nonEmpty2) ? hp.map((p) => p.trim()) : [...DEFAULT_HIGH_PRIORITIES];
   const views = [];
   if (s.views != null && !Array.isArray(s.views)) warnings.push("views: not a list");
   for (const [i, v] of (Array.isArray(s.views) ? s.views : []).entries()) {
     const at = `views[${i}]`;
-    if (!isObj(v)) {
+    if (!isObj2(v)) {
       warnings.push(`${at}: not an object`);
       continue;
     }
@@ -1054,17 +1084,25 @@ function jiraOptions(settings) {
       warnings.push(`${at}: the id "${v.id}" is already used`);
       continue;
     }
-    let group = null;
-    if (v.group != null) {
-      if (v.group === "type") group = "type";
-      else warnings.push(`${at}: group "${v.group}" is not "type"`);
+    let severity = null;
+    if (v.severity != null) {
+      const parsed = parseSeverity(v.severity, at);
+      severity = parsed.severity;
+      if (parsed.warning) warnings.push(parsed.warning);
     }
+    let group = null;
+    if (v.group == null) group = severity ? "severity" : null;
+    else if (v.group === "type") group = "type";
+    else if (v.group === "severity") {
+      if (severity) group = "severity";
+      else warnings.push(`${at}: group "severity" needs a valid severity block`);
+    } else warnings.push(`${at}: group "${v.group}" is not "type" or "severity"`);
     let button = null;
     if (v.button != null) {
-      if (isObj(v.button) && nonEmpty(v.button.label) && nonEmpty(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
+      if (isObj2(v.button) && nonEmpty2(v.button.label) && nonEmpty2(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
       else warnings.push(`${at}: button needs a label and a task`);
     }
-    views.push({ id: v.id, name, jql, group, button });
+    views.push({ id: v.id, name, jql, group, button, severity });
   }
   const actions = [];
   if (s.actions != null && !Array.isArray(s.actions)) warnings.push("actions: not a list");
@@ -1076,19 +1114,19 @@ function jiraOptions(settings) {
   return {
     board,
     highPriorities,
-    briefBugs: nonEmpty(s.briefBugs) ? s.briefBugs.trim() : DEFAULT_BRIEF_BUGS,
+    briefBugs: nonEmpty2(s.briefBugs) ? s.briefBugs.trim() : DEFAULT_BRIEF_BUGS,
     views,
     actions,
-    checkTask: nonEmpty(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
+    checkTask: nonEmpty2(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
     warnings
   };
 }
 function prioritiesText(settings) {
-  const hp = isObj(settings) ? settings.highPriorities : null;
-  return Array.isArray(hp) ? hp.filter(nonEmpty).map((p) => p.trim()).join(", ") : "";
+  const hp = isObj2(settings) ? settings.highPriorities : null;
+  return Array.isArray(hp) ? hp.filter(nonEmpty2).map((p) => p.trim()).join(", ") : "";
 }
 function withFormOptions(settings, { board, priorities }) {
-  const { board: _b, highPriorities: _h, ...rest } = isObj(settings) ? settings : {};
+  const { board: _b, highPriorities: _h, ...rest } = isObj2(settings) ? settings : {};
   const names = String(priorities ?? "").split(",").map((p) => p.trim()).filter(Boolean);
   return { ...rest, ...board != null ? { board } : {}, ...names.length ? { highPriorities: names } : {} };
 }
@@ -1320,15 +1358,15 @@ async function lockFiles(io, paths) {
 
 // src/shared/jira/views.js
 var ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
-var TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null };
-var MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null };
-var ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null };
-var fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null });
+var TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null, severity: null };
+var MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null, severity: null };
+var ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null, severity: null };
+var fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null, severity: v.severity ?? null });
 function tabList(views, { today } = {}) {
   const own = (id) => views.find((v) => v.id === id);
   const builtin = (tab) => {
     const v = own(tab.id);
-    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null } : tab;
+    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null, severity: v.severity ?? null } : tab;
   };
   return [
     ...today ? [TODAY] : [],

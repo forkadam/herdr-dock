@@ -7,23 +7,24 @@ import { HIDDEN_EVERY_MS } from "./page.js";
 // What the All tab searches: everything assigned to me, resolved or not.
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
 
-// Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|null, filters: boolean,
-// button: { label, task }|null }.
+// Tab = { id, name, kind: "today"|"search", jql: string|null, group: "type"|"severity"|null, filters: boolean,
+// button: { label, task }|null, severity: { field, levels, unrated }|null }.
 // `filters`: whether the tab has the filter menu (All: it searches the filter picked there, tabFilters).
 // `button`: the one button the tab's header carries, which opens Claude with `task` (tabButtonWork); only a view gives one.
-const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null };
-const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null };
-const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null };
+// `severity`: the Jira field that rates the tab's tickets and its levels (severity.js's parseSeverity); only a view gives one.
+const TODAY = { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null, severity: null };
+const MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null, severity: null };
+const ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null, severity: null };
 
-const fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null });
+const fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null, severity: v.severity ?? null });
 
 // The tabs, left to right: Today (when `today`), the user's views, Mine, All. A view with the id `mine` or `all`
-// replaces that built-in's name, jql, group and button where the built-in stands; the built-in keeps its `filters`.
+// replaces that built-in's name, jql, group, button and severity where the built-in stands; the built-in keeps its `filters`.
 export function tabList(views, { today } = {}) {
   const own = (id) => views.find((v) => v.id === id);
   const builtin = (tab) => {
     const v = own(tab.id);
-    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null } : tab;
+    return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null, severity: v.severity ?? null } : tab;
   };
   return [
     ...(today ? [TODAY] : []),

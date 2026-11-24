@@ -5,6 +5,7 @@
 //   herdr-dock/secrets/jira-<site>.curlrc   the same token as a curl config, for the curl connection
 //   herdr-dock/secrets/jira-<site>.body     a curl request's body while it runs (a comment), then emptied
 import { slashPath } from "../path.js";
+import { parseSeverity } from "./severity.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
 const TRANSPORTS = ["fetch", "curl"];
@@ -149,6 +150,8 @@ function parseRule(a) {
 // Settings -> { board, highPriorities, briefBugs, views, actions, checkTask, warnings }. A bad view or rule is skipped
 // with one warning (its place in the file counted from 0), so the rest of the file still works. A view's optional
 // `button` ({ label, task }: opens Claude with `task`) that lacks either is dropped with a warning; the view is kept.
+// So is a malformed `severity` block (severity.js's parseSeverity). A view's `group` is "type", "severity" or null:
+// with no `group`, a valid severity block groups by severity; `group: "severity"` needs that block.
 export function jiraOptions(settings) {
   const s = isObj(settings) ? settings : {};
   const warnings = [];
@@ -176,17 +179,25 @@ export function jiraOptions(settings) {
     }
     if (v.id === "today") { warnings.push(`${at}: "today" is the Today tab's id`); continue; }
     if (views.some((w) => w.id === v.id)) { warnings.push(`${at}: the id "${v.id}" is already used`); continue; }
-    let group = null;
-    if (v.group != null) {
-      if (v.group === "type") group = "type";
-      else warnings.push(`${at}: group "${v.group}" is not "type"`);
+    let severity = null;
+    if (v.severity != null) {
+      const parsed = parseSeverity(v.severity, at);
+      severity = parsed.severity;
+      if (parsed.warning) warnings.push(parsed.warning);
     }
+    let group = null;
+    if (v.group == null) group = severity ? "severity" : null;
+    else if (v.group === "type") group = "type";
+    else if (v.group === "severity") {
+      if (severity) group = "severity";
+      else warnings.push(`${at}: group "severity" needs a valid severity block`);
+    } else warnings.push(`${at}: group "${v.group}" is not "type" or "severity"`);
     let button = null;
     if (v.button != null) {
       if (isObj(v.button) && nonEmpty(v.button.label) && nonEmpty(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
       else warnings.push(`${at}: button needs a label and a task`);
     }
-    views.push({ id: v.id, name, jql, group, button });
+    views.push({ id: v.id, name, jql, group, button, severity });
   }
 
   const actions = [];

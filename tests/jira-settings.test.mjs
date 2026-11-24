@@ -86,7 +86,7 @@ test("jiraOptions: views, actions, board and priorities, bad entries skipped wit
   ], actions: [{ project: "SEC", start: "/triage {key}" }, { subtask: true, parentType: "Story", finish: "/close {key}" }, { project: "X" }] });
   assert.equal(o.board, 12);
   assert.deepEqual(o.highPriorities, ["P0", "P1"]);
-  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type", button: null }]);
+  assert.deepEqual(o.views, [{ id: "sec", name: "Security", jql: "project = SEC", group: "type", button: null, severity: null }]);
   assert.deepEqual(o.actions[1], { subtask: true, parentType: ["Story"], finish: "/close {key}" });
   assert.equal(o.actions.length, 2);
   assert.deepEqual(o.warnings, [
@@ -152,7 +152,7 @@ test("jiraOptions: briefBugs and checkTask are passed through, blank or non-text
   }
 });
 
-test("jiraOptions: a view group other than \"type\" becomes null with a warning and the view is kept", () => {
+test("jiraOptions: a view group other than \"type\" or \"severity\" becomes null with a warning and the view is kept", () => {
   const o = jiraOptions({ views: [
     { id: "a", name: "A", jql: "j1", group: "status" },
     { id: "b", name: "B", jql: "j2", group: null },
@@ -160,12 +160,67 @@ test("jiraOptions: a view group other than \"type\" becomes null with a warning 
     { id: "d", name: "D", jql: "j4", group: "type" },
   ] });
   assert.deepEqual(o.views, [
-    { id: "a", name: "A", jql: "j1", group: null, button: null },
-    { id: "b", name: "B", jql: "j2", group: null, button: null },
-    { id: "c", name: "C", jql: "j3", group: null, button: null },
-    { id: "d", name: "D", jql: "j4", group: "type", button: null },
+    { id: "a", name: "A", jql: "j1", group: null, button: null, severity: null },
+    { id: "b", name: "B", jql: "j2", group: null, button: null, severity: null },
+    { id: "c", name: "C", jql: "j3", group: null, button: null, severity: null },
+    { id: "d", name: "D", jql: "j4", group: "type", button: null, severity: null },
   ]);
-  assert.deepEqual(o.warnings, ['views[0]: group "status" is not "type"']);
+  assert.deepEqual(o.warnings, ['views[0]: group "status" is not "type" or "severity"']);
+});
+
+const SEVERITY = { field: "customfield_10001", levels: [
+  { values: ["Highest", "High"], label: "S1", color: "red", attention: true },
+  { values: ["Medium"], label: "S2", color: "#ABCDEF" },
+  { values: ["Low"], label: "S3", color: "gray" } ] };
+const SEVERITY_PARSED = { field: "customfield_10001", unrated: "No severity", levels: [
+  { values: ["Highest", "High"], label: "S1", color: "red", attention: true },
+  { values: ["Medium"], label: "S2", color: "#abcdef", attention: false },
+  { values: ["Low"], label: "S3", color: "gray", attention: false } ] };
+
+test("jiraOptions: a view's severity block; without a group the view groups by severity", () => {
+  const o = jiraOptions({ views: [
+    { id: "sec", name: "Security", jql: "project = SEC", severity: SEVERITY },
+    { id: "ops", name: "Ops", jql: "project = OPS", severity: SEVERITY, group: "type" },
+    { id: "web", name: "Web", jql: "project = WEB", severity: SEVERITY, group: "severity" },
+    { id: "api", name: "API", jql: "project = API" },
+  ] });
+  assert.deepEqual(o.warnings, []);
+  assert.deepEqual(o.views.map((v) => [v.id, v.group, v.severity]), [
+    ["sec", "severity", SEVERITY_PARSED],
+    ["ops", "type", SEVERITY_PARSED],
+    ["web", "severity", SEVERITY_PARSED],
+    ["api", null, null],
+  ]);
+});
+
+test("jiraOptions: a malformed severity block is dropped with one warning and the view is kept", () => {
+  const o = jiraOptions({ views: [
+    { id: "a", name: "A", jql: "j1", severity: { field: "f" } },
+    { id: "b", name: "B", jql: "j2", severity: "high", group: "type" },
+    { id: "c", name: "C", jql: "j3", severity: null },
+  ] });
+  assert.deepEqual(o.views, [
+    { id: "a", name: "A", jql: "j1", group: null, button: null, severity: null },
+    { id: "b", name: "B", jql: "j2", group: "type", button: null, severity: null },
+    { id: "c", name: "C", jql: "j3", group: null, button: null, severity: null },
+  ]);
+  assert.deepEqual(o.warnings, ["views[0].severity: needs a list of levels", "views[1].severity: not an object"]);
+});
+
+test("jiraOptions: group \"severity\" without a valid severity block is a warning after the block's own, and the view is kept ungrouped", () => {
+  const o = jiraOptions({ views: [
+    { id: "a", name: "A", jql: "j1", group: "severity", severity: { field: "f", levels: [] } },
+    { id: "b", name: "B", jql: "j2", group: "severity" },
+  ] });
+  assert.deepEqual(o.views, [
+    { id: "a", name: "A", jql: "j1", group: null, button: null, severity: null },
+    { id: "b", name: "B", jql: "j2", group: null, button: null, severity: null },
+  ]);
+  assert.deepEqual(o.warnings, [
+    "views[0].severity: needs a list of levels",
+    'views[0]: group "severity" needs a valid severity block',
+    'views[1]: group "severity" needs a valid severity block',
+  ]);
 });
 
 test("jiraOptions: view ids are lower-case letters, digits and dashes (24 at most); names and jql are trimmed", () => {
@@ -183,8 +238,8 @@ test("jiraOptions: view ids are lower-case letters, digits and dashes (24 at mos
     { id: 7, name: "N", jql: "j" },
   ] });
   assert.deepEqual(o.views, [
-    { id: longest, name: "Name", jql: "project = X", group: null, button: null },
-    { id: "a-1", name: "N", jql: "j", group: null, button: null },
+    { id: longest, name: "Name", jql: "project = X", group: null, button: null, severity: null },
+    { id: "a-1", name: "N", jql: "j", group: null, button: null, severity: null },
   ]);
   assert.deepEqual(o.warnings, [bad(2), bad(3), bad(4), bad(5), bad(6), bad(7), bad(8)]);
 });
@@ -212,7 +267,7 @@ test("jiraOptions: only an accepted view takes its id, so a rejected one never m
     { id: "a", name: "A", jql: "j" },
     { id: "a", name: "Again", jql: "j" },
   ] });
-  assert.deepEqual(o.views, [{ id: "a", name: "A", jql: "j", group: null, button: null }]);
+  assert.deepEqual(o.views, [{ id: "a", name: "A", jql: "j", group: null, button: null, severity: null }]);
   assert.deepEqual(o.warnings, [
     'views[0]: "today" is the Today tab\'s id',
     'views[1]: "today" is the Today tab\'s id',

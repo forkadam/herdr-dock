@@ -17,14 +17,14 @@ test("tabList: Today, views, Mine, All; a view can replace a built-in", () => {
 
 test("tabList: the built-in tabs and what a view replaces", () => {
   const [today, sec, mine, all] = tabList(views, { today: true });
-  assert.deepEqual(today, { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null });
-  assert.deepEqual(sec, { id: "sec", name: "Security", kind: "search", jql: "project = SEC", group: "type", filters: false, button: null });
-  assert.deepEqual(mine, { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null });
-  assert.deepEqual(all, { id: "all", name: "Everything", kind: "search", jql: "assignee = currentUser()", group: null, filters: true, button: null });
+  assert.deepEqual(today, { id: "today", name: "Today", kind: "today", jql: null, group: null, filters: false, button: null, severity: null });
+  assert.deepEqual(sec, { id: "sec", name: "Security", kind: "search", jql: "project = SEC", group: "type", filters: false, button: null, severity: null });
+  assert.deepEqual(mine, { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].jql, group: null, filters: false, button: null, severity: null });
+  assert.deepEqual(all, { id: "all", name: "Everything", kind: "search", jql: "assignee = currentUser()", group: null, filters: true, button: null, severity: null });
   assert.equal(ALL_JQL, "assignee = currentUser() ORDER BY updated DESC");
   const [m, a] = tabList([], { today: false });
   assert.deepEqual(m, mine);
-  assert.deepEqual(a, { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null });
+  assert.deepEqual(a, { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null, severity: null });
 });
 
 test("tabList: a view's button rides on its tab, a built-in's too", () => {
@@ -33,10 +33,21 @@ test("tabList: a view's button rides on its tab, a built-in's too", () => {
   assert.deepEqual(tabs.map((t) => [t.id, t.button]), [["today", null], ["sec", b], ["mine", null], ["all", b]]);
 });
 
+test("tabList: a view's severity rides on its tab, a built-in's too, and is null otherwise", () => {
+  const sev = { field: "customfield_10001", unrated: "No severity", levels: [{ values: ["High"], label: "S1", color: "red", attention: true }] };
+  const tabs = tabList([
+    { id: "sec", name: "Security", jql: "x", group: "severity", button: null, severity: sev },
+    { id: "mine", name: "My bugs", jql: "y", group: "severity", button: null, severity: sev },
+    { id: "ops", name: "Ops", jql: "z", group: null, button: null, severity: null },
+    { id: "web", name: "Web", jql: "w", group: null },
+  ], { today: true });
+  assert.deepEqual(tabs.map((t) => [t.id, t.group, t.severity]), [["today", null, null], ["sec", "severity", sev], ["ops", null, null], ["web", null, null], ["mine", "severity", sev], ["all", null, null]]);
+});
+
 test("tabList: a view with id mine replaces Mine in place, keeping its filters", () => {
   const tabs = tabList([{ id: "mine", name: "My bugs", jql: "type = Bug", group: "type" }], { today: false });
   assert.deepEqual(tabs.map((t) => t.id), ["mine", "all"]);
-  assert.deepEqual(tabs[0], { id: "mine", name: "My bugs", kind: "search", jql: "type = Bug", group: "type", filters: false, button: null });
+  assert.deepEqual(tabs[0], { id: "mine", name: "My bugs", kind: "search", jql: "type = Bug", group: "type", filters: false, button: null, severity: null });
 });
 
 test("pickTab: a removed tab falls back to the first", () => {
