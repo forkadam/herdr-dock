@@ -1,6 +1,7 @@
 // The Start / Finish picker, drawn over the Jira page: "Start <key> in…" (or "Finish <key> in…"), the folders this
 // computer's spaces work in (start-in.js pickerChoices: a folder's last part, its path dimmed, the spaces in it),
-// then Here and Other folder…, and the Remember for this ticket box. `page` is the Jira view: it keeps the state
+// then Here and Other folder…, and the Remember for this ticket box; under the title, one dim line when a plain Start
+// or Finish had a folder it couldn't use (pickerReason). `page` is the Jira view: it keeps the state
 // (`page.picker`, `page.pickerFocus`) and acts: pickEntry(i, cx), pickerKeyDown(e, cx), toggleRemember(cx),
 // closePicker(cx). Arrows move, Enter picks; Escape or a press outside the box closes it and starts nothing.
 import { div, svg } from "gpui-kit";
@@ -40,6 +41,7 @@ export function startPicker(page, t) {
     .child(h_flex().h(34).px(10).gap(8).flex_none().items_center()
       .child(div().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in…`))
       .child(div().flex_none().text_size(11).text_color(t.dim).child("Esc")))
+    .when(Boolean(p.reason), (el) => el.child(div().px(10).pb(4).flex_none().truncate().text_size(11.5).text_color(t.dim).child(p.reason ?? "")))
     .child(v_flex().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows))
     .child(line())
     .child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is"))

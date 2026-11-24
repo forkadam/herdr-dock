@@ -1161,7 +1161,7 @@ function startPlace(issue, { remembered, projects, probe, spaces: spaces2, panes
   const folder = normPath(raw.folder, probe.home);
   return { folder, source: raw.source, space: spaceFor(folder, { spaces: spaces2, panes: panes2, shownSpace, home: probe.home }) };
 }
-function pickerChoices(issue, { remembered, projects, probe, spaces: spaces2, panes: panes2, here } = {}) {
+function pickerChoices(issue, { remembered, projects, probe, spaces: spaces2, panes: panes2, here, shownSpace } = {}) {
   const home = probe?.home ?? null;
   const found = (map, key) => usable(asWritten(own(map, key)), probe) ? { [key]: own(map, key) } : {};
   const rem = { ...found(remembered, issue?.parent?.key), ...found(remembered, issue?.key) };
@@ -1172,9 +1172,22 @@ function pickerChoices(issue, { remembered, projects, probe, spaces: spaces2, pa
   if (suggested && !rows.some((r) => r.folder === suggested)) {
     rows.splice(mapped ? 1 : 0, 0, pickerRows({ home, mapped: suggested })[0]);
   }
-  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : 0;
+  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : -1;
+  const machine = (Array.isArray(spaces2) ? spaces2 : []).find((s) => s.id === shownSpace)?.machine ?? null;
   const cwd = nonEmpty2(here) ? normPath(here, home) : null;
-  return { rows, selected: Math.max(0, at), here: cwd ? { folder: cwd, path: tildePath(cwd, home) } : null };
+  const hereEntry = machine != null ? { folder: null, path: cwd ? `${here} (on ${machine})` : `on ${machine}` } : cwd ? { folder: cwd, path: tildePath(cwd, home) } : null;
+  return { rows, selected: at < 0 ? rows.length : at, here: hereEntry };
+}
+function pickerReason(issue, { remembered, projects, probe, ask = false } = {}) {
+  if (ask) return null;
+  const raw = resolveFolder(issue, { remembered, projects });
+  if (!raw) return null;
+  const home = probe?.home ?? null;
+  const full = normPath(raw.folder, home);
+  if (!probe || !isAbsolutePath(full)) return "Couldn't check folders";
+  if (usable(raw.folder, probe)) return null;
+  const whose = raw.source === "remembered" ? `${issue.key}'s remembered folder` : `${issue.project}'s folder`;
+  return `${tildePath(full, home)} (${whose}) isn't on this PC`;
 }
 function pickerKey(key, selected, count) {
   if (key === "up") return { selected: Math.max(0, selected - 1) };
@@ -1854,7 +1867,7 @@ function startPicker(page, t) {
   const line = () => div3().h(1).mx(6).my(3).flex_none().bg(t.border);
   const tick = p.remember;
   const remember2 = h_flex3().id("jira-pick-remember").gap(8).items_center().cursor_pointer().tooltip(`${p.issue.key}'s next Start and Finish open in the folder picked, without asking`).on_click((_e, cx) => page.toggleRemember(cx)).child(div3().size(14).flex_none().flex().items_center().justify_center().rounded(3).border_1().border_color(tick ? t.accent : t.border).bg(tick ? t.accent : t.background).when(tick, (el) => el.child(svg3("mods/workspace-chrome/check.svg").size(11).text_color(t.accent_foreground ?? t.background)))).child(div3().text_size(12).text_color(t.foreground).child("Remember for this ticket"));
-  const box = v_flex3().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx)).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).w(540).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground).child(h_flex3().h(34).px(10).gap(8).flex_none().items_center().child(div3().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in\u2026`)).child(div3().flex_none().text_size(11).text_color(t.dim).child("Esc"))).child(v_flex3().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows)).child(line()).child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is")).child(entry(n + 1, ICONS.other, "Other folder\u2026", p.choosing ? "Choosing in the folder dialog\u2026" : "")).child(line()).child(h_flex3().h(32).px(10).gap(8).flex_none().items_center().child(remember2).child(div3().flex_1()).child(div3().flex_none().text_size(11).text_color(t.dim).child("\u2191 \u2193 to move \xB7 Enter to pick")));
+  const box = v_flex3().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx)).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).w(540).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground).child(h_flex3().h(34).px(10).gap(8).flex_none().items_center().child(div3().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in\u2026`)).child(div3().flex_none().text_size(11).text_color(t.dim).child("Esc"))).when(Boolean(p.reason), (el) => el.child(div3().px(10).pb(4).flex_none().truncate().text_size(11.5).text_color(t.dim).child(p.reason ?? ""))).child(v_flex3().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows)).child(line()).child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is")).child(entry(n + 1, ICONS.other, "Other folder\u2026", p.choosing ? "Choosing in the folder dialog\u2026" : "")).child(line()).child(h_flex3().h(32).px(10).gap(8).flex_none().items_center().child(remember2).child(div3().flex_1()).child(div3().flex_none().text_size(11).text_color(t.dim).child("\u2191 \u2193 to move \xB7 Enter to pick")));
   return v_flex3().id("jira-start-picker-scrim").absolute().inset_0().items_center().pt(64).px(16).bg(SCRIM).on_mouse_down("left", (_e, cx) => {
     cx.stop_propagation();
     page.closePicker(cx);
@@ -3070,26 +3083,35 @@ var Jira = class extends View {
   // Where a Start or Finish tab (`c`, startWork's or finishWork's tab.new) opens (start-in.js): the folder remembered
   // for the ticket, else its project's folder in the settings' `projects`, when it is a folder on this PC, as a new tab
   // in the space already working there (else a new space on it); else, and always with `ask`, the picker. One node
-  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks).
+  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks, and says
+  // so). Anything that throws on the way is said in the detail pane rather than nothing happening.
   openWork(action, issue, c, cx, ask) {
     const target = { key: issue.key, project: issue.project ?? null, parent: issue.parent ?? null };
     const seq = this.workSeq.next();
     cx.spawn(async (cx2) => {
-      const remembered = this.rememberedFolders();
-      const projects = this.options.projects;
-      const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
-      if (!this.workSeq.accept(seq)) return;
-      const live = { spaces: spaces(), panes: panes() };
-      const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace: focused()?.space ?? null });
-      if (place) {
-        this.picker = null;
-        this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx2);
-        return;
+      try {
+        const remembered = this.rememberedFolders();
+        const projects = this.options.projects;
+        const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
+        if (!this.workSeq.accept(seq)) return;
+        const live = { spaces: spaces(), panes: panes() };
+        const f = focused();
+        const shownSpace = f?.space ?? null;
+        const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace });
+        if (place) {
+          this.picker = null;
+          this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx2);
+          return;
+        }
+        const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: f?.cwd ?? null, shownSpace });
+        const reason = pickerReason(target, { remembered, projects, probe, ask });
+        this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, reason, remember: false, choosing: false };
+        this.focusPicker();
+        cx2.notify();
+      } catch (e) {
+        this.actionMsg = { ok: false, message: `Couldn't ${action} ${issue.key}: ${e?.message ?? e}` };
+        cx2.notify();
       }
-      const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: focused()?.cwd ?? null });
-      this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, remember: false, choosing: false };
-      this.focusPicker();
-      cx2.notify();
     });
   }
   rememberedFolders() {
@@ -3101,7 +3123,7 @@ var Jira = class extends View {
   async probeFolders(paths) {
     const { command, args } = folderProbe(paths);
     try {
-      const r = await exec(command, args);
+      const r = await exec(command, args, { timeout: 5e3 });
       return r.code === 0 ? parseFolderProbe(r.stdout ?? "", paths) : null;
     } catch (e) {
       console.log(`dock-jira: the folder check failed: ${e?.message ?? e}`);
@@ -3130,8 +3152,9 @@ var Jira = class extends View {
   }
   // Opens the picker's tab in `folder` (a new tab in the space working there, else a new space on it), and with
   // Remember ticked keeps the folder as the ticket's (replacing one remembered before). Without Remember, the ticket's
-  // remembered folder stays. `folder` null: Here with no folder Herdr names; the tab opens as before Start had folders
-  // (where the focused terminal is), and there is nothing to remember.
+  // remembered folder stays. `folder` null: Here with no folder on this PC (Herdr names none, or the focused terminal is
+  // on another machine); the tab opens as before Start had folders (where the focused terminal is, in its space), and
+  // there is nothing to remember.
   startIn(folder, cx) {
     const p = this.picker;
     if (!p) return;

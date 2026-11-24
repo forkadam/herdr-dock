@@ -175,11 +175,13 @@ export function startPlace(issue, { remembered, projects, probe, spaces, panes, 
 }
 
 // The picker's choices, once the probe answered: `rows` (pickerRows, with the project's mapped folder first when the
-// probe found it), `selected` (the row to preselect: suggestFolder's among the folders found here, so a missing one
+// probe found it), `selected` (the entry to preselect: suggestFolder's among the folders found here, so a missing one
 // gives way to the next; a suggested folder no space is in gets a row of its own, after the mapped one; nothing to
-// suggest: 0, the first entry) and `here` (the focused terminal's folder, `{ folder, path }`, or null when Herdr
-// names none). The picker's entries are the rows, then Here, then Other folder….
-export function pickerChoices(issue, { remembered, projects, probe, spaces, panes, here } = {}) {
+// suggest: Here, so a quick Enter starts where Start always did, never in some other repo) and `here` (the focused
+// terminal's folder, `{ folder, path }`, or null when Herdr names none). In a space on another machine (`shownSpace`'s
+// `machine`), Here has no folder on this PC (`folder` null: the tab starts as before, in that space) and its path
+// says which machine. The picker's entries are the rows, then Here, then Other folder….
+export function pickerChoices(issue, { remembered, projects, probe, spaces, panes, here, shownSpace } = {}) {
   const home = probe?.home ?? null;
   const found = (map, key) => (usable(asWritten(own(map, key)), probe) ? { [key]: own(map, key) } : {});
   const rem = { ...found(remembered, issue?.parent?.key), ...found(remembered, issue?.key) };
@@ -190,9 +192,28 @@ export function pickerChoices(issue, { remembered, projects, probe, spaces, pane
   if (suggested && !rows.some((r) => r.folder === suggested)) {
     rows.splice(mapped ? 1 : 0, 0, pickerRows({ home, mapped: suggested })[0]);
   }
-  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : 0;
+  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : -1;
+  const machine = (Array.isArray(spaces) ? spaces : []).find((s) => s.id === shownSpace)?.machine ?? null;
   const cwd = nonEmpty(here) ? normPath(here, home) : null;
-  return { rows, selected: Math.max(0, at), here: cwd ? { folder: cwd, path: tildePath(cwd, home) } : null };
+  const hereEntry = machine != null ? { folder: null, path: cwd ? `${here} (on ${machine})` : `on ${machine}` }
+    : cwd ? { folder: cwd, path: tildePath(cwd, home) } : null;
+  return { rows, selected: at < 0 ? rows.length : at, here: hereEntry };
+}
+
+// Why a plain Start or Finish opened the picker, for one dim line under its title: it had a folder (remembered for the
+// ticket, else its project's) it couldn't use. "<folder> (KEY's remembered folder) isn't on this PC", "<folder>
+// (PROJECT's folder) isn't on this PC", or "Couldn't check folders" when the probe failed or home is unknown for a `~`
+// folder. Null: Start in… (`ask`), a ticket with no folder (it simply asks), or a folder that is here.
+export function pickerReason(issue, { remembered, projects, probe, ask = false } = {}) {
+  if (ask) return null;
+  const raw = resolveFolder(issue, { remembered, projects });
+  if (!raw) return null;
+  const home = probe?.home ?? null;
+  const full = normPath(raw.folder, home);
+  if (!probe || !isAbsolutePath(full)) return "Couldn't check folders";
+  if (usable(raw.folder, probe)) return null;
+  const whose = raw.source === "remembered" ? `${issue.key}'s remembered folder` : `${issue.project}'s folder`;
+  return `${tildePath(full, home)} (${whose}) isn't on this PC`;
 }
 
 // A key pressed in the picker (`count` entries, `selected` the highlighted one): { selected } for the arrows (held

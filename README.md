@@ -398,7 +398,9 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     out). The project's mapped folder, when it exists, comes first. Then **Here**, the focused terminal's folder (where
     Start work opened before), and **Other folder…**, the system's folder dialog (cancel it to come back to the
     picker). The ticket's remembered folder is preselected; for a sub-task with none, its parent's; else the mapped
-    one. ↑ ↓ move, Enter or a click picks; Escape or a click outside closes it and starts nothing.
+    one; else Here. ↑ ↓ move, Enter or a click picks; Escape or a click outside closes it and starts nothing. When a
+    plain Start had a folder it couldn't use, a dim line under the title says so ("~/code/app (ABC's folder) isn't on
+    this PC", or "Couldn't check folders"). In a space on another machine, Here starts in that space, as before.
   - **Remember for this ticket** (a box in the picker, off by default): the folder picked becomes the ticket's, and its
     next Start work and Finish open there without asking. Remembered folders are per PC (`dock.jira.startIn`, the
     newest 300 tickets).

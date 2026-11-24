@@ -20,7 +20,7 @@ import {
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { attentionLine, chipOf, chipWidth, severityFields, severityRow, tint } from "../../shared/jira/severity.js";
-import { folderProbe, normPath, openCommand, parseFolderProbe, pickerChoices, pickerKey, probePaths, remember, spaceFor, startPlace } from "../../shared/jira/start-in.js";
+import { folderProbe, normPath, openCommand, parseFolderProbe, pickerChoices, pickerKey, pickerReason, probePaths, remember, spaceFor, startPlace } from "../../shared/jira/start-in.js";
 import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import {
@@ -147,8 +147,8 @@ export default class Jira extends View {
     // Where Start work and Finish open (openWork): the picker drawn over the page (start-picker.js) when the ticket's
     // folder isn't known here, or for Start in…: { action: "start" | "finish", issue: { key, project, parent }, work
     // (startWork's or finishWork's tab.new: its name and task), home (the probe's; null: unknown), rows and here
-    // (pickerChoices), selected (an index into the rows, then Here, then Other folder…), remember (the box), choosing
-    // (Herdr's folder dialog is open over it) }. The newest Start or Finish wins (workSeq); the keys go to pickerFocus.
+    // (pickerChoices), selected (an index into the rows, then Here, then Other folder…), reason (pickerReason: why it
+    // asks, or null), remember (the box), choosing (Herdr's folder dialog is open over it) }. The newest Start or Finish wins (workSeq); the keys go to pickerFocus.
     this.picker = null;
     this.pickerFocus = cx.focus_handle();
     this.workSeq = latestOnly();
@@ -1171,26 +1171,35 @@ export default class Jira extends View {
   // Where a Start or Finish tab (`c`, startWork's or finishWork's tab.new) opens (start-in.js): the folder remembered
   // for the ticket, else its project's folder in the settings' `projects`, when it is a folder on this PC, as a new tab
   // in the space already working there (else a new space on it); else, and always with `ask`, the picker. One node
-  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks).
+  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks, and says
+  // so). Anything that throws on the way is said in the detail pane rather than nothing happening.
   openWork(action, issue, c, cx, ask) {
     const target = { key: issue.key, project: issue.project ?? null, parent: issue.parent ?? null };
     const seq = this.workSeq.next();
     cx.spawn(async (cx) => {
-      const remembered = this.rememberedFolders();
-      const projects = this.options.projects;
-      const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
-      if (!this.workSeq.accept(seq)) return;
-      const live = { spaces: spaces(), panes: panes() };
-      const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace: focused()?.space ?? null });
-      if (place) {
-        this.picker = null;
-        this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx);
-        return;
+      try {
+        const remembered = this.rememberedFolders();
+        const projects = this.options.projects;
+        const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
+        if (!this.workSeq.accept(seq)) return;
+        const live = { spaces: spaces(), panes: panes() };
+        const f = focused();
+        const shownSpace = f?.space ?? null;
+        const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace });
+        if (place) {
+          this.picker = null;
+          this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx);
+          return;
+        }
+        const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: f?.cwd ?? null, shownSpace });
+        const reason = pickerReason(target, { remembered, projects, probe, ask });
+        this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, reason, remember: false, choosing: false };
+        this.focusPicker();
+        cx.notify();
+      } catch (e) {
+        this.actionMsg = { ok: false, message: `Couldn't ${action} ${issue.key}: ${e?.message ?? e}` };
+        cx.notify();
       }
-      const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: focused()?.cwd ?? null });
-      this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, remember: false, choosing: false };
-      this.focusPicker();
-      cx.notify();
     });
   }
 
@@ -1204,7 +1213,7 @@ export default class Jira extends View {
   async probeFolders(paths) {
     const { command, args } = folderProbe(paths);
     try {
-      const r = await exec(command, args);
+      const r = await exec(command, args, { timeout: 5000 });
       return r.code === 0 ? parseFolderProbe(r.stdout ?? "", paths) : null;
     } catch (e) {
       console.log(`dock-jira: the folder check failed: ${e?.message ?? e}`);
@@ -1231,8 +1240,9 @@ export default class Jira extends View {
 
   // Opens the picker's tab in `folder` (a new tab in the space working there, else a new space on it), and with
   // Remember ticked keeps the folder as the ticket's (replacing one remembered before). Without Remember, the ticket's
-  // remembered folder stays. `folder` null: Here with no folder Herdr names; the tab opens as before Start had folders
-  // (where the focused terminal is), and there is nothing to remember.
+  // remembered folder stays. `folder` null: Here with no folder on this PC (Herdr names none, or the focused terminal is
+  // on another machine); the tab opens as before Start had folders (where the focused terminal is, in its space), and
+  // there is nothing to remember.
   startIn(folder, cx) {
     const p = this.picker;
     if (!p) return;
