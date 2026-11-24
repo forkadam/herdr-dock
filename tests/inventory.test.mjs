@@ -71,3 +71,14 @@ test("modRows: placed mods are always normal rows; unplaced unplaceable ones go 
   assert.deepEqual(normal.map((i) => i.id), ["files", "toast"]);
   assert.deepEqual(others.map((i) => i.id), ["menu"]);
 });
+
+test("buildInventory: while the browser is off, dock-browser isn't listed for placing", () => {
+  const draft = draftFromConfig(fixture, "");
+  const entries = [{ id: "dock-browser", modJson: { title: "Browser" } }, { id: "files", modJson: { title: "Files" } }];
+  const ids = (opts) => buildInventory(entries, draft, opts).map((i) => i.id);
+  assert.ok(!ids({ browserEnabled: false }).includes("dock-browser"));
+  assert.ok(ids({ browserEnabled: false }).includes("files"));
+  assert.ok(ids({ browserEnabled: true }).includes("dock-browser"));
+  // Callers that don't say (an older session) keep listing it.
+  assert.ok(ids().includes("dock-browser"));
+});

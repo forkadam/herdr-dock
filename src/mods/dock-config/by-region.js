@@ -2,6 +2,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, NumberInput, Popover } from "gpui-base";
 import { allowedRegions } from "../../shared/edit.js";
+import { BROWSER_OFF_TIP } from "./browser-view.js";
 import { icon, iconButton, segmented, tag, toggle } from "./ui.js";
 
 const LEFT_MODES = [["expanded", "expanded"], ["icons", "icons"], ["hidden", "hidden"]];
@@ -59,7 +60,9 @@ function featureRow(dlg, t, region, list, i) {
     : [
         iconButton(t, `dc-up-${region}-${i}`, "chevron-up", "Move up", canUp, (_e, cx) => dlg.act(cx, { type: "move", region, index: i, delta: -1 })),
         iconButton(t, `dc-down-${region}-${i}`, "chevron-down", "Move down", canDown, (_e, cx) => dlg.act(cx, { type: "move", region, index: i, delta: 1 })),
-        iconButton(t, `dc-off-${region}-${i}`, "x", "Turn off", on, (_e, cx) => dlg.act(cx, { type: "place", mod: f.mod, region: "off" })),
+        f.mod === "dock-browser"
+          ? iconButton(t, `dc-off-${region}-${i}`, "x", BROWSER_OFF_TIP, false, null)
+          : iconButton(t, `dc-off-${region}-${i}`, "x", "Turn off", on, (_e, cx) => dlg.act(cx, { type: "place", mod: f.mod, region: "off" })),
       ];
   return h_flex().id(`dc-row-${region}-${f.mod}`).h(28).pl(LABEL_W + 10).pr(4).gap(8).items_center().rounded(6)
     .hover((s) => s.bg(t.hover))

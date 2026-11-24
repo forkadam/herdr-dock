@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadSession, saveSession, resetSession, isDirty } from "../src/mods/dock-config/session.js";
+import { loadSession, saveSession, resetSession, isDirty, readBrowserStatus, setBrowser } from "../src/mods/dock-config/session.js";
 import { applyEdit, draftFromConfig, formatConfig } from "../src/shared/edit.js";
 
 const HOST = "forkadam-pc";
@@ -359,4 +359,214 @@ test("no host in app mode doesn't say npm run deploy", async () => {
   assert.equal(s.readOnly, true);
   assert.match(s.error, /hostname/);
   assert.doesNotMatch(s.error, /npm run deploy/);
+});
+
+// The Browser section: its status and Turn on / Turn off / Set up.
+const RESULT = `${HOME}/herdr-dock/browser/setup-result.json`;
+const MOD = `${HOME}/mods/dock-browser`;
+const BIN_WIN = `${HOME}/herdr-dock/browser/bin/agent-browser.exe`;
+const REPO = "C:/repo";
+// exec: the mods listing, and the node probe of which paths exist (and, on Windows, Program Files' variables).
+function browserIo({ present = [], env = {}, mods = "files\nagents\n", probe = "ok", ...rest } = {}) {
+  const f = fakeIo({ ...rest, listing: async (command, args) => {
+    if (command !== "node") return { code: 0, stdout: mods };
+    if (probe === "throw") throw new Error("node: not found");
+    if (probe === "fail") return { code: 1, stdout: "", stderr: "boom" };
+    const [, , , names, ...paths] = args;
+    const vars = Object.fromEntries(names.split(",").filter(Boolean).map((n) => [n, env[n] ?? null]));
+    return { code: 0, stdout: JSON.stringify({ env: vars, exists: paths.map((p) => present.includes(p)) }) };
+  } });
+  f.runs = [];
+  f.io.run = (command, args) => f.runs.push([command, args]);
+  return f;
+}
+const set = (o) => ({ chrome: null, mode: "clone", repo: REPO, now: 5, ...o });
+
+test("readBrowserStatus: the merged setting, the files that are there, the result, and the Chrome found", async () => {
+  const chrome = "C:/Tools/chrome.exe";
+  const found = "C:\\L\\Google\\Chrome\\Application\\chrome.exe";
+  const { io, files } = browserIo({
+    local: localText({}, { browser: { enabled: true, chrome } }),
+    present: [MOD, BIN_WIN, chrome, found],
+    env: { ProgramFiles: "C:\\PF", LOCALAPPDATA: "C:\\L" },
+  });
+  files.set(RESULT, JSON.stringify({ state: "ok", at: 3, action: "on", message: "" }));
+  const s = await loadSession(io);
+  assert.deepEqual(await readBrowserStatus(s, io), {
+    enabled: true, chrome, localChrome: chrome, modInstalled: true, binInstalled: true, chromeExists: true, found,
+    result: { state: "ok", at: 3, action: "on", message: "" }, problem: null,
+  });
+});
+
+test("readBrowserStatus: off by default; macOS paths; no result", async () => {
+  const chromium = "/Applications/Chromium.app/Contents/MacOS/Chromium";
+  const { io } = browserIo({ present: [chromium] });
+  io.platform = "macos";
+  const s = await loadSession(io);
+  assert.deepEqual(await readBrowserStatus(s, io), {
+    enabled: false, chrome: "", localChrome: null, modInstalled: false, binInstalled: false, chromeExists: false, found: chromium,
+    result: null, problem: null,
+  });
+});
+
+test("readBrowserStatus: a Chrome set in config/dock.json is the setting, but not this PC's local one", async () => {
+  const c = JSON.parse(text);
+  c.browser = { enabled: true, chrome: "/shared/chrome" };
+  const { io } = browserIo({ file: JSON.stringify(c, null, 2), present: ["/shared/chrome"] });
+  io.platform = "linux";
+  const st = await readBrowserStatus(await loadSession(io), io);
+  assert.equal(st.enabled, true);
+  assert.equal(st.chrome, "/shared/chrome");
+  assert.equal(st.localChrome, null);
+  assert.equal(st.chromeExists, true);
+  assert.equal(st.found, null);
+});
+
+test("readBrowserStatus: a probe that can't run says so and finds nothing", async () => {
+  for (const probe of ["throw", "fail"]) {
+    const { io } = browserIo({ probe, local: localText({}, { browser: { enabled: true } }) });
+    const st = await readBrowserStatus(await loadSession(io), io);
+    assert.equal(st.enabled, true);
+    assert.equal(st.modInstalled, false);
+    assert.equal(st.binInstalled, false);
+    assert.equal(st.found, null);
+    assert.match(st.problem, /couldn't check/);
+  }
+});
+
+test("readBrowserStatus: a read-only session goes by the applied regions", async () => {
+  const applied = JSON.parse(text).regions;
+  applied.left.hidden = false;
+  applied.right.features = [{ mod: "dock-browser" }];
+  const { io } = browserIo({ file: "{ nope", shared: { ...SHARED, "dock.config.applied": applied } });
+  const s = await loadSession(io);
+  assert.equal(s.readOnly, true);
+  assert.equal((await readBrowserStatus(s, io)).enabled, true);
+});
+
+test("loadSession: the install mode, and dock-browser listed only while the browser is on", async () => {
+  const off = browserIo({ mods: "files\ndock-browser\n" });
+  const s = await loadSession(off.io);
+  assert.equal(s.browserEnabled, false);
+  assert.ok(!s.inventory.some((i) => i.id === "dock-browser"));
+  const on = browserIo({ mods: "files\ndock-browser\n", local: localText({}, { browser: { enabled: true } }) });
+  const s2 = await loadSession(on.io);
+  assert.equal(s2.browserEnabled, true);
+  assert.equal(s2.inventory.find((i) => i.id === "dock-browser").installed, true);
+  const app = `${HOME}/mods/dock-core/config.json`;
+  const { io } = browserIo({ shared: { "dock.host": HOST }, extra: { [app]: text, [`${HOME}/mods/dock-core/source.json`]: JSON.stringify({ mode: "app" }) } });
+  assert.equal((await loadSession(io)).mode, "app");
+});
+
+test("setBrowser on: only the browser keys are written, unsaved edits stay unsaved, dock-browser joins the draft, the start is recorded and the tab opens", async () => {
+  const { io, files, writes, runs } = browserIo({ mods: "files\ndock-browser\n", local: localText({ top: { size: 50 } }, { note: "mine" }) });
+  let s = sized(await loadSession(io), 300);
+  s = { ...s, draft: applyEdit(s.draft, { type: "production", hosts: ["x.com"] }).draft };
+  const r = await setBrowser(s, io, set({ action: "on", chrome: "/c" }));
+  assert.equal(r.ran, true);
+  assert.equal(r.recorded, true);
+  assert.deepEqual(writes, [LOCAL, RESULT]);
+  assert.deepEqual(JSON.parse(files.get(LOCAL)), { v: 1, regions: { top: { size: 50 } }, note: "mine", browser: { enabled: true, chrome: "/c" } });
+  assert.equal(files.get(CFG), text);
+  assert.equal(r.session.opened, files.get(LOCAL));
+  assert.equal(r.session.notice, null);
+  assert.equal(r.session.error, null);
+  // The edits are still in the draft, unsaved; the browser is in the base and the draft.
+  assert.equal(r.session.draft.regions.left.size, 300);
+  assert.deepEqual(r.session.draft.production, ["x.com"]);
+  assert.equal(isDirty(r.session), true);
+  assert.deepEqual(r.session.draft.regions.right.features, [{ mod: "dock-browser" }]);
+  assert.deepEqual(r.session.baseDraft.regions.right.features, [{ mod: "dock-browser" }]);
+  assert.equal(r.session.baseDraft.regions.left.size, JSON.parse(text).regions.left.size);
+  assert.equal(r.session.browserEnabled, true);
+  assert.ok(r.session.inventory.some((i) => i.id === "dock-browser" && i.installed));
+  assert.deepEqual(JSON.parse(files.get(RESULT)), { state: "running", startedAt: 5, action: "on" });
+  assert.deepEqual(runs, [["tab.new", { name: "Set up the browser", folder: REPO, argv: ["npm", "run", "deploy"] }]]);
+  // A later Save writes the edits and keeps the browser block.
+  const saved = await saveSession(r.session, io);
+  assert.equal(saved.error, null);
+  const after = JSON.parse(files.get(LOCAL));
+  assert.equal(after.regions.left.size, 300);
+  assert.deepEqual(after.browser, { enabled: true, chrome: "/c", production: ["x.com"] });
+  assert.equal(isDirty(saved), false);
+});
+
+test("setBrowser: a local file changed on disk is refused like Save — rebased, the changed-on-disk notice, nothing run", async () => {
+  const { io, files, writes, runs } = browserIo({ local: localText({}) });
+  const s = sized(await loadSession(io), 300);
+  const hand = localText({ top: { size: 60 } });
+  files.set(LOCAL, hand);
+  const r = await setBrowser(s, io, set({ action: "on" }));
+  assert.equal(r.ran, false);
+  assert.equal(files.get(LOCAL), hand);
+  assert.match(r.session.notice, /changed on disk/);
+  assert.equal(r.session.opened, hand);
+  assert.equal(r.session.draft.regions.left.size, 300);
+  assert.equal(r.session.draft.regions.top.size, 60);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(runs, []);
+  assert.equal(files.has(RESULT), false);
+});
+
+test("setBrowser: a start result that can't be written still opens the tab, and says it wasn't recorded", async () => {
+  const { io, files, runs } = browserIo();
+  const write = io.writeTextFile;
+  io.writeTextFile = async (p, t, expected) => {
+    if (p === RESULT) throw new Error("No such file or directory");
+    return write(p, t, expected);
+  };
+  const r = await setBrowser(await loadSession(io), io, set({ action: "on" }));
+  assert.equal(r.ran, true);
+  assert.equal(r.recorded, false);
+  assert.equal(r.session.error, null);
+  assert.deepEqual(JSON.parse(files.get(LOCAL)), { v: 1, regions: {}, browser: { enabled: true } });
+  assert.equal(runs.length, 1);
+});
+
+test("setBrowser off: the Chrome passed through stays, dock-browser leaves the draft even from an edited right region", async () => {
+  const browser = { enabled: true, chrome: "/c", production: ["a.com"] };
+  const { io, files, runs } = browserIo({ mods: "files\ndock-browser\n", local: localText({}, { browser }) });
+  let s = await loadSession(io);
+  assert.deepEqual(s.draft.regions.right.features, [{ mod: "dock-browser" }]);
+  s = { ...s, draft: applyEdit(s.draft, { type: "place", mod: "files", region: "right" }).draft };
+  const r = await setBrowser(s, io, set({ action: "off", chrome: "/c" }));
+  assert.equal(r.ran, true);
+  assert.deepEqual(JSON.parse(files.get(LOCAL)).browser, { enabled: false, chrome: "/c", production: ["a.com"] });
+  assert.deepEqual(r.session.draft.regions.right.features, [{ mod: "files" }]);
+  assert.equal(r.session.browserEnabled, false);
+  assert.ok(!r.session.inventory.some((i) => i.id === "dock-browser"));
+  assert.equal(isDirty(r.session), true);
+  assert.deepEqual(JSON.parse(files.get(RESULT)), { state: "running", startedAt: 5, action: "off" });
+  assert.equal(runs.length, 1);
+});
+
+test("setBrowser setup: enabled stays on and the start is an on run", async () => {
+  const { io, files } = browserIo({ local: localText({}, { browser: { enabled: true } }) });
+  const r = await setBrowser(await loadSession(io), io, set({ action: "setup" }));
+  assert.equal(r.ran, true);
+  assert.deepEqual(JSON.parse(files.get(LOCAL)).browser, { enabled: true });
+  assert.equal(JSON.parse(files.get(RESULT)).action, "on");
+  assert.equal(isDirty(r.session), false);
+});
+
+test("setBrowser in an app install runs the shipped setup script from the app home", async () => {
+  const { io, runs } = browserIo();
+  const r = await setBrowser(await loadSession(io), io, set({ action: "on", mode: "app", repo: null }));
+  assert.equal(r.ran, true);
+  assert.deepEqual(runs, [["tab.new", { name: "Set up the browser", folder: HOME, argv: ["node", `${HOME}/mods/dock-browser/herdr-browser-setup.mjs`] }]]);
+});
+
+test("setBrowser writes and runs nothing when read-only, or a clone's folder is unknown", async () => {
+  const ro = browserIo({ file: "{ nope" });
+  const s = await loadSession(ro.io);
+  const r = await setBrowser(s, ro.io, set({ action: "on" }));
+  assert.equal(r.ran, false);
+  assert.equal(r.session, s);
+  assert.deepEqual(ro.writes, []);
+  const { io, writes, runs } = browserIo();
+  const r2 = await setBrowser(await loadSession(io), io, set({ action: "on", mode: null, repo: null }));
+  assert.equal(r2.ran, false);
+  assert.match(r2.session.error, /npm run deploy/);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(runs, []);
 });

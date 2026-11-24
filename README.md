@@ -413,13 +413,22 @@ bugs, checking layout at phone, tablet and desktop sizes, and acting on your des
 
 ### Turning it on
 
-- Set `"browser": { "enabled": true }` in your local file (`~/.config/herdr-app/herdr-dock/local.json`) or
-  `config/dock.json`, then run `npm run deploy` (a clone) or let the app recipe do it (an app install: `node
-  <app home>/mods/dock-browser/herdr-browser-setup.mjs`). Setup downloads the pinned `agent-browser` (~20 MB, checked
-  against a pinned checksum) into `<app home>/herdr-dock/browser/bin/` and, unless `chrome` points at a Chrome or
-  Chromium, Chrome for Testing (~150 MB). It writes the `dock-browser` skill to `~/.claude/skills`, `~/.codex/skills`
-  and, where it has a `skills` folder, `~/.gemini/config/skills`, so Claude Code, Codex and Antigravity know the
-  commands. `deploy --no-skills` skips the skills. Enabling adds the Browser panel to the end of the right region.
+- **In the Dock layout dialog** (Config UI says how to open it): its **Browser** section, below Updates, says what
+  turning it on downloads. Pick the Chrome to use (one found on this PC is preselected, or **Download Chrome for
+  Testing**) and click **Turn on**. It sets `browser.enabled` (and `chrome`) in this PC's local file at once, outside
+  the layout draft (unsaved layout edits stay unsaved), and opens a **Set up the browser** tab that runs the setup
+  (`npm run deploy` in a clone, `herdr-browser-setup.mjs` in an app install). The section shows it running, then
+  **On**, **Setup failed** with why (**Set up again**), or **Not available on this computer**. **Turn off** removes it
+  the same way. While it's on, **Production hosts** (below) is edited there and saved with **Save**. A local file
+  changed on disk since the dialog opened is never overwritten: you get the changed-on-disk message and nothing runs.
+- **Or by hand:** set `"browser": { "enabled": true }` in your local file
+  (`~/.config/herdr-app/herdr-dock/local.json`) or `config/dock.json`, then run `npm run deploy` (a clone) or let the
+  app recipe do it (an app install: `node <app home>/mods/dock-browser/herdr-browser-setup.mjs`). Either way, setup
+  downloads the pinned `agent-browser` (~20 MB, checked against a pinned checksum) into
+  `<app home>/herdr-dock/browser/bin/` and, unless `chrome` points at a Chrome or Chromium, Chrome for Testing
+  (~150 MB). It writes the `dock-browser` skill to `~/.claude/skills`, `~/.codex/skills` and, where it has a `skills`
+  folder, `~/.gemini/config/skills`, so Claude Code, Codex and Antigravity know the commands. `deploy --no-skills`
+  skips the skills. Enabling adds the Browser panel to the end of the right region.
 - Turning it off (`enabled: false`) removes the Browser panel, the skills and the downloaded binary. The signed-in
   profile file stays.
 - **Settings** (`browser`): `enabled` (default `false`), `chrome` (path to Chrome or Chromium; empty downloads one),

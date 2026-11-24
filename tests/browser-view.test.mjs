@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { browserRun, browserSection, chromeCandidates, parseHosts, withBrowserSetting } from "../src/mods/dock-config/browser-view.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  browserRun, browserSection, chosenChrome, chromeCandidates, chromeChoices, chromeName, clickedResult, parseHosts, parseProbe,
+  probeCommand, sectionCopy, withBrowserSetting,
+} from "../src/mods/dock-config/browser-view.js";
 import { ABANDON_MS, endResult, startResult } from "../src/shared/browser/setup-result.js";
 import { parseLocal } from "../src/shared/config.js";
 
@@ -156,4 +163,128 @@ test("chromeCandidates: every candidate, in order", () => {
   assert.deepEqual(chromeCandidates("win32"), []);
   assert.deepEqual(chromeCandidates("linux"), ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"]);
   assert.deepEqual(chromeCandidates("freebsd"), []);
+});
+
+test("clickedResult: a click whose start wasn't recorded runs until the file shows a newer run", () => {
+  const clicked = { at: t0, action: "on" };
+  assert.equal(clickedResult(null, null), null);
+  const ok = endResult("on", "ok", "", t0 - 5);
+  assert.equal(clickedResult(ok, null), ok);
+  // An older result (or none): the click counts as a run started then.
+  assert.deepEqual(clickedResult(null, clicked), startResult("on", t0));
+  assert.deepEqual(clickedResult(ok, clicked), startResult("on", t0));
+  assert.deepEqual(clickedResult(startResult("on", t0 - 1), { at: t0, action: "off" }), startResult("off", t0));
+  // A run that started, or ended, at or after the click is the file's own.
+  const started = startResult("on", t0 + 2);
+  assert.equal(clickedResult(started, clicked), started);
+  const ended = endResult("on", "failed", "x", t0 + 9);
+  assert.equal(clickedResult(ended, clicked), ended);
+  // An outcome with no time can't be placed after the click.
+  assert.deepEqual(clickedResult({ state: "ok", action: "on" }, clicked), startResult("on", t0));
+});
+
+test("clickedResult: the click is abandoned like any run, 15 minutes on", () => {
+  const r = clickedResult(null, { at: t0, action: "on" });
+  assert.equal(s({ result: r, now: t0 + ABANDON_MS - 1 }).state, "running");
+  assert.deepEqual(s({ result: r, now: t0 + ABANDON_MS }), { state: "failed", action: "setup", busy: false, message: "the setup tab was closed or stopped" });
+});
+
+test("chromeName: a readable name for a Chrome path", () => {
+  assert.equal(chromeName("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "Google Chrome");
+  assert.equal(chromeName("/Applications/Chromium.app/Contents/MacOS/Chromium"), "Chromium");
+  assert.equal(chromeName("/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"), "Google Chrome Canary");
+  assert.equal(chromeName("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"), "Google Chrome");
+  assert.equal(chromeName("/usr/bin/google-chrome-stable"), "Google Chrome");
+  assert.equal(chromeName("/usr/bin/chromium-browser"), "Chromium");
+  assert.equal(chromeName("/snap/bin/chromium"), "Chromium");
+  assert.equal(chromeName("/opt/brave/brave"), "brave");
+  assert.equal(chromeName(""), "");
+});
+
+test("chromeChoices: the settings' Chrome when it exists, else the one found, and always the download", () => {
+  const download = { value: null, label: "Download Chrome for Testing" };
+  const mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  assert.deepEqual(chromeChoices({ chrome: "", chromeExists: false, found: mac }), [{ value: mac, label: "Google Chrome (found on this PC)" }, download]);
+  assert.deepEqual(chromeChoices({ chrome: "/opt/c/chromium", chromeExists: true, found: mac }), [{ value: "/opt/c/chromium", label: "Chromium (from your settings)" }, download]);
+  assert.deepEqual(chromeChoices({ chrome: "/gone/chromium", chromeExists: false, found: mac }), [{ value: mac, label: "Google Chrome (found on this PC)" }, download]);
+  assert.deepEqual(chromeChoices({ chrome: "", chromeExists: false, found: null }), [download]);
+});
+
+test("chosenChrome: the person's pick while it is still offered, else the first choice", () => {
+  const mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const choices = chromeChoices({ chrome: "", chromeExists: false, found: mac });
+  assert.equal(chosenChrome(choices, undefined), mac);
+  assert.equal(chosenChrome(choices, null), null);
+  assert.equal(chosenChrome(choices, mac), mac);
+  assert.equal(chosenChrome(choices, "/gone"), mac);
+  assert.equal(chosenChrome(chromeChoices({ chrome: "", chromeExists: false, found: null }), mac), null);
+});
+
+const copy = (section, status = {}) => sectionCopy(section, { chrome: "", modInstalled: false, binInstalled: false, result: null, ...status });
+
+test("sectionCopy: the sketch's words in each state", () => {
+  assert.deepEqual(copy({ state: "off", action: "on", message: "" }), {
+    head: "○ Off", tone: "dim", intro: "Let agents open and drive a real browser beside the terminal.",
+    note: "Turning it on downloads agent-browser (~20 MB) and, without a Chrome, Chrome for Testing (~150 MB).",
+    button: { label: "Turn on", action: "on", primary: true }, chrome: true, hosts: false,
+  });
+  const on = copy({ state: "on", action: "off", message: "" }, { chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
+  assert.equal(on.head, "● On · Google Chrome");
+  assert.equal(on.tone, "ok");
+  assert.deepEqual(on.button, { label: "Turn off", action: "off", primary: false });
+  assert.equal(on.hosts, true);
+  assert.equal(on.chrome, false);
+  assert.equal(copy({ state: "on", action: "off", message: "" }).head, "● On · Chrome for Testing");
+  const notSetUp = copy({ state: "notSetUp", action: "setup", message: "" }, { modInstalled: true });
+  assert.equal(notSetUp.head, "● On · not set up (agent-browser missing)");
+  assert.deepEqual(notSetUp.button, { label: "Set up", action: "setup", primary: true });
+  assert.equal(copy({ state: "notSetUp", action: "setup", message: "" }, { binInstalled: true }).head, "● On · not set up (dock-browser missing)");
+  assert.equal(copy({ state: "notSetUp", action: "setup", message: "" }).head, "● On · not set up (dock-browser and agent-browser missing)");
+});
+
+test("sectionCopy: running says which way and where to look, with no button", () => {
+  const up = copy({ state: "running", action: null, message: "" }, { result: startResult("on", t0) });
+  assert.equal(up.head, 'Setting up… see the "Set up the browser" tab');
+  assert.equal(up.button, null);
+  assert.equal(up.hosts, false);
+  assert.equal(copy({ state: "running", action: null, message: "" }, { result: startResult("off", t0) }).head, 'Turning off… see the "Set up the browser" tab');
+});
+
+test("sectionCopy: failed shows its message, or where to look when it has none; unsupported says so", () => {
+  const failed = copy({ state: "failed", action: "setup", message: "Chrome couldn't be set up" });
+  assert.equal(failed.head, "Setup failed: Chrome couldn't be set up");
+  assert.equal(failed.tone, "bad");
+  assert.deepEqual(failed.button, { label: "Set up again", action: "setup", primary: true });
+  assert.equal(copy({ state: "failed", action: "setup", message: "" }).head, 'Setup failed — see the "Set up the browser" tab');
+  assert.deepEqual(copy({ state: "failed", action: "off", message: "x" }).button, { label: "Turn off", action: "off", primary: false });
+  const unsupported = copy({ state: "unsupported", action: "off", message: "no agent-browser build for this computer" });
+  assert.equal(unsupported.head, "Not available on this computer");
+  assert.equal(unsupported.note, "no agent-browser build for this computer");
+  assert.deepEqual(unsupported.button, { label: "Turn off", action: "off", primary: false });
+});
+
+test("probeCommand runs in node and says which paths exist and what the named variables hold", () => {
+  const dir = mkdtempSync(join(tmpdir(), "probe-"));
+  try {
+    mkdirSync(join(dir, "mod"));
+    writeFileSync(join(dir, "bin"), "x");
+    const paths = [join(dir, "mod"), join(dir, "bin"), join(dir, "no such"), join(dir, "-x")];
+    const { command, args } = probeCommand(["PROBE_SET", "PROBE_UNSET"], paths);
+    assert.equal(command, "node");
+    const stdout = execFileSync(process.execPath, args, { env: { ...process.env, PROBE_SET: "C:\\PF" }, encoding: "utf8" });
+    const p = parseProbe(stdout, paths);
+    assert.deepEqual(p.env, { PROBE_SET: "C:\\PF", PROBE_UNSET: null });
+    assert.deepEqual(paths.map((x) => p.exists(x)), [true, true, false, false]);
+    const none = probeCommand([], []);
+    assert.deepEqual(parseProbe(execFileSync(process.execPath, none.args, { encoding: "utf8" }), []).env, {});
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseProbe: junk is null", () => {
+  assert.equal(parseProbe("", []), null);
+  assert.equal(parseProbe("{nope", []), null);
+  assert.equal(parseProbe('{"env":{}}', ["/a"]), null);
+  assert.equal(parseProbe('{"env":{},"exists":[true]}', ["/a", "/b"]), null);
 });
