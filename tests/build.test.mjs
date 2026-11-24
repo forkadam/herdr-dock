@@ -374,6 +374,17 @@ test("deploy records the browser setup: ok when it is on, ok with action off whe
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
+test("deploy: a configured Chrome that isn't there is recorded failed, and the exit code stays 0", () => {
+  const tmp = tmpHome();
+  try {
+    browserReadyHome(tmp, { enabled: true, chrome: join(tmp, "no-such-chrome") });
+    const r = run(["--app-home", tmp, "--no-skills", "--no-statusline"], { DOCK_SKIP_CHECK: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const res = setupResult(tmp);
+    assert.deepEqual({ ...res, at: typeof res.at }, { state: "failed", at: "number", action: "on", message: "the Chrome set in browser.chrome was not found" });
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
 test("deploy that stops before the browser step leaves a failed result, not a running one", () => {
   const tmp = tmpHome();
   try {

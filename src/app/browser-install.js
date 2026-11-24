@@ -25,6 +25,8 @@ import { browserSettings } from "./browser-settings.js";
 export const SKILL_MARK = "<!-- herdr-dock: dock-browser -->";
 const SKILL_DIR = "dock-browser";
 const CHROME_MARKER = `${BROWSER_REL}/chrome-installed`;
+// What a setup result says when browser.chrome points at a Chrome that isn't there (ensureChrome -> "missing").
+export const MISSING_CHROME = "the Chrome set in browser.chrome was not found";
 
 // {name, integrity, member} for this platform and CPU, or null when agent-browser has no build for it.
 export function pinFor(platform, arch) {
@@ -209,7 +211,9 @@ export async function main(argv, deps = {}) {
       io.err(message);
       return finish("failed", message, 1);
     } else installSkills({ targets, text: skillText(template, { browse: join(appHome, "mods/dock-browser/browse.mjs") }), dry: check, say });
-    return c === "failed" ? finish("failed", "Chrome couldn't be set up", 1) : finish("ok", "", 0);
+    if (c === "failed") return finish("failed", "Chrome couldn't be set up", 1);
+    // A configured chrome that isn't there is recorded as failed; the exit code stays 0 (the warning is printed).
+    return c === "missing" ? finish("failed", MISSING_CHROME, 0) : finish("ok", "", 0);
   } catch (e) {
     io.err(`browser setup failed: ${e.message}`);
     return finish("failed", String(e.message).split("\n")[0], 1);

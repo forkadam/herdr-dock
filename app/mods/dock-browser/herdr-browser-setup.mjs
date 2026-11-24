@@ -266,6 +266,7 @@ function browserSettings(home) {
 var SKILL_MARK = "<!-- herdr-dock: dock-browser -->";
 var SKILL_DIR = "dock-browser";
 var CHROME_MARKER = `${BROWSER_REL}/chrome-installed`;
+var MISSING_CHROME = "the Chrome set in browser.chrome was not found";
 function pinFor(platform, arch) {
   return pins_default.packages[`${platform}-${arch}`] ?? null;
 }
@@ -453,7 +454,8 @@ async function main(argv, deps = {}) {
       io.err(message);
       return finish("failed", message, 1);
     } else installSkills({ targets, text: skillText(template, { browse: join2(appHome, "mods/dock-browser/browse.mjs") }), dry: check, say });
-    return c === "failed" ? finish("failed", "Chrome couldn't be set up", 1) : finish("ok", "", 0);
+    if (c === "failed") return finish("failed", "Chrome couldn't be set up", 1);
+    return c === "missing" ? finish("failed", MISSING_CHROME, 0) : finish("ok", "", 0);
   } catch (e) {
     io.err(`browser setup failed: ${e.message}`);
     return finish("failed", String(e.message).split("\n")[0], 1);
@@ -465,6 +467,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   });
 }
 export {
+  MISSING_CHROME,
   SKILL_MARK,
   ensureChrome,
   installAgentBrowser,

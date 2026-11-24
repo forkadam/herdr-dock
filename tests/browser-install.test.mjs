@@ -297,6 +297,17 @@ test("main: a Chrome step that fails records `failed` (exit 1)", async () => {
   });
 });
 
+test("main: a configured Chrome that isn't there records `failed` but still exits 0", async () => {
+  const home = appHome({ enabled: true });
+  writeFileSync(join(home, "herdr-dock/local.json"), JSON.stringify({ v: 1, browser: { enabled: true, chrome: join(home, "no-such-chrome") } }));
+  const { tgz, integrity } = fakeDownload();
+  await withPin(integrity, async () => {
+    const code = await main(["--app-home", home, "--no-skills"], { env: envFor(home), io: sink().io, fetchBytes: async () => tgz, run: () => { throw new Error("ran"); }, template, platform: "linux", arch: "x64", now: () => 5 });
+    assert.equal(code, 0);
+    assert.deepEqual(resultOf(home), { state: "failed", at: 5, action: "on", message: "the Chrome set in browser.chrome was not found" });
+  });
+});
+
 test("main: a thrown error records `failed` with its first line", async () => {
   const home = appHome({ enabled: true });
   await main(["--app-home", home], { env: envFor(home), io: sink().io, fetchBytes: async () => { throw new Error("first line\nsecond line"); }, template, platform: "linux", arch: "x64", now: () => 9 });

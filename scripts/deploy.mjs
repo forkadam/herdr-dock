@@ -14,7 +14,7 @@ import { AGY_MARK } from "../src/shared/statusline.js";
 import { browserOf } from "../src/shared/browser/config.js";
 import { BROWSER_REL, binRel } from "../src/shared/browser/session.js";
 import { endResult, startResult } from "../src/shared/browser/setup-result.js";
-import { ensureChrome, installAgentBrowser, installSkills, removeBrowser, removeSkills, skillTargets, skillText, writeSetupResult } from "../src/app/browser-install.js";
+import { MISSING_CHROME, ensureChrome, installAgentBrowser, installSkills, removeBrowser, removeSkills, skillTargets, skillText, writeSetupResult } from "../src/app/browser-install.js";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
@@ -186,10 +186,11 @@ try {
     if (r === "unsupported") outcome = ["unsupported", "no agent-browser build for this computer"];
     else {
       // A browser that can't start is a failed deploy, even though everything else went in.
-      if (ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say }) === "failed") {
+      const chrome = ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say });
+      if (chrome === "failed") {
         process.exitCode = 1;
         outcome = ["failed", "Chrome couldn't be set up"];
-      }
+      } else if (chrome === "missing") outcome = ["failed", MISSING_CHROME]; // recorded only: the exit code stays 0
       if (noSkills) console.log("--no-skills: not writing the dock-browser skill");
       else {
         const template = readFileSync(join(ROOT, "src/app/browser-skill.md"), "utf8");
