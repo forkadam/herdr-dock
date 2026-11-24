@@ -134,6 +134,10 @@ export const chosenChrome = (choices, pick) => (choices.some((c) => c.value === 
 // (merged without this PC's file) sets one, so the download wins in the merge, else null (no chrome key).
 export const turnOnChrome = (pick, sharedChrome) => (typeof pick === "string" ? pick : sharedChrome ? "" : null);
 
+// Whether the dialog's poll tick re-reads the status: only while a setup runs (the section's state) and no read is
+// under way.
+export const pollDue = ({ state, reading }) => state === "running" && !reading;
+
 const button = (label, action, primary) => ({ label, action, primary });
 
 // What the section says for browserSection's `section`, given the status (the merged chrome, which files are there,

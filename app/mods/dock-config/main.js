@@ -611,6 +611,7 @@ function chromeChoices({ chrome, chromeExists, found }) {
 }
 var chosenChrome = (choices, pick) => choices.some((c) => c.value === pick) ? pick : choices[0].value;
 var turnOnChrome = (pick, sharedChrome) => typeof pick === "string" ? pick : sharedChrome ? "" : null;
+var pollDue = ({ state, reading }) => state === "running" && !reading;
 var button = (label2, action, primary) => ({ label: label2, action, primary });
 function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
   const out = { head: "", tone: "dim", intro: "", note: "", button: null, secondary: null, chrome: false, hosts: false };
@@ -1173,7 +1174,6 @@ var DockConfig = class extends View {
     this.addOpen = null;
     this.browser = null;
     this.clicked = null;
-    this.poll = null;
     this.reading = false;
     this.browserDoing = null;
     this.readAgain = false;
@@ -1199,6 +1199,9 @@ var DockConfig = class extends View {
       this.browser = CHECK_BROWSER;
       return;
     }
+    cx.timer.every(BROWSER_POLL_MS, (cx2) => {
+      if (pollDue({ state: this.browserModel()?.section.state, reading: this.reading })) cx2.spawn(async (cx3) => this.readBrowser(cx3));
+    });
     cx.spawn(async (cx2) => {
       try {
         this.session = await loadSession(makeIo());
@@ -1347,7 +1350,7 @@ var DockConfig = class extends View {
     const mode = this.session?.mode ?? shared(UPDATE_KEY)?.mode ?? (repo ? "clone" : null);
     return mode === "app" || repo ? { mode, repo } : null;
   }
-  // Reads the status (again, when asked during a read), and keeps re-reading it every few seconds while a setup runs.
+  // Reads the status (again, when asked during a read). The init timer re-reads it while a setup runs.
   async readBrowser(cx) {
     if (!this.session) return;
     if (this.reading) {
@@ -1365,12 +1368,6 @@ var DockConfig = class extends View {
       console.log(`dock-config: browser status not read: ${e?.message ?? e}`);
     } finally {
       this.reading = false;
-    }
-    const running = this.browserModel()?.section.state === "running";
-    if (running && !this.poll) this.poll = cx.timer.every(BROWSER_POLL_MS, (cx2) => cx2.spawn(async (cx3) => this.readBrowser(cx3)));
-    if (!running && this.poll) {
-      this.poll.cancel();
-      this.poll = null;
     }
     cx.notify();
   }

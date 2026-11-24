@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserRun, browserSection, chosenChrome, chromeCandidates, chromeChoices, chromeName, clickedResult, parseHosts, parseProbe,
-  probeCommand, sectionCopy, turnOnChrome, withBrowserSetting,
+  pollDue, probeCommand, sectionCopy, turnOnChrome, withBrowserSetting,
 } from "../src/mods/dock-config/browser-view.js";
 import { ABANDON_MS, endResult, startResult } from "../src/shared/browser/setup-result.js";
 import { parseLocal } from "../src/shared/config.js";
@@ -282,6 +282,12 @@ test("turnOnChrome: the pick wins — a path, or the download, which overrides a
   assert.equal(turnOnChrome(null, ""), null);
   assert.equal(turnOnChrome(null, null), null);
   assert.equal(turnOnChrome(null, undefined), null);
+});
+
+test("pollDue: a tick re-reads the status only while a setup runs and no read is under way", () => {
+  assert.equal(pollDue({ state: "running", reading: false }), true);
+  assert.equal(pollDue({ state: "running", reading: true }), false);
+  for (const state of ["off", "on", "failed", "unsupported", "notSetUp", undefined]) assert.equal(pollDue({ state, reading: false }), false, String(state));
 });
 
 test("probeCommand runs in node and says which paths exist and what the named variables hold", () => {

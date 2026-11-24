@@ -18,7 +18,7 @@ import { slashPath } from "../../shared/path.js";
 import { UPDATE_KEY } from "../../shared/update.js";
 import { isDirty, loadSession, readBrowserStatus, resetSession, saveSession, setBrowser } from "./session.js";
 import { browserSectionView } from "./browser-section.js";
-import { browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, sectionCopy, turnOnChrome } from "./browser-view.js";
+import { browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, pollDue, sectionCopy, turnOnChrome } from "./browser-view.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
@@ -56,7 +56,6 @@ export default class DockConfig extends View {
     this.addOpen = null; // the region whose "+ Add mod" list is open
     this.browser = null; // the Browser section's status (readBrowserStatus), null until read
     this.clicked = null; // { at, action }: a click whose start the result file didn't get (clickedResult)
-    this.poll = null; // re-reads the status while a setup runs
     this.reading = false; // a status read is under way
     this.browserDoing = null; // the browser action being written ("on" | "off" | "setup")
     this.readAgain = false; // ...and another was asked for meanwhile
@@ -83,6 +82,10 @@ export default class DockConfig extends View {
       this.browser = CHECK_BROWSER;
       return;
     }
+    // While a setup runs, the status is re-read every few seconds (the Running → On / Failed flip).
+    cx.timer.every(BROWSER_POLL_MS, (cx) => {
+      if (pollDue({ state: this.browserModel()?.section.state, reading: this.reading })) cx.spawn(async (cx) => this.readBrowser(cx));
+    });
     cx.spawn(async (cx) => {
       try {
         this.session = await loadSession(makeIo());
@@ -253,7 +256,7 @@ export default class DockConfig extends View {
     return mode === "app" || repo ? { mode, repo } : null;
   }
 
-  // Reads the status (again, when asked during a read), and keeps re-reading it every few seconds while a setup runs.
+  // Reads the status (again, when asked during a read). The init timer re-reads it while a setup runs.
   async readBrowser(cx) {
     if (!this.session) return;
     if (this.reading) {
@@ -271,12 +274,6 @@ export default class DockConfig extends View {
       console.log(`dock-config: browser status not read: ${e?.message ?? e}`);
     } finally {
       this.reading = false;
-    }
-    const running = this.browserModel()?.section.state === "running";
-    if (running && !this.poll) this.poll = cx.timer.every(BROWSER_POLL_MS, (cx) => cx.spawn(async (cx) => this.readBrowser(cx)));
-    if (!running && this.poll) {
-      this.poll.cancel();
-      this.poll = null;
     }
     cx.notify();
   }
