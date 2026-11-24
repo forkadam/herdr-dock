@@ -63,3 +63,119 @@ test("parseProjects", () => {
   assert.deepEqual(parseProjects("x").warnings, ["projects: not a map of project key to folder"]);
   assert.deepEqual(parseProjects(undefined), { projects: {}, warnings: [] });
 });
+
+// ---- Task 2: the probe, the plain Start's place, the picker's choices and keys ----
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { folderProbe, parseFolderProbe, pickerChoices, pickerKey, probePaths, startPlace, tildePath } from "../src/shared/jira/start-in.js";
+
+const runProbe = (paths, env) => {
+  const { command, args } = folderProbe(paths);
+  return execFileSync(command === "node" ? process.execPath : command, args, { env, encoding: "utf8" });
+};
+test("folderProbe: one node run learns home (HOME, else USERPROFILE) and which paths are folders, ~ expanded", () => {
+  const h = realpathSync(mkdtempSync(join(tmpdir(), "start-in-")));
+  try {
+    mkdirSync(join(h, "code", "app"), { recursive: true });
+    writeFileSync(join(h, "file.txt"), "x");
+    const paths = ["~/code/app", "~", "~/code/none", join(h, "code"), join(h, "file.txt"), "code/app", "~other/code"];
+    const out = parseFolderProbe(runProbe(paths, { HOME: h }), paths);
+    assert.equal(out.home, h);
+    // A file is not a folder; a relative path or ~user is never one (nothing is guessed).
+    assert.deepEqual(paths.map((p) => out.exists(p)), [true, true, false, true, false, false, false]);
+    const win = parseFolderProbe(runProbe(["~/code/app"], { USERPROFILE: h }), ["~/code/app"]);
+    assert.equal(win.home, h);
+    assert.equal(win.exists("~/code/app"), true);
+    // No home at all: a ~ path is not a folder, an absolute one still is.
+    const none = parseFolderProbe(runProbe(["~/code/app", join(h, "code")], {}), ["~/code/app", join(h, "code")]);
+    assert.equal(none.home, null);
+    assert.deepEqual([none.exists("~/code/app"), none.exists(join(h, "code"))], [false, true]);
+    // Nothing to check still answers home.
+    assert.equal(parseFolderProbe(runProbe([], { HOME: h }), []).home, h);
+  } finally {
+    rmSync(h, { recursive: true, force: true });
+  }
+});
+test("parseFolderProbe: anything but the probe's answer for these paths is null (a failed probe: nothing exists)", () => {
+  assert.equal(parseFolderProbe("", ["/a"]), null);
+  assert.equal(parseFolderProbe("oops", ["/a"]), null);
+  assert.equal(parseFolderProbe(JSON.stringify({ home: "/h", exists: [] }), ["/a"]), null);
+  assert.equal(parseFolderProbe(JSON.stringify([true]), ["/a"]), null);
+  const p = parseFolderProbe(JSON.stringify({ home: "", exists: [true, "yes"] }), ["/a", "/b"]);
+  assert.equal(p.home, null);
+  assert.deepEqual([p.exists("/a"), p.exists("/b"), p.exists("/c")], [true, false, false]);
+});
+test("tildePath: home as ~, below it ~/…, the rest as is", () => {
+  assert.equal(tildePath("/home/u", "/home/u"), "~");
+  assert.equal(tildePath("/home/u/code/app", "/home/u/"), "~/code/app");
+  assert.equal(tildePath("/home/uu/x", "/home/u"), "/home/uu/x");
+  assert.equal(tildePath("/x", null), "/x");
+});
+test("probePaths: the ticket's remembered folder, its parent's and its project's, as written, no repeats", () => {
+  const o = { remembered: { "ABC-2": "/home/u/code/other", "ABC-1": "/home/u/code/app" }, projects: { ABC: "~/code/app/" } };
+  assert.deepEqual(probePaths({ key: "ABC-2", project: "ABC", parent: { key: "ABC-1" } }, o), ["/home/u/code/other", "/home/u/code/app", "~/code/app"]);
+  assert.deepEqual(probePaths({ key: "ABC-9", project: "ABC", parent: null }, { remembered: {}, projects: { ABC: "/home/u/code/app" } }), ["/home/u/code/app"]);
+  assert.deepEqual(probePaths({ key: "XYZ-1", project: "XYZ" }, o), []);
+});
+
+const probeOf = (home, there) => ({ home, exists: (p) => there.includes(p) });
+test("startPlace: the remembered or mapped folder when it is a folder here, with the space working in it; else null", () => {
+  const remembered = { "ABC-1": "/home/u/code/tools" };
+  const projects = { ABC: "~/code/app" };
+  const o = { remembered, projects, spaces, panes, shownSpace: "s3" };
+  const all = probeOf(home, ["/home/u/code/tools", "~/code/app"]);
+  assert.deepEqual(startPlace({ key: "ABC-1", project: "ABC" }, { ...o, probe: all }),
+    { folder: "/home/u/code/tools", source: "remembered", space: spaces[1] });
+  assert.deepEqual(startPlace({ key: "ABC-2", project: "ABC" }, { ...o, probe: all }),
+    { folder: "/home/u/code/app", source: "mapped", space: spaces[2] }, "the shown space wins");
+  // A remembered folder gone from this PC asks, even with the project mapped: never guessed.
+  assert.equal(startPlace({ key: "ABC-1", project: "ABC" }, { ...o, probe: probeOf(home, ["~/code/app"]) }), null);
+  assert.equal(startPlace({ key: "XYZ-1", project: "XYZ" }, { ...o, probe: all }), null, "an unmapped project asks");
+  assert.equal(startPlace({ key: "ABC-2", project: "ABC" }, { ...o, probe: null }), null, "a failed probe asks");
+  // Home unknown: an unexpanded ~ never reaches Herdr, whatever the probe said.
+  assert.equal(startPlace({ key: "ABC-2", project: "ABC" }, { ...o, probe: { home: null, exists: () => true } }), null);
+  // No space works there: no space (openCommand makes one).
+  const far = startPlace({ key: "ABC-3", project: "ABC" }, { ...o, projects: { ABC: "/srv/repo" }, probe: probeOf(home, ["/srv/repo"]) });
+  assert.deepEqual(far, { folder: "/srv/repo", source: "mapped", space: null });
+});
+test("pickerChoices: the mapped folder first when it is here, the suggestion preselected, Here", () => {
+  const o = { spaces, panes, here: "/home/u/code/tools/" };
+  const mapped = pickerChoices({ key: "ABC-2", project: "ABC" }, { ...o, remembered: {}, projects: { ABC: "~/code/zed" }, probe: probeOf(home, ["~/code/zed"]) });
+  assert.deepEqual(mapped.rows.map((r) => r.folder), ["/home/u/code/zed", "/home/u/code/app", "/home/u/code", "/home/u/code/app/src", "/home/u/code/tools"]);
+  assert.equal(mapped.selected, 0);
+  assert.deepEqual(mapped.here, { folder: "/home/u/code/tools", path: "~/code/tools" });
+  // The mapped folder missing: no row for it, nothing suggested (the first row).
+  const gone = pickerChoices({ key: "ABC-2", project: "ABC" }, { ...o, remembered: {}, projects: { ABC: "~/code/zed" }, probe: probeOf(home, []) });
+  assert.ok(!gone.rows.some((r) => r.folder === "/home/u/code/zed"));
+  assert.equal(gone.selected, 0);
+  // A sub-task: its parent's remembered folder is preselected; with no space in it, it gets a row after the mapped one.
+  const sub = pickerChoices({ key: "ABC-3", project: "ABC", parent: { key: "ABC-1" } },
+    { ...o, remembered: { "ABC-1": "/home/u/code/lib" }, projects: { ABC: "~/code/zed" }, probe: probeOf(home, ["/home/u/code/lib", "~/code/zed"]) });
+  assert.deepEqual(sub.rows.slice(0, 2).map((r) => r.folder), ["/home/u/code/zed", "/home/u/code/lib"]);
+  assert.deepEqual(sub.rows[1], { folder: "/home/u/code/lib", label: "lib", path: "~/code/lib", spaces: [] });
+  assert.equal(sub.selected, 1);
+  // Its own remembered folder gone: the next suggestion (the parent's) that is here; one a space is in is not repeated.
+  const own = pickerChoices({ key: "ABC-3", project: "ABC", parent: { key: "ABC-1" } },
+    { ...o, remembered: { "ABC-3": "/home/u/gone", "ABC-1": "/home/u/code/tools" }, projects: {}, probe: probeOf(home, ["/home/u/code/tools"]) });
+  assert.equal(own.rows.filter((r) => r.folder === "/home/u/code/tools").length, 1);
+  assert.equal(own.rows[own.selected].folder, "/home/u/code/tools");
+  // A failed probe: the spaces' folders only (home not known, so not left out), the first selected; Here as Herdr says.
+  const failed = pickerChoices({ key: "ABC-2", project: "ABC" }, { ...o, remembered: {}, projects: { ABC: "~/code/zed" }, probe: null });
+  assert.ok(failed.rows.some((r) => r.folder === "/home/u"));
+  assert.ok(!failed.rows.some((r) => r.folder.includes("zed")));
+  assert.equal(failed.selected, 0);
+  assert.deepEqual(failed.here, { folder: "/home/u/code/tools", path: "/home/u/code/tools" });
+  // No focused terminal folder: Here has none (the tab opens where Herdr opens it, as before).
+  assert.equal(pickerChoices({ key: "ABC-2" }, { spaces: [], panes: [], probe: null, here: null }).here, null);
+});
+test("pickerKey: arrows move within the list, Enter picks, Escape closes; other keys are not the picker's", () => {
+  assert.deepEqual(pickerKey("down", 0, 3), { selected: 1 });
+  assert.deepEqual(pickerKey("down", 2, 3), { selected: 2 });
+  assert.deepEqual(pickerKey("up", 0, 3), { selected: 0 });
+  assert.deepEqual(pickerKey("up", 2, 3), { selected: 1 });
+  assert.deepEqual(pickerKey("enter", 1, 3), { pick: 1 });
+  assert.deepEqual(pickerKey("escape", 1, 3), { close: true });
+  assert.equal(pickerKey("x", 1, 3), null);
+});

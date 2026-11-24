@@ -5,7 +5,7 @@
 // tested under src/shared/jira/; this file draws and keeps state.
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
-import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared, shared, theme, window, writeTextFile } from "herdr";
+import { appHome, checking, exec, focused, nextCommand, panes, pickFolder, props, readTextFile, run, setShared, shared, spaces, theme, window, writeTextFile } from "herdr";
 import { pageShown, showTerminal } from "../_page.js";
 import { createClient } from "../../shared/jira/client.js";
 import {
@@ -20,6 +20,7 @@ import {
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
 import { attentionLine, chipOf, chipWidth, severityFields, severityRow, tint } from "../../shared/jira/severity.js";
+import { folderProbe, normPath, openCommand, parseFolderProbe, pickerChoices, pickerKey, probePaths, remember, spaceFor, startPlace } from "../../shared/jira/start-in.js";
 import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import {
@@ -30,6 +31,7 @@ import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 import { briefView, changeView } from "./brief-view.js";
 import { sprintBoard } from "./sprint-view.js";
+import { startPicker } from "./start-picker.js";
 import { tabBar } from "./tabs.js";
 
 const MOD = "dock-jira";
@@ -41,6 +43,9 @@ const LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 // page was one list): All starts on All my issues.
 const FILTER_KEY = "dock.jira.filter.all";
 const READ_KEY = "dock.jira.read"; // the brief's read marks (brief.js): { [key]: { changed?, sprint?, bug? } }
+// The folders tickets' work starts in, picked with Remember for this ticket: { [key]: folder } (start-in.js remember:
+// normalised folders, the newest few hundred).
+const START_IN_KEY = "dock.jira.startIn";
 // Your unresolved issues, for the parents of your sub-tasks (the brief's Changed, and {mine} in Check against my work).
 const SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 const TICK_MS = 30000;
@@ -139,6 +144,14 @@ export default class Jira extends View {
     this.dropChoice = null; // { row, status, transitions }: shown in the column dropped on
     this.dropNote = null; // { status, text }: why a drop on a dimmed column did nothing, in that column
     this.pendingStep = null; // { key, tr, field, url }: a move waiting for a value (Resolution), in the detail pane
+    // Where Start work and Finish open (openWork): the picker drawn over the page (start-picker.js) when the ticket's
+    // folder isn't known here, or for Start in…: { action: "start" | "finish", issue: { key, project, parent }, work
+    // (startWork's or finishWork's tab.new: its name and task), home (the probe's; null: unknown), rows and here
+    // (pickerChoices), selected (an index into the rows, then Here, then Other folder…), remember (the box), choosing
+    // (Herdr's folder dialog is open over it) }. The newest Start or Finish wins (workSeq); the keys go to pickerFocus.
+    this.picker = null;
+    this.pickerFocus = cx.focus_handle();
+    this.workSeq = latestOnly();
 
     // Each tab's scroll positions (its list, its board, each board column), so switching back finds them where they
     // were: handles from the pool, given out by key as scrollers are first drawn ("<tab>/list", "<tab>/board",
@@ -187,18 +200,21 @@ export default class Jira extends View {
 
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, the tabs
   // (tab-next, tab-prev, tab-<id>), and on the open issue: status (its status menu), assign (to me), comment (the
-  // cursor into the comment box), start (Start work), finish (Finish, when an action rule gives one).
+  // cursor into the comment box), start (Start work), start-in (Start work, always asking where: the picker), finish
+  // (Finish, when an action rule gives one). Close closes the picker first, when it is open.
   command(c, cx) {
     if (c === "status") { if (this.detail) this.openTransitions(!this.transOpen, cx); return; }
     if (c === "assign") { if (canAssignToMe(this.detail, this.me)) this.assignMe(cx); return; }
     if (c === "comment") { if (this.detail) this.commentInput.focus(); return; }
     if (c === "start") { if (this.detail) this.startWork(this.detail, cx); return; }
+    if (c === "start-in") { if (this.detail) this.startWork(this.detail, cx, true); return; }
     if (c === "finish") { if (this.detail) this.finishWork(this.detail, cx); return; }
     if (c === "tab-next" || c === "tab-prev") { this.showTab(stepTab(this.tabs(), this.tab().id, c === "tab-next" ? 1 : -1), cx); return; }
     if (c.startsWith("tab-")) { const id = c.slice(4); if (this.tabs().some((x) => x.id === id)) this.showTab(id, cx); return; }
     if (c === "list" || c === "board") setShared(LAYOUT_KEY(this.tab().id), c);
     else if (c === "refresh") cx.spawn(async (cx) => this.reload(cx));
     else if (c === "settings") this.openSettings(cx);
+    else if (c === "close" && this.picker) this.picker = null;
     else if (c === "close") { if (this.editing) { this.editing = false; this.formError = null; } else { this.selected = null; this.detail = null; } }
     else if (c === "next" || c === "prev") {
       const order = this.visibleOrder();
@@ -1124,32 +1140,153 @@ export default class Jira extends View {
   }
 
   // Start work: a Claude tab named after the issue, with the message of its flow (the `start` of the first action rule
-  // that matches it, else the settings' Start-work message); then the terminal comes to the front. From a list row, a
-  // template that uses {description} first fetches the full issue (rows don't carry it).
-  startWork(issue, cx) {
+  // that matches it, else the settings' Start-work message), in the ticket's folder (openWork); then the terminal
+  // comes to the front. From a list row, a template that uses {description} first fetches the full issue (rows don't
+  // carry it). `ask`: Start in…, the picker whatever is remembered or mapped.
+  startWork(issue, cx, ask = false) {
     const template = startTemplate(this.options.actions, issue, this.jira?.settings.startTask);
     if (issue && !("description" in issue) && needsDetail(template)) {
-      if (this.detail?.key === issue.key) { this.startWork(this.detail, cx); return; }
+      if (this.detail?.key === issue.key) { this.startWork(this.detail, cx, ask); return; }
       cx.spawn(async (cx) => {
         const r = await this.client(cx).issue(issue.key);
-        if (r.ok) this.startWork(issueDetail(r.data, this.jira.settings.baseUrl), cx);
+        if (r.ok) this.startWork(issueDetail(r.data, this.jira.settings.baseUrl), cx, ask);
         else { this.actionMsg = { ok: false, message: `Couldn't start ${issue.key}: ${r.problem.message}` }; cx.notify(); }
       });
       return;
     }
     const c = startWork(issue, template);
     if (!c) return;
-    try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; return; }
-    showTerminal();
+    this.openWork("start", issue, c, cx, ask);
   }
 
   // Finish: a Claude tab named "<key> finish" with the `finish` message of the issue's flow (the detail has the
-  // description already); then the terminal. Nothing in Jira changes: the skill it names does that, step by step.
+  // description already), in the ticket's folder as Start work's (openWork; no Finish in…); then the terminal.
+  // Nothing in Jira changes: the skill it names does that, step by step.
   finishWork(issue, cx) {
     const c = finishWork(issue, this.options.actions);
     if (!c) return;
+    this.openWork("finish", issue, c, cx, false);
+  }
+
+  // Where a Start or Finish tab (`c`, startWork's or finishWork's tab.new) opens (start-in.js): the folder remembered
+  // for the ticket, else its project's folder in the settings' `projects`, when it is a folder on this PC, as a new tab
+  // in the space already working there (else a new space on it); else, and always with `ask`, the picker. One node
+  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks).
+  openWork(action, issue, c, cx, ask) {
+    const target = { key: issue.key, project: issue.project ?? null, parent: issue.parent ?? null };
+    const seq = this.workSeq.next();
+    cx.spawn(async (cx) => {
+      const remembered = this.rememberedFolders();
+      const projects = this.options.projects;
+      const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
+      if (!this.workSeq.accept(seq)) return;
+      const live = { spaces: spaces(), panes: panes() };
+      const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace: focused()?.space ?? null });
+      if (place) {
+        this.picker = null;
+        this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx);
+        return;
+      }
+      const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: focused()?.cwd ?? null });
+      this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, remember: false, choosing: false };
+      this.focusPicker();
+      cx.notify();
+    });
+  }
+
+  rememberedFolders() {
+    const m = shared(START_IN_KEY);
+    return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+  }
+
+  // The probe's answer (start-in.js folderProbe: { home, exists(path) }), or null when node couldn't run or answered
+  // something else.
+  async probeFolders(paths) {
+    const { command, args } = folderProbe(paths);
+    try {
+      const r = await exec(command, args);
+      return r.code === 0 ? parseFolderProbe(r.stdout ?? "", paths) : null;
+    } catch (e) {
+      console.log(`dock-jira: the folder check failed: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
+  // Runs a tab.new or space.new, then shows the terminal; a refusal is said in the detail pane.
+  launch(c, cx) {
     try { run(c.command, c.args); } catch (e) { this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` }; cx.notify(); return; }
     showTerminal();
+  }
+
+  // ---- the picker (start-picker.js draws it) ----
+
+  // An entry picked: a row's folder, Here (the focused terminal's folder) or Other folder… (Herdr's folder dialog).
+  pickEntry(i, cx) {
+    const p = this.picker;
+    if (!p || p.choosing) return;
+    if (i < p.rows.length) this.startIn(p.rows[i].folder, cx);
+    else if (i === p.rows.length) this.startIn(p.here?.folder ?? null, cx);
+    else this.otherFolder(cx);
+  }
+
+  // Opens the picker's tab in `folder` (a new tab in the space working there, else a new space on it), and with
+  // Remember ticked keeps the folder as the ticket's (replacing one remembered before). Without Remember, the ticket's
+  // remembered folder stays. `folder` null: Here with no folder Herdr names; the tab opens as before Start had folders
+  // (where the focused terminal is), and there is nothing to remember.
+  startIn(folder, cx) {
+    const p = this.picker;
+    if (!p) return;
+    this.picker = null;
+    if (p.remember && folder) setShared(START_IN_KEY, remember(this.rememberedFolders(), p.issue.key, folder));
+    const space = folder && spaceFor(folder, { spaces: spaces(), panes: panes(), shownSpace: focused()?.space ?? null, home: p.home });
+    this.launch(folder ? openCommand({ folder, space, name: p.work.args.name, task: p.work.args.task }) : p.work, cx);
+  }
+
+  // Other folder…: Herdr's folder dialog over the picker; cancelled, back to the picker with nothing started.
+  otherFolder(cx) {
+    const p = this.picker;
+    if (!p || p.choosing) return;
+    p.choosing = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let folder = null;
+      try { folder = await pickFolder({ prompt: p.action === "finish" ? "Finish here" : "Start here" }); } catch (e) { console.log(`dock-jira: the folder dialog failed: ${e?.message ?? e}`); }
+      if (this.picker !== p) return;
+      p.choosing = false;
+      if (folder) { this.startIn(normPath(folder, p.home), cx); return; }
+      this.focusPicker();
+      cx.notify();
+    });
+  }
+
+  // The keys go to the picker (arrows, Enter, Escape). Without the keyboard it still works by pointer, so a refusal
+  // is only logged.
+  focusPicker() {
+    try { this.pickerFocus.focus(); } catch (e) { console.log(`dock-jira: the picker couldn't take the keyboard: ${e?.message ?? e}`); }
+  }
+
+  pickerKeyDown(e, cx) {
+    const p = this.picker;
+    if (!p) return;
+    const k = pickerKey(e.key, p.selected, p.rows.length + 2);
+    if (!k) return;
+    cx.stop_propagation();
+    if (p.choosing) return;
+    if ("pick" in k) { this.pickEntry(k.pick, cx); return; }
+    if (k.close) this.picker = null;
+    else p.selected = k.selected;
+    cx.notify();
+  }
+
+  toggleRemember(cx) {
+    if (!this.picker) return;
+    this.picker.remember = !this.picker.remember;
+    cx.notify();
+  }
+
+  closePicker(cx) {
+    this.picker = null;
+    cx.notify();
   }
 
   // A tab's button (a view's `button` setting): a Claude tab named after its label, with its task as the first message,
@@ -1674,7 +1811,12 @@ export default class Jira extends View {
           .when(canAssignToMe(d, this.me), (el) => el.child(this.button(t, "jira-assign", this.actionBusy === "assign" ? "Assigning…" : "Assign to me",
             (cx) => this.assignMe(cx), { enabled: !this.actionBusy })))
           .child(div().flex_1())
-          .child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` }))
+          // Start work, and beside it ▾ Start in… (the picker, whatever is remembered or mapped).
+          .child(h_flex().gap(1).items_center()
+            .child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:\n${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` }).rounded_r(0))
+            .child(h_flex().id("jira-start-in").h(28).w(22).flex_none().items_center().justify_center().rounded_r(7).bg(t.solid).text_color(t.solid_foreground)
+              .cursor_pointer().hover((s) => s.opacity(0.9)).tooltip("Start in another folder…").on_click((_e, cx) => this.startWork(d, cx, true))
+              .child(svg("mods/workspace-chrome/chevron-down.svg").size(12))))
           .when(Boolean(finish), (el) => el.child(this.button(t, "jira-finish", "Finish", (cx) => this.finishWork(d, cx), { tip: `Opens a Claude tab named ${d.key} finish with:\n${finish.args.task}` })))
           .child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url))))
         .when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t)))
@@ -1756,7 +1898,7 @@ export default class Jira extends View {
     const t = theme();
     const state = checking() || !this.jira ? "setup"
       : pageState({ settings: this.jira.settings, token: this.jira.token, editing: this.editing, connected: this.connected, problem: this.problem, checking: this.checkingNow });
-    const root = v_flex().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+    const root = v_flex().id("dock-jira").relative().size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .on_mouse_up("left", (_e, cx) => this.dragEnded(cx));
     if (state === "setup" || state === "settings") return root.child(this.settingsForm(t, state === "setup"));
     if (state === "problem") return root.child(this.problemView(t));
@@ -1779,6 +1921,8 @@ export default class Jira extends View {
     return root.child(this.header(t))
       .child(tabBar(this, t))
       // A plain flex row (h_flex centers vertically): the list, board and detail fill the height.
-      .child(div().flex().flex_row().flex_1().min_h(0).child(body).when(Boolean(this.selected), (el) => el.child(this.detailView(t))));
+      .child(div().flex().flex_row().flex_1().min_h(0).child(body).when(Boolean(this.selected), (el) => el.child(this.detailView(t))))
+      // Where Start work or Finish opens, when the ticket's folder isn't known here (or Start in…): over the page.
+      .when(Boolean(this.picker), (el) => el.child(startPicker(this, t)));
   }
 }

@@ -183,7 +183,8 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
 - **Where things live** (per PC, never in git or the shared config):
   - `<app home>/herdr-dock/jira-work.json`: address, connection, CA file, Start-work message, extra filters, your
     own tabs (`views`), the Scrum board (`board`, its id), the brief's `highPriorities`, `briefBugs` and
-    `checkTask` (below), and the `actions` rules for Start work and Finish (below).
+    `checkTask` (below), the `actions` rules for Start work and Finish, and `projects`, the folder each Jira project's
+    tickets open in (both below).
   - `<app home>/herdr-dock/secrets/jira-work.token` and `jira-work.curlrc`: the token. The folder is made private
     (700) before the token is written, the files 600 after every write; on Windows your profile folder is private.
     The curl copy is re-made from the token file whenever they differ. **Disconnect** empties both.
@@ -339,7 +340,8 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   status pill lists the moves the workflow allows (a step that needs a Resolution asks for it; one that needs more
   names what's missing and links to Jira), Assign to me, and a one-line comment box (Enter or Send).
 - **Start work** (detail button, or ▶ on a row) opens a tab named after the issue running Claude, with a first message
-  from your template (or the message of the issue's flow: **Action rules**, below), then shows the terminal.
+  from your template (or the message of the issue's flow: **Action rules**, below), in the ticket's folder (**Where
+  Start work opens**, below), then shows the terminal.
   Placeholders: `{key} {summary} {url} {type} {status} {priority} {assignee} {description}`; type `\n` for a line
   break. For example `/init-ticket {key}` hands it to your own skill. Settings previews the message for the selected
   issue, and so does the ▶'s tooltip. **Mind `{description}`:** anyone who can edit the issue writes that text, and it becomes part of Claude's first message, so a hostile
@@ -376,15 +378,46 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   with `/write-report`; a bug of another project starts as usual and finishes with `/close-bug`. A rule that isn't
   an object, names a key with the wrong kind of value, or gives neither `start` nor `finish` is skipped, and
   Settings says which.
+- **Where Start work opens**: in the ticket's repo. `projects` in `jira-work.json` maps a Jira project key to the
+  folder its tickets' work starts in (`~` is your home folder), for a project whose tickets all live in one repo;
+  leave out a project that spans several. For example `"projects": { "ABC": "~/code/app", "XYZ": "/srv/xyz" }`. An
+  entry that isn't a folder path is skipped, and Settings says which. A ticket opens in, in this order:
+  1. the folder **remembered** for that ticket (below);
+  2. else its project's folder from `projects`;
+  3. else the **picker**.
+
+  A remembered or mapped folder that isn't a folder on this PC (any more) opens the picker instead: nothing is
+  guessed. The tab opens in the space on this computer already working in that folder (the space's own folder is
+  it, or one of its terminals is in it or below it; the shown space first, else the first in the sidebar), and it
+  is always started in the folder itself, so it lands in the repo even when the space's own folder is your home. With
+  no such space, a new space is made on the folder, named after it. Then the terminal shows, as before. To learn your
+  home folder and which folders exist, each Start, Finish or picker runs `node` once; if that fails, every folder
+  counts as missing and the picker asks.
+  - **The picker** (over the page, titled "Start ABC-12 in…") lists the folders your spaces on this computer are
+    working in, one row each: the folder's last part, its path dimmed, and the spaces it's in (your home folder left
+    out). The project's mapped folder, when it exists, comes first. Then **Here**, the focused terminal's folder (where
+    Start work opened before), and **Other folder…**, the system's folder dialog (cancel it to come back to the
+    picker). The ticket's remembered folder is preselected; for a sub-task with none, its parent's; else the mapped
+    one. ↑ ↓ move, Enter or a click picks; Escape or a click outside closes it and starts nothing.
+  - **Remember for this ticket** (a box in the picker, off by default): the folder picked becomes the ticket's, and its
+    next Start work and Finish open there without asking. Remembered folders are per PC (`dock.jira.startIn`, the
+    newest 300 tickets).
+  - **Start in…**: the ▾ beside the detail's Start work (tooltip "Start in another folder…"; command `start-in`)
+    always opens the picker, whatever is remembered or mapped. It is the way to start a mapped project's ticket in
+    another repo, and to change a ticket's remembered folder: a pick with Remember ticked replaces it; without it the
+    tab opens there once and the remembered folder stays.
+  - **Finish** follows the same choice (remembered, else mapped, else the picker, titled "Finish ABC-12 in…"), with
+    its tab named `<key> finish`. There is no Finish in…: Start in… with Remember sets where Finish opens too.
 - **Refresh**: the shown tab every 2 minutes while the page shows, every 10 while hidden, and no sooner than 5
   minutes after a failure; Today's brief also every 10 minutes while another tab shows. A rejected token stops the
   polling (and clears the badge) until you press **Connect again** or **Try again**. The refresh button reconnects at
   once. A new address forgets the old site's issues.
 - **The Pages badge** is the number of the brief's unread items (Today's count): warning-coloured while a
   high-priority bug is unread, and no badge when nothing is.
-- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start|finish` can be bound in
-  `keys.json`, and the tabs: `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`,
-  `tab-mine`, `tab-all`, `tab-sec`). `list` and `board` set the shown tab's layout.
+- **Keys**: `dock-jira.next|prev|close|list|board|refresh|settings|status|assign|comment|start|start-in|finish` can be
+  bound in `keys.json` (`close` closes the Start picker first, when it is open), and the tabs:
+  `dock-jira.tab-next|tab-prev`, or `dock-jira.tab-<id>` for one tab (`tab-today`, `tab-mine`, `tab-all`,
+  `tab-sec`). `list` and `board` set the shown tab's layout.
 - **Developing without Jira**: `npm run mock:jira` starts a mock Jira at `http://127.0.0.1:8089` (token
   `mock-token`) with 40 issues, a workflow and favourite filters; changes are kept in memory. `--slow <ms>`,
   `--status 500` and `--token <other>` rehearse failures.

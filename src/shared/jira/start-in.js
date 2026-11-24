@@ -1,7 +1,9 @@
 // Where a ticket's work starts (pure; no host imports): the folder (remembered for the ticket, else mapped from its Jira
-// project), the space already working in it, the picker's rows, the remembered map and the Herdr command to run.
+// project), the space already working in it, the picker's rows, the remembered map and the Herdr command to run; and,
+// once the page's one node run (folderProbe) has said what home is and which folders exist, where a plain Start opens
+// (startPlace) or what the picker offers (pickerChoices, pickerKey).
 // Everything here is a folder; a space is only where a tab goes. Herdr's shapes (SpaceInfo, PaneInfo) are handed in.
-import { slashPath } from "../path.js";
+import { isAbsolutePath, slashPath } from "../path.js";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
@@ -75,12 +77,19 @@ export function spaceFor(folder, { spaces, panes, shownSpace, home } = {}) {
   return matches.find((space) => space.id === shownSpace) ?? matches[0] ?? null;
 }
 
+// A folder as the picker shows it: home as `~`, a folder below it as `~/…`, any other as it is (home unknown: as is).
+export function tildePath(folder, home) {
+  const h = normPath(home);
+  const base = h.replace(/\/$/, ""); // home without a trailing "/", for the "~/…" form
+  if (h && folder === h) return "~";
+  return h && folder.startsWith(`${base}/`) ? `~${folder.slice(base.length)}` : folder;
+}
+
 // The folders this computer's spaces are working in, one row each: { folder, label (its last part), path (home shown
 // as ~), spaces (the names of the spaces in it) }. Home itself and empty folders are left out. The `mapped` folder
 // (the ticket's project's, if any) comes first, added when no space is in it; the rest by label.
 export function pickerRows({ spaces, panes, home, mapped } = {}) {
   const h = normPath(home);
-  const base = h.replace(/\/$/, ""); // home without a trailing "/", for the "~/…" form
   const names = new Map(); // folder -> the names of the spaces in it
   for (const space of Array.isArray(spaces) ? spaces : []) {
     if (space.machine != null) continue;
@@ -95,8 +104,7 @@ export function pickerRows({ spaces, panes, home, mapped } = {}) {
   }
   const first = normPath(mapped, home);
   if (first && !names.has(first)) names.set(first, []);
-  const shown = (folder) => (h && folder === h ? "~" : h && folder.startsWith(`${base}/`) ? `~${folder.slice(base.length)}` : folder);
-  const rows = [...names].map(([folder, inSpaces]) => ({ folder, label: leaf(folder), path: shown(folder), spaces: inSpaces }));
+  const rows = [...names].map(([folder, inSpaces]) => ({ folder, label: leaf(folder), path: tildePath(folder, home), spaces: inSpaces }));
   const rank = (row) => (row.folder === first ? 0 : 1);
   return rows.sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label) || a.folder.localeCompare(b.folder));
 }
@@ -115,4 +123,84 @@ export function openCommand({ folder, space, name, task }) {
   const argv = ["claude"];
   if (space) return { command: "tab.new", args: { space: space.id, folder, name, argv, task } };
   return { command: "space.new", args: { name: leaf(folder), folder, tab: name, argv, task } };
+}
+
+// ---- On this computer: the probe, the plain Start's place, the picker ----
+
+// One node run (one exec per Start, Finish or picker) that prints the home folder (HOME, else USERPROFILE; null when
+// neither is set) and which of the paths given after "--" are folders here, each with a leading `~` expanded by that
+// home first: { home, exists: [boolean] }. A relative path, `~user`, or `~` with no home is never a folder, so
+// nothing is guessed. Node is herdr-dock's anyway; Herdr's own file reads are for text.
+const PROBE = "const fs=require('fs'),path=require('path');"
+  + "const home=process.env.HOME||process.env.USERPROFILE||null;"
+  + "const full=(p)=>{if(p==='~'||p.startsWith('~/')){if(!home)return null;p=home+p.slice(1);}return path.isAbsolute(p)?p:null;};"
+  + "const dir=(p)=>{try{return p!==null&&fs.statSync(p).isDirectory();}catch{return false;}};"
+  + "console.log(JSON.stringify({home,exists:process.argv.slice(1).map((p)=>dir(full(p)))}));";
+
+export const folderProbe = (paths) => ({ command: "node", args: ["-e", PROBE, "--", ...paths] });
+
+// folderProbe's stdout -> { home (null when unknown), exists(path) -> boolean }, or null when it isn't the probe's
+// answer for `paths`. The page treats null (and a probe that failed to run) as "no folder exists": the picker asks.
+export function parseFolderProbe(stdout, paths) {
+  let r;
+  try { r = JSON.parse(stdout); } catch { return null; }
+  if (!isObj(r) || !Array.isArray(r.exists) || r.exists.length !== paths.length) return null;
+  const there = new Set(paths.filter((_p, i) => r.exists[i] === true));
+  return { home: nonEmpty(r.home) ? r.home : null, exists: (p) => there.has(p) };
+}
+
+// A folder setting or remembered folder as the probe gets it: slashes cleaned, `~` left for the probe to expand.
+const asWritten = (folder) => (folder ? normPath(folder) : null);
+
+// Whether a folder (as written) is one to open in: the probe found it, and with home known it is absolute (an
+// unexpanded `~/x` never reaches Herdr).
+const usable = (folder, probe) => Boolean(folder && probe && probe.exists(folder) && isAbsolutePath(normPath(folder, probe.home)));
+
+// The folders a Start, Finish or picker asks the probe about: the ticket's remembered folder, its parent's and its
+// project's mapped one, as written, without repeats.
+export function probePaths(issue, { remembered, projects } = {}) {
+  const found = [own(remembered, issue?.key), own(remembered, issue?.parent?.key), own(projects, issue?.project)].map(asWritten);
+  return [...new Set(found.filter(Boolean))];
+}
+
+// Where a plain Start or Finish opens without asking, once the probe answered: the folder remembered for the ticket,
+// else its project's mapped one (resolveFolder), when the probe found it here, with the space already working in it
+// (spaceFor; null: openCommand makes one). Null: the picker asks (nothing resolves, the folder is missing, the probe
+// failed, or home is unknown). A remembered folder that is missing asks even when the project is mapped.
+export function startPlace(issue, { remembered, projects, probe, spaces, panes, shownSpace } = {}) {
+  const raw = resolveFolder(issue, { remembered, projects });
+  if (!raw || !usable(raw.folder, probe)) return null;
+  const folder = normPath(raw.folder, probe.home);
+  return { folder, source: raw.source, space: spaceFor(folder, { spaces, panes, shownSpace, home: probe.home }) };
+}
+
+// The picker's choices, once the probe answered: `rows` (pickerRows, with the project's mapped folder first when the
+// probe found it), `selected` (the row to preselect: suggestFolder's among the folders found here, so a missing one
+// gives way to the next; a suggested folder no space is in gets a row of its own, after the mapped one; nothing to
+// suggest: 0, the first entry) and `here` (the focused terminal's folder, `{ folder, path }`, or null when Herdr
+// names none). The picker's entries are the rows, then Here, then Other folder….
+export function pickerChoices(issue, { remembered, projects, probe, spaces, panes, here } = {}) {
+  const home = probe?.home ?? null;
+  const found = (map, key) => (usable(asWritten(own(map, key)), probe) ? { [key]: own(map, key) } : {});
+  const rem = { ...found(remembered, issue?.parent?.key), ...found(remembered, issue?.key) };
+  const proj = found(projects, issue?.project);
+  const mapped = own(proj, issue?.project);
+  const rows = pickerRows({ spaces, panes, home, mapped });
+  const suggested = suggestFolder(issue, { remembered: rem, projects: proj, home });
+  if (suggested && !rows.some((r) => r.folder === suggested)) {
+    rows.splice(mapped ? 1 : 0, 0, pickerRows({ home, mapped: suggested })[0]);
+  }
+  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : 0;
+  const cwd = nonEmpty(here) ? normPath(here, home) : null;
+  return { rows, selected: Math.max(0, at), here: cwd ? { folder: cwd, path: tildePath(cwd, home) } : null };
+}
+
+// A key pressed in the picker (`count` entries, `selected` the highlighted one): { selected } for the arrows (held
+// within the list), { pick } for Enter, { close } for Escape; null for a key that isn't the picker's.
+export function pickerKey(key, selected, count) {
+  if (key === "up") return { selected: Math.max(0, selected - 1) };
+  if (key === "down") return { selected: Math.min(count - 1, selected + 1) };
+  if (key === "enter") return { pick: selected };
+  if (key === "escape") return { close: true };
+  return null;
 }

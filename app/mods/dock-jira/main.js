@@ -1,7 +1,7 @@
 // src/mods/dock-jira/main.js
-import { View, div as div4, svg as svg3 } from "gpui-kit";
-import { h_flex as h_flex4, v_flex as v_flex3, InputState, Input, Popover as Popover2, ScrollHandle } from "gpui-base";
-import { appHome, checking, exec, nextCommand, props, readTextFile, run, setShared as setShared2, shared as shared2, theme, window, writeTextFile } from "herdr";
+import { View, div as div5, svg as svg4 } from "gpui-kit";
+import { h_flex as h_flex5, v_flex as v_flex4, InputState, Input, Popover as Popover2, ScrollHandle } from "gpui-base";
+import { appHome, checking, exec, focused, nextCommand, panes, pickFolder, props, readTextFile, run, setShared as setShared2, shared as shared2, spaces, theme, window, writeTextFile } from "herdr";
 
 // src/mods/_page.js
 import { setShared, shared } from "herdr";
@@ -684,8 +684,8 @@ function subtasksByParent(issues) {
 }
 function checkWork(item, { template, subtasks } = {}) {
   if (!item?.key) return null;
-  const own = subtasks?.get?.(item.key);
-  const mine = Array.isArray(own) && own.length ? own : [item.key];
+  const own2 = subtasks?.get?.(item.key);
+  const mine = Array.isArray(own2) && own2.length ? own2 : [item.key];
   const task = checkMessage(template, { key: item.key, summary: item.summary, edits: item.edits, mine });
   return { command: "tab.new", args: { name: `${item.key} check`, argv: ["claude"], task } };
 }
@@ -727,12 +727,12 @@ var SHOWN_EVERY_MS = 2 * 6e4;
 var HIDDEN_EVERY_MS = 10 * 6e4;
 var RETRY_AFTER_MS = 5 * 6e4;
 var PAGE_SIZE = 50;
-function filterList(favourites, own) {
+function filterList(favourites, own2) {
   const out = BUILTIN_FILTERS.map((f) => ({ ...f, source: "builtin" }));
   for (const f of Array.isArray(favourites) ? favourites : []) {
     if (f && typeof f.jql === "string" && f.jql.trim() && f.name) out.push({ id: `fav:${f.id}`, name: String(f.name), jql: f.jql, source: "favourite" });
   }
-  (Array.isArray(own) ? own : []).forEach((f, i) => {
+  (Array.isArray(own2) ? own2 : []).forEach((f, i) => {
     if (f?.name && f?.jql) out.push({ id: `own:${i}:${f.name}`, name: f.name, jql: f.jql, source: "own" });
   });
   return out;
@@ -902,6 +902,9 @@ function slashPath(p) {
   if (/^[A-Z]:$/.test(s)) s += "/";
   return s === "" ? "/" : s;
 }
+function isAbsolutePath(p) {
+  return /^([a-zA-Z]:)?[\\/]/.test(String(p));
+}
 
 // src/shared/jira/severity.js
 var COLOR_NAMES = Object.freeze(["red", "orange", "yellow", "green", "blue", "purple", "gray"]);
@@ -1042,6 +1045,24 @@ function attentionLine(attention, { counted, rejected = null, left = 0, query = 
 // src/shared/jira/start-in.js
 var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 var nonEmpty2 = (v) => typeof v === "string" && v.trim() !== "";
+var own = (map, key) => isObj2(map) && Object.hasOwn(map, key) && nonEmpty2(map[key]) ? map[key] : null;
+var leaf = (folder) => folder.split("/").filter(Boolean).pop() ?? folder;
+function normPath(path, home) {
+  let s = String(path ?? "").replace(/\\/g, "/");
+  if (s === "") return "";
+  const h = nonEmpty2(home) ? slashPath(home) : "";
+  if (h && (s === "~" || s.startsWith("~/"))) {
+    const rest = s.slice(1);
+    s = rest ? h.replace(/\/$/, "") + rest : h;
+  }
+  return slashPath(s);
+}
+function inside(path, folder) {
+  const p = normPath(path);
+  const f = normPath(folder);
+  if (!p || !f) return false;
+  return p === f || p.startsWith(f.endsWith("/") ? f : `${f}/`);
+}
 function parseProjects(value) {
   const projects = {};
   const warnings = [];
@@ -1056,6 +1077,111 @@ function parseProjects(value) {
     projects[k] = folder.trim();
   }
   return { projects, warnings };
+}
+function resolveFolder(issue, { remembered, projects, home } = {}) {
+  const mine = own(remembered, issue?.key);
+  if (mine) return { folder: normPath(mine, home), source: "remembered" };
+  const mapped = own(projects, issue?.project);
+  if (mapped) return { folder: normPath(mapped, home), source: "mapped" };
+  return null;
+}
+function suggestFolder(issue, { remembered, projects, home } = {}) {
+  const found = own(remembered, issue?.key) ?? own(remembered, issue?.parent?.key) ?? own(projects, issue?.project);
+  return found ? normPath(found, home) : null;
+}
+function spaceFor(folder, { spaces: spaces2, panes: panes2, shownSpace, home } = {}) {
+  const target = normPath(folder, home);
+  if (!target) return null;
+  const matches2 = (Array.isArray(spaces2) ? spaces2 : []).filter((space) => {
+    if (space.machine != null) return false;
+    if (normPath(space.folder, home) === target) return true;
+    const tabs = new Set((space.tabs ?? []).map((t) => t.id));
+    return (Array.isArray(panes2) ? panes2 : []).some((p) => tabs.has(p.tab) && inside(normPath(p.cwd, home), target));
+  });
+  return matches2.find((space) => space.id === shownSpace) ?? matches2[0] ?? null;
+}
+function tildePath(folder, home) {
+  const h = normPath(home);
+  const base = h.replace(/\/$/, "");
+  if (h && folder === h) return "~";
+  return h && folder.startsWith(`${base}/`) ? `~${folder.slice(base.length)}` : folder;
+}
+function pickerRows({ spaces: spaces2, panes: panes2, home, mapped } = {}) {
+  const h = normPath(home);
+  const names = /* @__PURE__ */ new Map();
+  for (const space of Array.isArray(spaces2) ? spaces2 : []) {
+    if (space.machine != null) continue;
+    const tabs = new Set((space.tabs ?? []).map((t) => t.id));
+    const cwds = (Array.isArray(panes2) ? panes2 : []).filter((p) => tabs.has(p.tab)).map((p) => p.cwd);
+    for (const f of [space.folder, ...cwds]) {
+      const folder = normPath(f, home);
+      if (!folder || folder === h) continue;
+      if (!names.has(folder)) names.set(folder, []);
+      if (!names.get(folder).includes(space.name)) names.get(folder).push(space.name);
+    }
+  }
+  const first = normPath(mapped, home);
+  if (first && !names.has(first)) names.set(first, []);
+  const rows = [...names].map(([folder, inSpaces]) => ({ folder, label: leaf(folder), path: tildePath(folder, home), spaces: inSpaces }));
+  const rank = (row) => row.folder === first ? 0 : 1;
+  return rows.sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label) || a.folder.localeCompare(b.folder));
+}
+function remember(map, key, folder, cap = 300) {
+  const entries = Object.entries(isObj2(map) ? map : {}).filter(([k]) => k !== key);
+  entries.push([key, folder]);
+  return Object.fromEntries(entries.slice(Math.max(0, entries.length - cap)));
+}
+function openCommand({ folder, space, name, task }) {
+  const argv = ["claude"];
+  if (space) return { command: "tab.new", args: { space: space.id, folder, name, argv, task } };
+  return { command: "space.new", args: { name: leaf(folder), folder, tab: name, argv, task } };
+}
+var PROBE = "const fs=require('fs'),path=require('path');const home=process.env.HOME||process.env.USERPROFILE||null;const full=(p)=>{if(p==='~'||p.startsWith('~/')){if(!home)return null;p=home+p.slice(1);}return path.isAbsolute(p)?p:null;};const dir=(p)=>{try{return p!==null&&fs.statSync(p).isDirectory();}catch{return false;}};console.log(JSON.stringify({home,exists:process.argv.slice(1).map((p)=>dir(full(p)))}));";
+var folderProbe = (paths) => ({ command: "node", args: ["-e", PROBE, "--", ...paths] });
+function parseFolderProbe(stdout, paths) {
+  let r;
+  try {
+    r = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!isObj2(r) || !Array.isArray(r.exists) || r.exists.length !== paths.length) return null;
+  const there = new Set(paths.filter((_p, i) => r.exists[i] === true));
+  return { home: nonEmpty2(r.home) ? r.home : null, exists: (p) => there.has(p) };
+}
+var asWritten = (folder) => folder ? normPath(folder) : null;
+var usable = (folder, probe) => Boolean(folder && probe && probe.exists(folder) && isAbsolutePath(normPath(folder, probe.home)));
+function probePaths(issue, { remembered, projects } = {}) {
+  const found = [own(remembered, issue?.key), own(remembered, issue?.parent?.key), own(projects, issue?.project)].map(asWritten);
+  return [...new Set(found.filter(Boolean))];
+}
+function startPlace(issue, { remembered, projects, probe, spaces: spaces2, panes: panes2, shownSpace } = {}) {
+  const raw = resolveFolder(issue, { remembered, projects });
+  if (!raw || !usable(raw.folder, probe)) return null;
+  const folder = normPath(raw.folder, probe.home);
+  return { folder, source: raw.source, space: spaceFor(folder, { spaces: spaces2, panes: panes2, shownSpace, home: probe.home }) };
+}
+function pickerChoices(issue, { remembered, projects, probe, spaces: spaces2, panes: panes2, here } = {}) {
+  const home = probe?.home ?? null;
+  const found = (map, key) => usable(asWritten(own(map, key)), probe) ? { [key]: own(map, key) } : {};
+  const rem = { ...found(remembered, issue?.parent?.key), ...found(remembered, issue?.key) };
+  const proj = found(projects, issue?.project);
+  const mapped = own(proj, issue?.project);
+  const rows = pickerRows({ spaces: spaces2, panes: panes2, home, mapped });
+  const suggested = suggestFolder(issue, { remembered: rem, projects: proj, home });
+  if (suggested && !rows.some((r) => r.folder === suggested)) {
+    rows.splice(mapped ? 1 : 0, 0, pickerRows({ home, mapped: suggested })[0]);
+  }
+  const at = suggested ? rows.findIndex((r) => r.folder === suggested) : 0;
+  const cwd = nonEmpty2(here) ? normPath(here, home) : null;
+  return { rows, selected: Math.max(0, at), here: cwd ? { folder: cwd, path: tildePath(cwd, home) } : null };
+}
+function pickerKey(key, selected, count) {
+  if (key === "up") return { selected: Math.max(0, selected - 1) };
+  if (key === "down") return { selected: Math.min(count - 1, selected + 1) };
+  if (key === "enter") return { pick: selected };
+  if (key === "escape") return { close: true };
+  return null;
 }
 
 // src/shared/jira/settings.js
@@ -1310,7 +1436,7 @@ function sprintSeries(current, sprints, mineBySprint) {
 }
 function sprintRows(rows) {
   const all = list2(rows);
-  const own = new Map(all.map((r) => [r?.key, r]));
+  const own2 = new Map(all.map((r) => [r?.key, r]));
   const parents = new Set(all.map((r) => r?.parent?.key).filter(Boolean));
   const lanes = /* @__PURE__ */ new Map();
   const loose = [];
@@ -1322,7 +1448,7 @@ function sprintRows(rows) {
       continue;
     }
     if (!lanes.has(p.key)) {
-      const head = own.get(p.key) ?? p;
+      const head = own2.get(p.key) ?? p;
       lanes.set(p.key, { parent: { key: head.key, summary: head.summary, status: head.status }, rows: [] });
     }
     lanes.get(p.key).rows.push(row);
@@ -1491,9 +1617,9 @@ var MINE = { id: "mine", name: "Mine", kind: "search", jql: BUILTIN_FILTERS[0].j
 var ALL = { id: "all", name: "All", kind: "search", jql: ALL_JQL, group: null, filters: true, button: null, severity: null };
 var fromView = (v) => ({ id: v.id, name: v.name, kind: "search", jql: v.jql, group: v.group, filters: false, button: v.button ?? null, severity: v.severity ?? null });
 function tabList(views, { today } = {}) {
-  const own = (id) => views.find((v) => v.id === id);
+  const own2 = (id) => views.find((v) => v.id === id);
   const builtin = (tab) => {
-    const v = own(tab.id);
+    const v = own2(tab.id);
     return v ? { ...tab, name: v.name, jql: v.jql, group: v.group, button: v.button ?? null, severity: v.severity ?? null } : tab;
   };
   return [
@@ -1553,8 +1679,8 @@ function countsDue(tabs, shownId, lastAt, now) {
   if (Number.isFinite(lastAt) && now - lastAt < HIDDEN_EVERY_MS) return [];
   return tabs.filter((t) => t.id !== shownId && t.kind === "search");
 }
-function tabLayout(own, before) {
-  const pick = own === "list" || own === "board" ? own : before;
+function tabLayout(own2, before) {
+  const pick = own2 === "list" || own2 === "board" ? own2 : before;
   return pick === "board" ? "board" : "list";
 }
 var tabFilters = (tab, list3) => [{ id: tab.id, name: tab.jql === ALL_JQL ? "All my issues" : tab.name, jql: tab.jql, source: "builtin" }, ...list3];
@@ -1714,9 +1840,30 @@ function sprintBoard(page, t) {
   return v_flex2().id("jira-sprint-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => page.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => page.released(cx)).child(top).when(Boolean(failed), (el) => el.child(failed)).child(heads).child(v_flex2().id("jira-sprint-lanes").flex_1().min_h(0).overflow_y_scrollbar().px(12).pt(10).pb(16).gap(12).when(Boolean(scroll), (el) => el.track_scroll(scroll)).children(lanes.length ? lanes.map(lane) : [div2().p(12).text_size(12.5).text_color(t.dim).child(`None of your issues are in ${sp.shown.name}.`)])).when(Boolean(d), (el) => el.child(page.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div2().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div2().text_size(11).text_color(t.dim).child(d.row.key)).child(div2().truncate().child(d.row.summary))));
 }
 
+// src/mods/dock-jira/start-picker.js
+import { div as div3, svg as svg3 } from "gpui-kit";
+import { h_flex as h_flex3, v_flex as v_flex3 } from "gpui-base";
+var SCRIM = "#00000059";
+var ICONS = { folder: "mods/workspace-chrome/folder.svg", here: "mods/workspace-chrome/terminal.svg", other: "mods/workspace-chrome/folder-plus.svg" };
+function startPicker(page, t) {
+  const p = page.picker;
+  const n = p.rows.length;
+  const verb = p.action === "finish" ? "Finish" : "Start";
+  const entry = (i, icon, label, path, spaces2) => h_flex3().id(`jira-pick-${i}`).h(34).px(10).gap(10).flex_none().items_center().rounded(6).cursor_pointer().bg(i === p.selected ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.pickEntry(i, cx)).child(svg3(icon).size(14).flex_none().text_color(t.dim)).child(div3().flex_none().max_w(180).truncate().text_size(12.8).text_color(t.foreground).child(label)).child(div3().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(path ?? "")).when(Boolean(spaces2), (el) => el.child(div3().flex_none().max_w(150).truncate().text_size(11).text_color(t.muted).child(spaces2)));
+  const rows = n ? p.rows.map((r, i) => entry(i, ICONS.folder, r.label, r.path, r.spaces.join(", "))) : [div3().px(10).py(8).text_size(12).text_color(t.dim).child("No space on this computer is working in a folder yet.")];
+  const line = () => div3().h(1).mx(6).my(3).flex_none().bg(t.border);
+  const tick = p.remember;
+  const remember2 = h_flex3().id("jira-pick-remember").gap(8).items_center().cursor_pointer().tooltip(`${p.issue.key}'s next Start and Finish open in the folder picked, without asking`).on_click((_e, cx) => page.toggleRemember(cx)).child(div3().size(14).flex_none().flex().items_center().justify_center().rounded(3).border_1().border_color(tick ? t.accent : t.border).bg(tick ? t.accent : t.background).when(tick, (el) => el.child(svg3("mods/workspace-chrome/check.svg").size(11).text_color(t.accent_foreground ?? t.background)))).child(div3().text_size(12).text_color(t.foreground).child("Remember for this ticket"));
+  const box = v_flex3().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx)).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).w(540).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground).child(h_flex3().h(34).px(10).gap(8).flex_none().items_center().child(div3().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in\u2026`)).child(div3().flex_none().text_size(11).text_color(t.dim).child("Esc"))).child(v_flex3().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows)).child(line()).child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is")).child(entry(n + 1, ICONS.other, "Other folder\u2026", p.choosing ? "Choosing in the folder dialog\u2026" : "")).child(line()).child(h_flex3().h(32).px(10).gap(8).flex_none().items_center().child(remember2).child(div3().flex_1()).child(div3().flex_none().text_size(11).text_color(t.dim).child("\u2191 \u2193 to move \xB7 Enter to pick")));
+  return v_flex3().id("jira-start-picker-scrim").absolute().inset_0().items_center().pt(64).px(16).bg(SCRIM).on_mouse_down("left", (_e, cx) => {
+    cx.stop_propagation();
+    page.closePicker(cx);
+  }).child(box);
+}
+
 // src/mods/dock-jira/tabs.js
-import { div as div3 } from "gpui-kit";
-import { h_flex as h_flex3 } from "gpui-base";
+import { div as div4 } from "gpui-kit";
+import { h_flex as h_flex4 } from "gpui-base";
 function tabBar(page, t) {
   const shown = page.tab().id;
   const tab = (x) => {
@@ -1724,9 +1871,9 @@ function tabBar(page, t) {
     const c = page.counts.get(x.id);
     const count = tabCountText(c);
     const tip = countTip(c);
-    return h_flex3().id(`jira-tab-${x.id}`).h(28).px(10).gap(6).flex_none().items_center().rounded(7).text_size(12.5).cursor_pointer().when(on, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).when(Boolean(tip), (el) => el.tooltip(tip)).on_click((_e, cx) => page.showTab(x.id, cx)).child(div3().child(x.name)).when(count !== "", (el) => el.child(div3().text_size(11).text_color(countTone(c) === "plain" ? t.dim : t.blocked).child(count)));
+    return h_flex4().id(`jira-tab-${x.id}`).h(28).px(10).gap(6).flex_none().items_center().rounded(7).text_size(12.5).cursor_pointer().when(on, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).when(Boolean(tip), (el) => el.tooltip(tip)).on_click((_e, cx) => page.showTab(x.id, cx)).child(div4().child(x.name)).when(count !== "", (el) => el.child(div4().text_size(11).text_color(countTone(c) === "plain" ? t.dim : t.blocked).child(count)));
   };
-  return div3().id("jira-tabs").flex().flex_row().flex_none().h(40).px(12).gap(4).items_center().overflow_x_scrollbar().border_b(1).border_color(t.border).children(page.tabs().map(tab));
+  return div4().id("jira-tabs").flex().flex_row().flex_none().h(40).px(12).gap(4).items_center().overflow_x_scrollbar().border_b(1).border_color(t.border).children(page.tabs().map(tab));
 }
 
 // src/mods/dock-jira/main.js
@@ -1737,6 +1884,7 @@ var TAB_KEY = "dock.jira.tab";
 var LAYOUT_KEY = (id) => `dock.jira.layout.${id}`;
 var FILTER_KEY = "dock.jira.filter.all";
 var READ_KEY = "dock.jira.read";
+var START_IN_KEY = "dock.jira.startIn";
 var SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 var TICK_MS = 3e4;
 var DETAIL_W = 420;
@@ -1814,6 +1962,9 @@ var Jira = class extends View {
     this.dropChoice = null;
     this.dropNote = null;
     this.pendingStep = null;
+    this.picker = null;
+    this.pickerFocus = cx.focus_handle();
+    this.workSeq = latestOnly();
     this.scrollPool = Array.from({ length: SCROLL_POOL }, () => ScrollHandle.new());
     this.scrolls = /* @__PURE__ */ new Map();
     this.searchInput = InputState.new({ placeholder: "Search this filter\u2026" });
@@ -1863,7 +2014,8 @@ var Jira = class extends View {
   }
   // Commands (keys.json can bind them: "dock-jira.next"): list, board, refresh, settings, next, prev, close, the tabs
   // (tab-next, tab-prev, tab-<id>), and on the open issue: status (its status menu), assign (to me), comment (the
-  // cursor into the comment box), start (Start work), finish (Finish, when an action rule gives one).
+  // cursor into the comment box), start (Start work), start-in (Start work, always asking where: the picker), finish
+  // (Finish, when an action rule gives one). Close closes the picker first, when it is open.
   command(c, cx) {
     if (c === "status") {
       if (this.detail) this.openTransitions(!this.transOpen, cx);
@@ -1879,6 +2031,10 @@ var Jira = class extends View {
     }
     if (c === "start") {
       if (this.detail) this.startWork(this.detail, cx);
+      return;
+    }
+    if (c === "start-in") {
+      if (this.detail) this.startWork(this.detail, cx, true);
       return;
     }
     if (c === "finish") {
@@ -1897,6 +2053,7 @@ var Jira = class extends View {
     if (c === "list" || c === "board") setShared2(LAYOUT_KEY(this.tab().id), c);
     else if (c === "refresh") cx.spawn(async (cx2) => this.reload(cx2));
     else if (c === "settings") this.openSettings(cx);
+    else if (c === "close" && this.picker) this.picker = null;
     else if (c === "close") {
       if (this.editing) {
         this.editing = false;
@@ -2878,18 +3035,19 @@ var Jira = class extends View {
     this.doTransition(tr, cx, row.url, fields);
   }
   // Start work: a Claude tab named after the issue, with the message of its flow (the `start` of the first action rule
-  // that matches it, else the settings' Start-work message); then the terminal comes to the front. From a list row, a
-  // template that uses {description} first fetches the full issue (rows don't carry it).
-  startWork(issue, cx) {
+  // that matches it, else the settings' Start-work message), in the ticket's folder (openWork); then the terminal
+  // comes to the front. From a list row, a template that uses {description} first fetches the full issue (rows don't
+  // carry it). `ask`: Start in…, the picker whatever is remembered or mapped.
+  startWork(issue, cx, ask = false) {
     const template = startTemplate(this.options.actions, issue, this.jira?.settings.startTask);
     if (issue && !("description" in issue) && needsDetail(template)) {
       if (this.detail?.key === issue.key) {
-        this.startWork(this.detail, cx);
+        this.startWork(this.detail, cx, ask);
         return;
       }
       cx.spawn(async (cx2) => {
         const r = await this.client(cx2).issue(issue.key);
-        if (r.ok) this.startWork(issueDetail(r.data, this.jira.settings.baseUrl), cx2);
+        if (r.ok) this.startWork(issueDetail(r.data, this.jira.settings.baseUrl), cx2, ask);
         else {
           this.actionMsg = { ok: false, message: `Couldn't start ${issue.key}: ${r.problem.message}` };
           cx2.notify();
@@ -2899,19 +3057,59 @@ var Jira = class extends View {
     }
     const c = startWork(issue, template);
     if (!c) return;
-    try {
-      run(c.command, c.args);
-    } catch (e) {
-      this.actionMsg = { ok: false, message: `Couldn't open the tab: ${e?.message ?? e}` };
-      return;
-    }
-    showTerminal();
+    this.openWork("start", issue, c, cx, ask);
   }
   // Finish: a Claude tab named "<key> finish" with the `finish` message of the issue's flow (the detail has the
-  // description already); then the terminal. Nothing in Jira changes: the skill it names does that, step by step.
+  // description already), in the ticket's folder as Start work's (openWork; no Finish in…); then the terminal.
+  // Nothing in Jira changes: the skill it names does that, step by step.
   finishWork(issue, cx) {
     const c = finishWork(issue, this.options.actions);
     if (!c) return;
+    this.openWork("finish", issue, c, cx, false);
+  }
+  // Where a Start or Finish tab (`c`, startWork's or finishWork's tab.new) opens (start-in.js): the folder remembered
+  // for the ticket, else its project's folder in the settings' `projects`, when it is a folder on this PC, as a new tab
+  // in the space already working there (else a new space on it); else, and always with `ask`, the picker. One node
+  // run learns the home folder and which of those folders exist; one that fails finds none (the picker asks).
+  openWork(action, issue, c, cx, ask) {
+    const target = { key: issue.key, project: issue.project ?? null, parent: issue.parent ?? null };
+    const seq = this.workSeq.next();
+    cx.spawn(async (cx2) => {
+      const remembered = this.rememberedFolders();
+      const projects = this.options.projects;
+      const probe = await this.probeFolders(probePaths(target, { remembered, projects }));
+      if (!this.workSeq.accept(seq)) return;
+      const live = { spaces: spaces(), panes: panes() };
+      const place = ask ? null : startPlace(target, { remembered, projects, probe, ...live, shownSpace: focused()?.space ?? null });
+      if (place) {
+        this.picker = null;
+        this.launch(openCommand({ folder: place.folder, space: place.space, name: c.args.name, task: c.args.task }), cx2);
+        return;
+      }
+      const { rows, selected, here } = pickerChoices(target, { remembered, projects, probe, ...live, here: focused()?.cwd ?? null });
+      this.picker = { action, issue: target, work: c, home: probe?.home ?? null, rows, here, selected, remember: false, choosing: false };
+      this.focusPicker();
+      cx2.notify();
+    });
+  }
+  rememberedFolders() {
+    const m = shared2(START_IN_KEY);
+    return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+  }
+  // The probe's answer (start-in.js folderProbe: { home, exists(path) }), or null when node couldn't run or answered
+  // something else.
+  async probeFolders(paths) {
+    const { command, args } = folderProbe(paths);
+    try {
+      const r = await exec(command, args);
+      return r.code === 0 ? parseFolderProbe(r.stdout ?? "", paths) : null;
+    } catch (e) {
+      console.log(`dock-jira: the folder check failed: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+  // Runs a tab.new or space.new, then shows the terminal; a refusal is said in the detail pane.
+  launch(c, cx) {
     try {
       run(c.command, c.args);
     } catch (e) {
@@ -2920,6 +3118,83 @@ var Jira = class extends View {
       return;
     }
     showTerminal();
+  }
+  // ---- the picker (start-picker.js draws it) ----
+  // An entry picked: a row's folder, Here (the focused terminal's folder) or Other folder… (Herdr's folder dialog).
+  pickEntry(i, cx) {
+    const p = this.picker;
+    if (!p || p.choosing) return;
+    if (i < p.rows.length) this.startIn(p.rows[i].folder, cx);
+    else if (i === p.rows.length) this.startIn(p.here?.folder ?? null, cx);
+    else this.otherFolder(cx);
+  }
+  // Opens the picker's tab in `folder` (a new tab in the space working there, else a new space on it), and with
+  // Remember ticked keeps the folder as the ticket's (replacing one remembered before). Without Remember, the ticket's
+  // remembered folder stays. `folder` null: Here with no folder Herdr names; the tab opens as before Start had folders
+  // (where the focused terminal is), and there is nothing to remember.
+  startIn(folder, cx) {
+    const p = this.picker;
+    if (!p) return;
+    this.picker = null;
+    if (p.remember && folder) setShared2(START_IN_KEY, remember(this.rememberedFolders(), p.issue.key, folder));
+    const space = folder && spaceFor(folder, { spaces: spaces(), panes: panes(), shownSpace: focused()?.space ?? null, home: p.home });
+    this.launch(folder ? openCommand({ folder, space, name: p.work.args.name, task: p.work.args.task }) : p.work, cx);
+  }
+  // Other folder…: Herdr's folder dialog over the picker; cancelled, back to the picker with nothing started.
+  otherFolder(cx) {
+    const p = this.picker;
+    if (!p || p.choosing) return;
+    p.choosing = true;
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      let folder = null;
+      try {
+        folder = await pickFolder({ prompt: p.action === "finish" ? "Finish here" : "Start here" });
+      } catch (e) {
+        console.log(`dock-jira: the folder dialog failed: ${e?.message ?? e}`);
+      }
+      if (this.picker !== p) return;
+      p.choosing = false;
+      if (folder) {
+        this.startIn(normPath(folder, p.home), cx2);
+        return;
+      }
+      this.focusPicker();
+      cx2.notify();
+    });
+  }
+  // The keys go to the picker (arrows, Enter, Escape). Without the keyboard it still works by pointer, so a refusal
+  // is only logged.
+  focusPicker() {
+    try {
+      this.pickerFocus.focus();
+    } catch (e) {
+      console.log(`dock-jira: the picker couldn't take the keyboard: ${e?.message ?? e}`);
+    }
+  }
+  pickerKeyDown(e, cx) {
+    const p = this.picker;
+    if (!p) return;
+    const k = pickerKey(e.key, p.selected, p.rows.length + 2);
+    if (!k) return;
+    cx.stop_propagation();
+    if (p.choosing) return;
+    if ("pick" in k) {
+      this.pickEntry(k.pick, cx);
+      return;
+    }
+    if (k.close) this.picker = null;
+    else p.selected = k.selected;
+    cx.notify();
+  }
+  toggleRemember(cx) {
+    if (!this.picker) return;
+    this.picker.remember = !this.picker.remember;
+    cx.notify();
+  }
+  closePicker(cx) {
+    this.picker = null;
+    cx.notify();
   }
   // A tab's button (a view's `button` setting): a Claude tab named after its label, with its task as the first message,
   // then the terminal, as Start work does. No Jira request, so it needs no connection.
@@ -3088,39 +3363,39 @@ var Jira = class extends View {
   // `accent`: the theme's accent colour for the outline and text, for a button that should stand out a little without
   // being the page's primary action (a tab's own button).
   button(t, id, label, onClick, { primary = false, accent = false, enabled = true, tip } = {}) {
-    return h_flex4().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary && accent, (el) => el.border_1().border_color(t.accent).text_color(t.accent)).when(!primary && !accent, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click((_e, cx) => onClick(cx)).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.45)).when(Boolean(tip), (el) => el.tooltip(tip)).child(label);
+    return h_flex5().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary && accent, (el) => el.border_1().border_color(t.accent).text_color(t.accent)).when(!primary && !accent, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click((_e, cx) => onClick(cx)).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.45)).when(Boolean(tip), (el) => el.tooltip(tip)).child(label);
   }
   field(t, label, input, hint) {
-    return v_flex3().gap(5).child(div4().text_size(11.5).text_color(t.dim).child(label)).child(Input.new(input).h(34).px(10).rounded(8).border_1().border_color(t.input ?? t.border).bg(t.background).text_size(12.8).text_color(t.foreground)).when(Boolean(hint), (el) => el.child(div4().text_size(11).text_color(t.dim).child(hint)));
+    return v_flex4().gap(5).child(div5().text_size(11.5).text_color(t.dim).child(label)).child(Input.new(input).h(34).px(10).rounded(8).border_1().border_color(t.input ?? t.border).bg(t.background).text_size(12.8).text_color(t.foreground)).when(Boolean(hint), (el) => el.child(div5().text_size(11).text_color(t.dim).child(hint)));
   }
   settingsForm(t, first) {
     const s = this.jira?.settings;
-    const choice = (value, label) => h_flex4().id(`jira-transport-${value}`).h(26).px(10).items_center().rounded(6).text_size(12).cursor_pointer().on_click((_e, cx) => {
+    const choice = (value, label) => h_flex5().id(`jira-transport-${value}`).h(26).px(10).items_center().rounded(6).text_size(12).cursor_pointer().on_click((_e, cx) => {
       this.transportChoice = value;
       cx.notify();
     }).when(this.transportChoice === value, (el) => el.bg(t.raised ?? t.selected).border_1().border_color(t.border).text_color(t.foreground)).when(this.transportChoice !== value, (el) => el.text_color(t.muted).hover((st) => st.bg(t.hover))).child(label);
-    return v_flex3().id("jira-settings").size_full().min_h(0).overflow_y_scrollbar().items_center().py(32).px(24).child(v_flex3().w_full().max_w(560).gap(16).child(v_flex3().gap(4).child(div4().text_size(18).font_semibold().child(first ? "Connect Jira" : "Jira settings")).child(div4().text_size(12.5).text_color(t.muted).child("Your company's Jira Server / Data Center, with a personal access token (Jira \u2192 Profile \u2192 Personal Access Tokens). Your Jira MCP's JIRA_URL and JIRA_PERSONAL_TOKEN work here."))).child(this.field(t, "Jira address", this.urlInput, null)).child(this.field(
+    return v_flex4().id("jira-settings").size_full().min_h(0).overflow_y_scrollbar().items_center().py(32).px(24).child(v_flex4().w_full().max_w(560).gap(16).child(v_flex4().gap(4).child(div5().text_size(18).font_semibold().child(first ? "Connect Jira" : "Jira settings")).child(div5().text_size(12.5).text_color(t.muted).child("Your company's Jira Server / Data Center, with a personal access token (Jira \u2192 Profile \u2192 Personal Access Tokens). Your Jira MCP's JIRA_URL and JIRA_PERSONAL_TOKEN work here."))).child(this.field(t, "Jira address", this.urlInput, null)).child(this.field(
       t,
       this.jira?.token ? "Personal access token (saved; paste a new one to replace it)" : "Personal access token",
       this.tokenInput,
       `Kept only on this PC, in ${this.jira ? `herdr-dock/secrets/jira-${this.site}.token` : "a private file"}, readable by you alone.`
-    )).child(v_flex3().gap(5).child(div4().text_size(11.5).text_color(t.dim).child("Connection")).child(h_flex4().gap(4).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).w_full().max_w(260).child(choice("fetch", "Herdr (fetch)")).child(choice("curl", "curl"))).child(div4().text_size(11).text_color(t.dim).child("Use curl if Jira's certificate isn't trusted by Herdr: curl uses this computer's certificates."))).when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either."))).child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}")).child(this.preview(t)).when(!first, (el) => el.child(this.boardField(t)).child(this.field(t, "High priorities", this.prioInput, `Your Jira's names for urgent priorities, comma-separated (e.g. P0, P1), for the brief's High-priority bugs. Empty: ${DEFAULT_HIGH_PRIORITIES.join(", ")}.`))).child(this.fileNote(t)).when(Boolean(this.formError), (el) => el.child(div4().text_size(12.5).text_color(t.blocked).child(this.formError))).child(h_flex4().gap(8).pt(4).child(this.button(t, "jira-save", this.formBusy ? "Connecting\u2026" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy })).when(!first, (el) => el.child(this.button(t, "jira-cancel", "Cancel", (cx) => {
+    )).child(v_flex4().gap(5).child(div5().text_size(11.5).text_color(t.dim).child("Connection")).child(h_flex5().gap(4).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).w_full().max_w(260).child(choice("fetch", "Herdr (fetch)")).child(choice("curl", "curl"))).child(div5().text_size(11).text_color(t.dim).child("Use curl if Jira's certificate isn't trusted by Herdr: curl uses this computer's certificates."))).when(this.transportChoice === "curl", (el) => el.child(this.field(t, "Company CA file", this.caInput, "Only if curl doesn't trust Jira's certificate either."))).child(this.field(t, "Start work message", this.taskInput, "What Claude gets first. {key} {summary} {url} {type} {status} {priority} {assignee} {description}; \\n for a new line. E.g. /init-ticket {key}")).child(this.preview(t)).when(!first, (el) => el.child(this.boardField(t)).child(this.field(t, "High priorities", this.prioInput, `Your Jira's names for urgent priorities, comma-separated (e.g. P0, P1), for the brief's High-priority bugs. Empty: ${DEFAULT_HIGH_PRIORITIES.join(", ")}.`))).child(this.fileNote(t)).when(Boolean(this.formError), (el) => el.child(div5().text_size(12.5).text_color(t.blocked).child(this.formError))).child(h_flex5().gap(8).pt(4).child(this.button(t, "jira-save", this.formBusy ? "Connecting\u2026" : first ? "Connect" : "Save", (cx) => this.saveForm(cx), { primary: true, enabled: !this.formBusy })).when(!first, (el) => el.child(this.button(t, "jira-cancel", "Cancel", (cx) => {
       this.editing = false;
       this.formError = null;
       cx.notify();
-    }))).child(div4().flex_1()).when(Boolean(this.jira?.token), (el) => el.child(this.button(t, "jira-disconnect", "Disconnect", (cx) => {
+    }))).child(div5().flex_1()).when(Boolean(this.jira?.token), (el) => el.child(this.button(t, "jira-disconnect", "Disconnect", (cx) => {
       this.editing = false;
       this.disconnect(cx);
-    }, { tip: "Forget the token on this PC" })))).when(Boolean(this.jira?.problem) && !this.options.warnings.includes(this.jira.problem), (el) => el.child(div4().text_size(11.5).text_color(WARN2).child(this.jira.problem))));
+    }, { tip: "Forget the token on this PC" })))).when(Boolean(this.jira?.problem) && !this.options.warnings.includes(this.jira.problem), (el) => el.child(div5().text_size(11.5).text_color(WARN2).child(this.jira.problem))));
   }
   // The Scrum board: the one picked (its name), a search box over Jira's scrum boards and the ones found, to pick.
   boardField(t) {
     const c = this.boardChoice;
     const hits = this.boardHits;
-    const note = (text, color = t.dim) => div4().px(8).py(6).text_size(11.5).text_color(color).child(text);
-    const hit = (b) => h_flex4().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx)).child(div4().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`)).child(div4().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
+    const note = (text, color = t.dim) => div5().px(8).py(6).text_size(11.5).text_color(color).child(text);
+    const hit = (b) => h_flex5().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx)).child(div5().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`)).child(div5().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
     const found = hits === "loading" ? [note("Searching\u2026")] : hits?.problem ? [note(`${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), t.blocked)] : Array.isArray(hits) ? hits.length ? hits.map(hit) : [note("No scrum board has that in its name.")] : [];
-    return v_flex3().gap(5).child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null)).when(found.length > 0, (el) => el.child(v_flex3().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found))).child(h_flex4().gap(8).items_center().child(div4().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it.")).when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => {
+    return v_flex4().gap(5).child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null)).when(found.length > 0, (el) => el.child(v_flex4().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found))).child(h_flex5().gap(8).items_center().child(div5().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it.")).when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => {
       this.boardChoice = null;
       cx.notify();
     }))));
@@ -3128,20 +3403,20 @@ var Jira = class extends View {
   // Where the tabs (views) and the other options are edited by hand, and each entry of that file the page skipped.
   fileNote(t) {
     const path = this.jira?.paths.settingsPath;
-    return v_flex3().gap(3).when(Boolean(path), (el) => el.child(div4().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`))).children(this.options.warnings.map((w) => div4().text_size(11.5).text_color(WARN2).child(w === this.jira?.problem ? w : `Skipped ${w}`)));
+    return v_flex4().gap(3).when(Boolean(path), (el) => el.child(div5().text_size(11).text_color(t.dim).child(`Tabs (views) and other options are edited in ${path}; the page reads it again when it changes.`))).children(this.options.warnings.map((w) => div5().text_size(11.5).text_color(WARN2).child(w === this.jira?.problem ? w : `Skipped ${w}`)));
   }
   // What Start work would send for the open issue (else the first one listed): its action rule's message, else as typed.
   preview(t) {
     const issue = this.detail ?? this.shown().rows[0];
-    if (!issue) return div4();
+    if (!issue) return div5();
     const typed = this.taskInput.value();
     const template = startTemplate(this.options.actions, issue, typed);
     const text = previewTask(issue, template);
-    return v_flex3().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div4().text_size(11).text_color(t.dim).child(template === typed ? `Preview for ${issue.key}` : `Preview for ${issue.key}, from its action rule`)).children(text.split("\n").map((l) => div4().text_size(12).text_color(t.muted).child(l || " ")));
+    return v_flex4().gap(4).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).child(div5().text_size(11).text_color(t.dim).child(template === typed ? `Preview for ${issue.key}` : `Preview for ${issue.key}, from its action rule`)).children(text.split("\n").map((l) => div5().text_size(12).text_color(t.muted).child(l || " ")));
   }
   problemView(t) {
     const p = this.problem;
-    return v_flex3().size_full().items_center().justify_center().p(24).child(v_flex3().max_w(520).gap(10).items_center().child(div4().text_size(16).font_semibold().child(p.message.split(". ")[0].replace(/\.$/, "") + ".")).when(p.message.includes(". "), (el) => el.child(div4().text_size(12.5).text_color(t.muted).child(p.message.slice(p.message.indexOf(". ") + 2)))).child(div4().text_size(12.5).text_color(t.dim).child(p.hint ?? "")).child(h_flex4().gap(8).pt(8).child(this.button(t, "jira-retry", "Try again", (cx) => cx.spawn(async (cx2) => this.reload(cx2)), { primary: true })).when((p.kind === "tls" || p.kind === "offline") && this.jira?.settings.transport !== "curl", (el) => el.child(this.button(t, "jira-use-curl", "Switch to curl", (cx) => this.useCurl(cx)))).child(this.button(t, "jira-open-settings", p.kind === "auth" || p.kind === "forbidden" ? "Connect again" : "Settings", (cx) => this.openSettings(cx)))));
+    return v_flex4().size_full().items_center().justify_center().p(24).child(v_flex4().max_w(520).gap(10).items_center().child(div5().text_size(16).font_semibold().child(p.message.split(". ")[0].replace(/\.$/, "") + ".")).when(p.message.includes(". "), (el) => el.child(div5().text_size(12.5).text_color(t.muted).child(p.message.slice(p.message.indexOf(". ") + 2)))).child(div5().text_size(12.5).text_color(t.dim).child(p.hint ?? "")).child(h_flex5().gap(8).pt(8).child(this.button(t, "jira-retry", "Try again", (cx) => cx.spawn(async (cx2) => this.reload(cx2)), { primary: true })).when((p.kind === "tls" || p.kind === "offline") && this.jira?.settings.transport !== "curl", (el) => el.child(this.button(t, "jira-use-curl", "Switch to curl", (cx) => this.useCurl(cx)))).child(this.button(t, "jira-open-settings", p.kind === "auth" || p.kind === "forbidden" ? "Connect again" : "Settings", (cx) => this.openSettings(cx)))));
   }
   header(t) {
     const tab = this.tab();
@@ -3158,30 +3433,30 @@ var Jira = class extends View {
         return "";
       }
     })();
-    const item = (x) => h_flex4().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+    const item = (x) => h_flex5().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
       this.filterOpen = false;
       setShared2(FILTER_KEY, x.id);
       list3.moved = /* @__PURE__ */ new Map();
       this.selected = null;
       this.detail = null;
       cx.spawn(async (cx2) => this.refresh(cx2));
-    }).child(div4().flex_1().min_w(0).truncate().child(x.name)).child(div4().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
+    }).child(div5().flex_1().min_w(0).truncate().child(x.name)).child(div5().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
     const picker = tab.filters && Popover2.new("jira-filter").open(this.filterOpen).on_open_change((open, cx) => {
       this.filterOpen = open;
       cx.notify();
-    }).trigger(h_flex4().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div4().max_w(220).truncate().child(f.name)).child(svg3("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex3().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
-    const seg = (value, label) => h_flex4().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer().on_click(() => setShared2(LAYOUT_KEY(tab.id), value)).when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).child(label);
-    const icon = (id, path, tip, onClick) => div4().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(7).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => onClick(cx)).child(svg3(path).size(14));
-    return h_flex4().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border).child(div4().text_size(16).font_semibold().child("Jira")).child(div4().text_size(12).text_color(t.dim).max_w(180).truncate().child(host)).when(Boolean(picker), (el) => el.child(picker)).when(!today, (el) => el.child(h_flex4().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background).child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))).when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { accent: true, tip: tabButtonWork(tab.button).args.task }))).child(div4().flex_1()).child(div4().text_size(11.5).text_color(t.dim).child(list3.loading ? "loading\u2026" : list3.fetchedAt ? [countText(shownCount, total), `updated ${ago(list3.fetchedAt, Date.now())}`].filter(Boolean).join(" \xB7 ") : "")).when(!today, (el) => el.child(h_flex4().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))).child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx2) => this.reload(cx2)))).child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
+    }).trigger(h_flex5().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div5().max_w(220).truncate().child(f.name)).child(svg4("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex4().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
+    const seg = (value, label) => h_flex5().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer().on_click(() => setShared2(LAYOUT_KEY(tab.id), value)).when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).child(label);
+    const icon = (id, path, tip, onClick) => div5().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(7).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => onClick(cx)).child(svg4(path).size(14));
+    return h_flex5().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border).child(div5().text_size(16).font_semibold().child("Jira")).child(div5().text_size(12).text_color(t.dim).max_w(180).truncate().child(host)).when(Boolean(picker), (el) => el.child(picker)).when(!today, (el) => el.child(h_flex5().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background).child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))).when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { accent: true, tip: tabButtonWork(tab.button).args.task }))).child(div5().flex_1()).child(div5().text_size(11.5).text_color(t.dim).child(list3.loading ? "loading\u2026" : list3.fetchedAt ? [countText(shownCount, total), `updated ${ago(list3.fetchedAt, Date.now())}`].filter(Boolean).join(" \xB7 ") : "")).when(!today, (el) => el.child(h_flex5().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))).child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx2) => this.reload(cx2)))).child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
   }
   typeMark(t, r) {
-    return div4().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
+    return div5().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
   }
   // A row's or a card's severity chip, in a tab with `severity`: its level's label on the level's colour (chipOf);
   // null for an unrated row.
   chip(t, r, severity) {
     const c = chipOf(r.severity, severity, t);
-    return c && div4().flex_none().h(16).px(5).flex().items_center().rounded(4).bg(c.bg).text_size(10.5).font_semibold().text_color(c.ink).child(c.label);
+    return c && div5().flex_none().h(16).px(5).flex().items_center().rounded(4).bg(c.bg).text_size(10.5).font_semibold().text_color(c.ink).child(c.label);
   }
   // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows). `chips`: in a tab with
   // severity, { severity, width }: the row's chip before its key, in a column of that width for the whole list (empty
@@ -3190,17 +3465,17 @@ var Jira = class extends View {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
     const chip = chips && this.chip(t, r, chips.severity);
-    return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).when(Boolean(chips), (el) => el.child(h_flex4().w(chips.width).flex_none().overflow_hidden().items_center().children(chip ? [chip] : []))).child(div4().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
+    return h_flex5().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).when(Boolean(chips), (el) => el.child(h_flex5().w(chips.width).flex_none().overflow_hidden().items_center().children(chip ? [chip] : []))).child(div5().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key)).child(div5().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div5().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div5().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div5().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div5().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
 ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.startTask))}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
       cx.stop_propagation();
       this.startWork(r, cx);
-    }).child(svg3("mods/dock-jira/play.svg").size(11)));
+    }).child(svg4("mods/dock-jira/play.svg").size(11)));
   }
   // `id`: the button's (the list's own, or the attention box's).
   more(t, id = "jira-more") {
     const s = this.shown();
     if (!Number.isFinite(s.total) || s.rows.length >= s.total) return null;
-    return h_flex4().px(16).py(10).child(this.button(
+    return h_flex5().px(16).py(10).child(this.button(
       t,
       id,
       `Load more (${s.total - s.rows.length} left)`,
@@ -3219,16 +3494,16 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
     const chips = tab.severity ? { severity: tab.severity, width: chipWidth(tab.severity) } : null;
     const more = this.more(t);
     const group = (g) => [
-      h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
+      h_flex5().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div5().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).child(div5().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
       ...g.rows.map((r, i) => this.row(t, r, i, keyW, chips))
     ];
     const section = (sec) => [
-      ...sec.title ? [h_flex4().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],
+      ...sec.title ? [h_flex5().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div5().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div5().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],
       ...sec.parts.flatMap(group)
     ];
     const box = attention && this.attentionBox(t, tab, attention, group);
     const scroll = this.scroll(`${tab.id}/list`);
-    return v_flex3().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(box), (el) => el.child(box)).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
+    return v_flex4().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(box), (el) => el.child(box)).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
   }
   // Above a severity tab's sections: its open tickets at an attention level (`attention`, severitySections'), by level,
   // in a box with a red title and a red-tinted border, each level split To do / In progress (`group` draws a part, as
@@ -3242,27 +3517,27 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
       left: s.total - s.rows.length,
       query: s.query
     });
-    const say = (l) => div4().text_size(12).text_color(l.kind === "rejected" ? WARN2 : t.dim).truncate().when(l.kind === "rejected", (el) => el.tooltip(l.text)).child(l.text);
+    const say = (l) => div5().text_size(12).text_color(l.kind === "rejected" ? WARN2 : t.dim).truncate().when(l.kind === "rejected", (el) => el.tooltip(l.text)).child(l.text);
     if (!attention.length && line?.kind !== "more") return line ? say(line).px(16).pt(12).pb(2).flex_none() : null;
     const size = (sec) => sec.parts.reduce((n, g) => n + g.rows.length, 0);
     const level = (sec) => [
-      h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(12.5).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(size(sec)))),
+      h_flex5().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div5().text_size(12.5).font_semibold().text_color(t.foreground).child(sec.title)).child(div5().text_size(11.5).text_color(t.dim).child(String(size(sec)))),
       ...sec.parts.flatMap(group)
     ];
     const shown = attention.reduce((n, sec) => n + size(sec), 0);
     const more = line?.kind === "more" ? this.more(t, "jira-more-attention") : null;
-    return v_flex3().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden().border_1().border_color(tint(t.blocked, 0.55)).child(h_flex4().h(36).px(16).pt(6).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now")).when(shown > 0, (el) => el.child(div4().text_size(12).text_color(t.dim).child(String(shown))))).children(attention.flatMap(level)).when(line?.kind === "more", (el) => el.child(h_flex4().flex_none().pl(16).items_center().child(div4().text_size(12).text_color(t.muted).child(line.text)).when(Boolean(more), (x) => x.child(more)))).when(line?.kind === "rejected", (el) => el.child(say(line).px(16).pt(8).pb(2).flex_none()));
+    return v_flex4().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden().border_1().border_color(tint(t.blocked, 0.55)).child(h_flex5().h(36).px(16).pt(6).gap(6).flex_none().items_center().child(div5().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now")).when(shown > 0, (el) => el.child(div5().text_size(12).text_color(t.dim).child(String(shown))))).children(attention.flatMap(level)).when(line?.kind === "more", (el) => el.child(h_flex5().flex_none().pl(16).items_center().child(div5().text_size(12).text_color(t.muted).child(line.text)).when(Boolean(more), (x) => x.child(more)))).when(line?.kind === "rejected", (el) => el.child(say(line).px(16).pt(8).pb(2).flex_none()));
   }
   // `severity`: the shown tab's, for the card's chip (null on Today's sprint board: no chips there).
   card(t, r, severity = null) {
     const on = this.selected === r.key;
     const dragged = this.drag?.row.key === r.key;
     const chip = severity && this.chip(t, r, severity);
-    return v_flex3().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).when(dragged, (el) => el.opacity(0.35)).on_mouse_down("left", (e) => {
+    return v_flex4().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).when(dragged, (el) => el.opacity(0.35)).on_mouse_down("left", (e) => {
       this.press = { row: r, from: e.position };
     }).on_click((_e, cx) => {
       if (!this.drag) this.select(r.key, cx);
-    }).child(div4().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex4().gap(6).items_center().child(this.typeMark(t, r)).when(Boolean(chip), (el) => el.child(chip)).child(div4().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div4().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN2 : t.dim).child(r.priority))).child(div4().flex_1()).child(div4().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
+    }).child(div5().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex5().gap(6).items_center().child(this.typeMark(t, r)).when(Boolean(chip), (el) => el.child(chip)).child(div5().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div5().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN2 : t.dim).child(r.priority))).child(div5().flex_1()).child(div5().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
   }
   boardView(t) {
     const d = this.drag;
@@ -3273,74 +3548,74 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
     const severity = this.tab().severity;
     const board = this.scroll(`${tabId}/board`);
     const column = (c, i) => {
-      const own = d && c.status === d.row.status;
+      const own2 = d && c.status === d.row.status;
       const cards = c.temporary ? null : this.scroll(`${tabId}/col/${c.status}`);
       const target = d && d.targets.has(c.status);
       const over = target && d.over === c.status;
-      return v_flex3().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
+      return v_flex4().id(`jira-col-${i}`).flex_1().min_w(240).min_h(0).rounded(10).border_1().bg(over ? t.selected : t.chrome).border_color(target ? t.accent : t.border).when(Boolean(d) && !own2 && !target, (el) => el.opacity(0.4)).on_mouse_move((_e, cx) => {
         if (!this.drag) return;
         this.drag.hover = c.status;
         if (this.drag.over !== (target ? c.status : null)) {
           this.drag.over = target ? c.status : null;
           cx.notify();
         }
-      }).child(h_flex4().h(36).px(12).gap(6).flex_none().items_center().child(div4().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div4().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex3().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(Boolean(cards), (el) => el.track_scroll(cards)).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r, severity))));
+      }).child(h_flex5().h(36).px(12).gap(6).flex_none().items_center().child(div5().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div5().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex4().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(Boolean(cards), (el) => el.track_scroll(cards)).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r, severity))));
     };
-    return v_flex3().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div4().id(`jira-board-${tabId}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).when(Boolean(board), (el) => el.track_scroll(board)).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div4().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div4().text_size(11).text_color(t.dim).child(d.row.key)).child(div4().truncate().child(d.row.summary))));
+    return v_flex4().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div5().id(`jira-board-${tabId}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).when(Boolean(board), (el) => el.track_scroll(board)).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div5().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div5().text_size(11).text_color(t.dim).child(d.row.key)).child(div5().truncate().child(d.row.summary))));
   }
   // In the column dropped on, when several moves lead there: which one (Resolve or Close into Done, say).
   choiceBox(t) {
     const c = this.dropChoice;
     if (c.step) {
       const { tr, field } = c.step;
-      return v_flex3().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div4().text_size(12.5).text_color(t.foreground).child(`${tr.name} ${c.row.key}: pick a ${field.name}`)).child(h_flex4().gap(6).flex_wrap().children(field.options.map((o) => this.button(t, `jira-drop-opt-${o.id ?? o.name}`, o.name, (cx) => this.moveCard(c.row, tr, cx, stepFields(field.key, o)), { primary: true }))).child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => {
+      return v_flex4().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div5().text_size(12.5).text_color(t.foreground).child(`${tr.name} ${c.row.key}: pick a ${field.name}`)).child(h_flex5().gap(6).flex_wrap().children(field.options.map((o) => this.button(t, `jira-drop-opt-${o.id ?? o.name}`, o.name, (cx) => this.moveCard(c.row, tr, cx, stepFields(field.key, o)), { primary: true }))).child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => {
         this.dropChoice = null;
         cx.notify();
       })));
     }
-    return v_flex3().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div4().text_size(12.5).text_color(t.foreground).child(`Move ${c.row.key} here by:`)).child(h_flex4().gap(6).flex_wrap().children(c.transitions.map((tr) => this.button(t, `jira-drop-${tr.id}`, tr.name, (cx) => this.moveCard(c.row, tr, cx), { primary: true }))).child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => {
+    return v_flex4().id("jira-drop-choice").flex_none().p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div5().text_size(12.5).text_color(t.foreground).child(`Move ${c.row.key} here by:`)).child(h_flex5().gap(6).flex_wrap().children(c.transitions.map((tr) => this.button(t, `jira-drop-${tr.id}`, tr.name, (cx) => this.moveCard(c.row, tr, cx), { primary: true }))).child(this.button(t, "jira-drop-cancel", "Cancel", (cx) => {
       this.dropChoice = null;
       cx.notify();
     })));
   }
   // In a dimmed column a card was dropped on: why nothing happened.
   noteBox(t) {
-    return h_flex4().id("jira-drop-note").flex_none().p(10).gap(8).items_start().rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(WARN2).child(div4().flex_1().text_size(12).text_color(t.muted).child(this.dropNote.text)).child(div4().id("jira-drop-note-x").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
+    return h_flex5().id("jira-drop-note").flex_none().p(10).gap(8).items_start().rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(WARN2).child(div5().flex_1().text_size(12).text_color(t.muted).child(this.dropNote.text)).child(div5().id("jira-drop-note-x").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
       this.dropNote = null;
       cx.notify();
-    }).child(svg3("mods/workspace-chrome/x.svg").size(11)));
+    }).child(svg4("mods/workspace-chrome/x.svg").size(11)));
   }
   // At the bottom of the board while dragging: what's happening.
   dragBar(t) {
-    const bar = h_flex4().absolute().bottom(12).left(12).h(38).px(14).gap(8).items_center().rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5);
+    const bar = h_flex5().absolute().bottom(12).left(12).h(38).px(14).gap(8).items_center().rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5);
     const d = this.drag;
     const text = d.transitions === "loading" ? `Moving ${d.row.key}: asking Jira where it can go\u2026` : d.transitions.problem ? `Can't move ${d.row.key}: ${d.transitions.problem.message}` : d.targets.size ? `Drop ${d.row.key} on a highlighted column (release elsewhere to cancel)` : `${d.row.key} has no moves from ${d.row.status}.`;
-    return bar.child(div4().text_color(d.transitions?.problem ? t.blocked : t.muted).child(text));
+    return bar.child(div5().text_color(d.transitions?.problem ? t.blocked : t.muted).child(text));
   }
   detailView(t) {
     const d = this.detail;
-    const close = div4().id("jira-detail-close").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click((_e, cx) => {
+    const close = div5().id("jira-detail-close").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click((_e, cx) => {
       this.selected = null;
       this.detail = null;
       cx.notify();
-    }).child(svg3("mods/workspace-chrome/x.svg").size(13));
-    const pane = v_flex3().id("jira-detail").w(DETAIL_W).flex_none().min_h(0).border_l(1).border_color(t.border).bg(t.background);
-    const top = h_flex4().h(44).px(16).gap(8).flex_none().items_center().border_b(1).border_color(t.border).child(div4().text_size(12.5).text_color(t.dim).child(this.selected)).child(div4().flex_1()).child(close);
+    }).child(svg4("mods/workspace-chrome/x.svg").size(13));
+    const pane = v_flex4().id("jira-detail").w(DETAIL_W).flex_none().min_h(0).border_l(1).border_color(t.border).bg(t.background);
+    const top = h_flex5().h(44).px(16).gap(8).flex_none().items_center().border_b(1).border_color(t.border).child(div5().text_size(12.5).text_color(t.dim).child(this.selected)).child(div5().flex_1()).child(close);
     if (!d) {
-      return pane.child(top).child(div4().p(16).text_size(12.5).text_color(this.detailProblem ? t.blocked : t.dim).child(this.detailProblem ? `${this.detailProblem.message} ${this.detailProblem.hint}` : "Loading\u2026"));
+      return pane.child(top).child(div5().p(16).text_size(12.5).text_color(this.detailProblem ? t.blocked : t.dim).child(this.detailProblem ? `${this.detailProblem.message} ${this.detailProblem.hint}` : "Loading\u2026"));
     }
     const finish = finishWork(d, this.options.actions);
-    const lines = (text) => (text ? text.split("\n") : []).map((l) => l.trim() ? div4().child(l) : div4().h(8));
-    const meta = (label, value) => h_flex4().gap(8).child(div4().w(70).flex_none().text_color(t.dim).child(label)).child(div4().flex_1().min_w(0).truncate().child(value ?? "\u2014"));
-    return pane.child(top).child(v_flex3().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div4().text_size(16).font_semibold().child(d.summary)).child(h_flex4().gap(8).items_center().flex_wrap().child(this.statusMenu(t, d)).when(canAssignToMe(d, this.me), (el) => el.child(this.button(
+    const lines = (text) => (text ? text.split("\n") : []).map((l) => l.trim() ? div5().child(l) : div5().h(8));
+    const meta = (label, value) => h_flex5().gap(8).child(div5().w(70).flex_none().text_color(t.dim).child(label)).child(div5().flex_1().min_w(0).truncate().child(value ?? "\u2014"));
+    return pane.child(top).child(v_flex4().id("jira-detail-body").flex_1().min_h(0).overflow_y_scrollbar().p(16).gap(14).child(div5().text_size(16).font_semibold().child(d.summary)).child(h_flex5().gap(8).items_center().flex_wrap().child(this.statusMenu(t, d)).when(canAssignToMe(d, this.me), (el) => el.child(this.button(
       t,
       "jira-assign",
       this.actionBusy === "assign" ? "Assigning\u2026" : "Assign to me",
       (cx) => this.assignMe(cx),
       { enabled: !this.actionBusy }
-    ))).child(div4().flex_1()).child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:
-${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` })).when(Boolean(finish), (el) => el.child(this.button(t, "jira-finish", "Finish", (cx) => this.finishWork(d, cx), { tip: `Opens a Claude tab named ${d.key} finish with:
-${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex3().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(changeView(this, t)).child(v_flex3().gap(4).text_size(12.8).text_color(t.foreground).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div4().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex3().gap(4).text_size(12.5).child(div4().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex4().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div4().text_color(t.dim).child(l.label)).child(div4().child(l.key)))))).child(v_flex3().gap(10).child(div4().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex3().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex4().gap(6).child(div4().font_medium().child(c.author)).child(div4().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex3().gap(6).child(div4().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Input.new(this.commentInput).w_full().h(22).text_size(12.5).text_color(t.foreground))).child(h_flex4().gap(8).items_center().child(div4().flex_1().text_size(11).text_color(t.dim).child("Enter sends")).child(this.button(
+    ))).child(div5().flex_1()).child(h_flex5().gap(1).items_center().child(this.button(t, "jira-start", "Start work", (cx) => this.startWork(d, cx), { primary: true, tip: `Opens a Claude tab with:
+${startWork(d, startTemplate(this.options.actions, d, this.jira?.settings.startTask))?.args.task ?? ""}` }).rounded_r(0)).child(h_flex5().id("jira-start-in").h(28).w(22).flex_none().items_center().justify_center().rounded_r(7).bg(t.solid).text_color(t.solid_foreground).cursor_pointer().hover((s) => s.opacity(0.9)).tooltip("Start in another folder\u2026").on_click((_e, cx) => this.startWork(d, cx, true)).child(svg4("mods/workspace-chrome/chevron-down.svg").size(12)))).when(Boolean(finish), (el) => el.child(this.button(t, "jira-finish", "Finish", (cx) => this.finishWork(d, cx), { tip: `Opens a Claude tab named ${d.key} finish with:
+${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", () => this.openUrl(d.url)))).when(this.pendingStep?.key === d.key, (el) => el.child(this.stepBox(t))).when(Boolean(this.actionMsg) || this.actionBusy === "transition", (el) => el.child(this.actionLine(t))).child(v_flex4().gap(4).text_size(12.5).child(meta("Type", d.type)).child(meta("Priority", d.priority)).child(meta("Assignee", d.assignee ?? "Unassigned")).child(meta("Reporter", d.reporter)).child(meta("Updated", d.updatedMs ? `${ago(d.updatedMs, Date.now())} ago` : null))).child(changeView(this, t)).child(v_flex4().gap(4).text_size(12.8).text_color(t.foreground).child(div5().text_size(11.5).font_medium().text_color(t.muted).child("Description")).children(d.description ? lines(d.description) : [div5().text_color(t.dim).child("No description.")])).when(d.links.length > 0, (el) => el.child(v_flex4().gap(4).text_size(12.5).child(div5().text_size(11.5).font_medium().text_color(t.muted).child("Links")).children(d.links.map((l, i) => h_flex5().id(`jira-link-${i}`).gap(6).cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => this.openUrl(l.url)).child(div5().text_color(t.dim).child(l.label)).child(div5().child(l.key)))))).child(v_flex4().gap(10).child(div5().text_size(11.5).font_medium().text_color(t.muted).child(d.commentTotal > d.comments.length ? `Comments \xB7 last ${d.comments.length} of ${d.commentTotal}` : `Comments \xB7 ${d.commentTotal}`)).children(d.comments.map((c) => v_flex4().gap(3).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.border).text_size(12.5).child(h_flex5().gap(6).child(div5().font_medium().child(c.author)).child(div5().text_color(t.dim).child(c.createdMs ? ago(c.createdMs, Date.now()) : ""))).children(lines(c.bodyText)))).child(v_flex4().gap(6).child(div5().rounded(8).border_1().border_color(t.border).bg(t.surface ?? t.chrome).px(10).py(8).child(Input.new(this.commentInput).w_full().h(22).text_size(12.5).text_color(t.foreground))).child(h_flex5().gap(8).items_center().child(div5().flex_1().text_size(11).text_color(t.dim).child("Enter sends")).child(this.button(
       t,
       "jira-comment-send",
       this.actionBusy === "comment" ? "Sending\u2026" : "Send",
@@ -3350,15 +3625,15 @@ ${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", (
   }
   // The status pill: a menu of the moves Jira allows from here (asked when it opens; workflows differ per issue).
   statusMenu(t, d) {
-    const pill = h_flex4().id("jira-status").h(24).px(8).gap(5).items_center().rounded(6).text_size(11.5).cursor_pointer().bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border).text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).hover((st) => st.opacity(0.85)).tooltip("Change status").child(d.status ?? "").child(svg3("mods/workspace-chrome/chevron-down.svg").size(11));
+    const pill = h_flex5().id("jira-status").h(24).px(8).gap(5).items_center().rounded(6).text_size(11.5).cursor_pointer().bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border).text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).hover((st) => st.opacity(0.85)).tooltip("Change status").child(d.status ?? "").child(svg4("mods/workspace-chrome/chevron-down.svg").size(11));
     const list3 = this.transitions;
-    const rows = list3 === "loading" || list3 === null ? [div4().p(8).text_color(t.dim).child("Asking Jira\u2026")] : list3.problem ? [div4().p(8).text_color(t.blocked).child(`${list3.problem.message} ${list3.problem.hint}`)] : !list3.length ? [div4().p(8).text_color(t.dim).child("No moves from this status.")] : list3.map((tr) => h_flex4().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx)).child(div4().flex_1().min_w(0).truncate().child(tr.name)).when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div4().flex_none().text_size(11).text_color(t.dim).child(`\u2192 ${tr.to.name}`))));
-    return Popover2.new("jira-status-menu").open(this.transOpen).on_open_change((open, cx) => this.openTransitions(open, cx)).trigger(pill).content(v_flex3().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+    const rows = list3 === "loading" || list3 === null ? [div5().p(8).text_color(t.dim).child("Asking Jira\u2026")] : list3.problem ? [div5().p(8).text_color(t.blocked).child(`${list3.problem.message} ${list3.problem.hint}`)] : !list3.length ? [div5().p(8).text_color(t.dim).child("No moves from this status.")] : list3.map((tr) => h_flex5().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx)).child(div5().flex_1().min_w(0).truncate().child(tr.name)).when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div5().flex_none().text_size(11).text_color(t.dim).child(`\u2192 ${tr.to.name}`))));
+    return Popover2.new("jira-status-menu").open(this.transOpen).on_open_change((open, cx) => this.openTransitions(open, cx)).trigger(pill).content(v_flex4().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
   }
   // A move from the status menu waiting for its one required value (a Resolution): Jira's choices as buttons.
   stepBox(t) {
     const { tr, field, url } = this.pendingStep;
-    return v_flex3().id("jira-step").p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div4().text_size(12.5).child(`${tr.name}: pick a ${field.name}`)).child(h_flex4().gap(6).flex_wrap().children(field.options.map((o) => this.button(t, `jira-step-opt-${o.id ?? o.name}`, o.name, (cx) => this.doTransition(tr, cx, url, stepFields(field.key, o)), { primary: true }))).child(this.button(t, "jira-step-cancel", "Cancel", (cx) => {
+    return v_flex4().id("jira-step").p(10).gap(8).rounded(8).bg(t.selected).border_1().border_color(t.accent).child(div5().text_size(12.5).child(`${tr.name}: pick a ${field.name}`)).child(h_flex5().gap(6).flex_wrap().children(field.options.map((o) => this.button(t, `jira-step-opt-${o.id ?? o.name}`, o.name, (cx) => this.doTransition(tr, cx, url, stepFields(field.key, o)), { primary: true }))).child(this.button(t, "jira-step-cancel", "Cancel", (cx) => {
       this.pendingStep = null;
       cx.notify();
     })));
@@ -3367,22 +3642,22 @@ ${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", (
   // Jira wants more for).
   actionLine(t) {
     const m = this.actionMsg;
-    if (!m) return div4().text_size(12).text_color(t.dim).child("Moving\u2026");
-    return h_flex4().gap(8).items_center().text_size(12).child(div4().flex_1().text_color(m.ok ? t.done : t.blocked).child(m.message)).when(Boolean(m.link), (el) => el.child(this.button(t, "jira-action-link", "Open in browser", () => this.openUrl(m.link))));
+    if (!m) return div5().text_size(12).text_color(t.dim).child("Moving\u2026");
+    return h_flex5().gap(8).items_center().text_size(12).child(div5().flex_1().text_color(m.ok ? t.done : t.blocked).child(m.message)).when(Boolean(m.link), (el) => el.child(this.button(t, "jira-action-link", "Open in browser", () => this.openUrl(m.link))));
   }
   render() {
     const t = theme();
     const state = checking() || !this.jira ? "setup" : pageState({ settings: this.jira.settings, token: this.jira.token, editing: this.editing, connected: this.connected, problem: this.problem, checking: this.checkingNow });
-    const root = v_flex3().id("dock-jira").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_mouse_up("left", (_e, cx) => this.dragEnded(cx));
+    const root = v_flex4().id("dock-jira").relative().size_full().min_h(0).bg(t.background).text_color(t.foreground).on_mouse_up("left", (_e, cx) => this.dragEnded(cx));
     if (state === "setup" || state === "settings") return root.child(this.settingsForm(t, state === "setup"));
     if (state === "problem") return root.child(this.problemView(t));
     if (state === "checking") {
-      return root.child(v_flex3().size_full().items_center().justify_center().gap(6).child(div4().text_size(14).child("Connecting to Jira\u2026")).child(div4().text_size(12).text_color(t.dim).child(this.jira.settings.baseUrl)));
+      return root.child(v_flex4().size_full().items_center().justify_center().gap(6).child(div5().text_size(14).child("Connecting to Jira\u2026")).child(div5().text_size(12).text_color(t.dim).child(this.jira.settings.baseUrl)));
     }
     const s = this.shown();
-    const message = (text) => v_flex3().flex_1().items_center().justify_center().text_color(t.dim).child(text);
-    const body = this.tab().kind === "today" ? v_flex3().flex_1().min_w(0).min_h(0).child(briefView(this, t)).when(this.options.board != null, (el) => el.child(sprintBoard(this, t))) : s.listProblem ? v_flex3().flex_1().p(24).gap(6).child(div4().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div4().text_size(12).text_color(t.dim).child(s.listProblem.hint)) : !s.fetchedAt ? message("Loading\u2026") : !s.rows.length && !s.loading ? message(s.query ? `Nothing matches "${s.query}".` : "No issues in this filter.") : this.layout() === "board" ? this.boardView(t) : this.listView(t);
-    return root.child(this.header(t)).child(tabBar(this, t)).child(div4().flex().flex_row().flex_1().min_h(0).child(body).when(Boolean(this.selected), (el) => el.child(this.detailView(t))));
+    const message = (text) => v_flex4().flex_1().items_center().justify_center().text_color(t.dim).child(text);
+    const body = this.tab().kind === "today" ? v_flex4().flex_1().min_w(0).min_h(0).child(briefView(this, t)).when(this.options.board != null, (el) => el.child(sprintBoard(this, t))) : s.listProblem ? v_flex4().flex_1().p(24).gap(6).child(div5().text_size(13).text_color(t.blocked).child(s.listProblem.message)).child(div5().text_size(12).text_color(t.dim).child(s.listProblem.hint)) : !s.fetchedAt ? message("Loading\u2026") : !s.rows.length && !s.loading ? message(s.query ? `Nothing matches "${s.query}".` : "No issues in this filter.") : this.layout() === "board" ? this.boardView(t) : this.listView(t);
+    return root.child(this.header(t)).child(tabBar(this, t)).child(div5().flex().flex_row().flex_1().min_h(0).child(body).when(Boolean(this.selected), (el) => el.child(this.detailView(t)))).when(Boolean(this.picker), (el) => el.child(startPicker(this, t)));
   }
 };
 export {
