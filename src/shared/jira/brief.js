@@ -318,3 +318,13 @@ export function checkMessage(template, { key, summary, edits, mine }) {
   const values = { key, summary, when: whenText(edits), mine: list(mine).join(", ") };
   return String(template ?? "").replace(/\{(\w+)\}/g, (whole, name) => (Object.hasOwn(values, name) ? String(values[name] ?? "") : whole));
 }
+
+// The brief's list height when it sits above the board, added up from what it draws (brief-view.js): a section's
+// header is 28, a row 30, a one-line note (a section's "none" line, a failed search) 20, "Loading…" 32, and 10 below.
+// The view caps it (BRIEF_MAX_H) and gives the list that definite height: one sized only by a max-height doesn't
+// scroll in Herdr. `sections`: each shown section's row count.
+export function briefListHeight({ sections = [], failed = false, loading = false } = {}) {
+  const NOTE = 20;
+  const body = loading ? 32 : sections.reduce((h, n) => h + 28 + (n > 0 ? n * 30 : NOTE), 0);
+  return (failed ? NOTE : 0) + body + 10;
+}

@@ -4,7 +4,7 @@
 // select(key, cx), markAllRead(cx), markRead(cx), checkMyWork(item, cx), openUrl(url), toggleRecent(key, cx).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { briefLists, checkWork, editsText, isUnread } from "../../shared/jira/brief.js";
+import { briefListHeight, briefLists, checkWork, editsText, isUnread } from "../../shared/jira/brief.js";
 import { diffStats, foldDiff } from "../../shared/jira/diff.js";
 import { ago } from "../../shared/jira/model.js";
 import { keyColumnWidth } from "../../shared/jira/page.js";
@@ -88,12 +88,15 @@ export function briefView(page, t) {
   // A search that failed: said over what the brief last had.
   const failed = b.problem ? div().px(16).pb(4).text_size(12).text_color(t.blocked).child(`${PART[b.problem.part] ?? "The brief"}: ${problemText(b.problem)}`) : null;
   const scroll = page.scroll("today/brief");
-  // Alone, the brief fills Today; above the board, it takes BRIEF_MAX_H at most.
-  const body = (alone ? v_flex().id("jira-brief-list").flex_1().min_h(0) : v_flex().id("jira-brief-list").flex_none().max_h(BRIEF_MAX_H))
-    .overflow_y_scrollbar().pb(10)
+  const list = v_flex().id("jira-brief-list").flex_1().min_h(0).overflow_y_scrollbar().pb(10)
     .when(Boolean(scroll), (el) => el.track_scroll(scroll))
     .when(Boolean(failed), (el) => el.child(failed))
     .children(sections);
+  // Alone, the brief fills Today; above the board, its list gets a definite height (as tall as it draws, BRIEF_MAX_H at
+  // most) and scrolls in it: a list sized only by a max-height doesn't scroll in Herdr.
+  const counts = [lists.changed.length, ...(alone ? [] : [lists.sprint.length]), lists.bugs.length];
+  const height = Math.min(BRIEF_MAX_H, briefListHeight({ sections: counts, failed: Boolean(failed), loading: !b.at }));
+  const body = alone ? list : v_flex().flex_none().h(height).min_h(0).child(list);
   return (alone ? v_flex().id("jira-brief").flex_1().min_h(0) : v_flex().id("jira-brief").flex_none().border_b(1).border_color(t.border))
     .min_w(0).child(head).child(body);
 }

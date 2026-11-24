@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_CHECK_TASK } from "../src/shared/jira/settings.js";
 import {
-  briefBadge, briefLists, bugsSearch, changeDiff, changedItem, changedSearches, checkMessage, checkWork, descriptionEdits, editsText,
+  briefBadge, briefListHeight, briefLists, bugsSearch, changeDiff, changedItem, changedSearches, checkMessage, checkWork, descriptionEdits, editsText,
   historyPlan, isUnread, keySearches, newInSprintItem, pruneBugs, readAll, readOnOpen, recentEdits, sinceMinutes, subtasksByParent, withRead,
 } from "../src/shared/jira/brief.js";
 
@@ -435,4 +435,13 @@ test("checkWork: a Claude tab '<key> check' with checkMessage's text; {mine} you
   const full = checkWork(item, { template: DEFAULT_CHECK_TASK, subtasks }).args.task;
   for (const v of ["v2", "v4", "v5"]) assert.ok(!full.includes(v), v); // never the description's text
   assert.equal(checkWork(null, { template: "{key}" }), null);
+});
+
+// The brief above the board gets a definite height (a list sized only by max-height doesn't scroll in Herdr), so
+// its list's height is added up from its parts: 28 per section header, 30 per row, 20 for a one-line note, 10 below.
+test("briefListHeight: headers, rows and one-line notes add up", () => {
+  assert.equal(briefListHeight({ sections: [2, 0, 1] }), 28 * 3 + 30 * 2 + 20 + 30 + 10);
+  assert.equal(briefListHeight({ sections: [0], failed: true }), 20 + 28 + 20 + 10);
+  assert.equal(briefListHeight({ loading: true }), 32 + 10);
+  assert.equal(briefListHeight({ sections: [] }), 10);
 });

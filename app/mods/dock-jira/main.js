@@ -702,6 +702,11 @@ function checkMessage(template, { key, summary, edits, mine }) {
   const values = { key, summary, when: whenText(edits), mine: list(mine).join(", ") };
   return String(template ?? "").replace(/\{(\w+)\}/g, (whole, name) => Object.hasOwn(values, name) ? String(values[name] ?? "") : whole);
 }
+function briefListHeight({ sections = [], failed = false, loading = false } = {}) {
+  const NOTE = 20;
+  const body = loading ? 32 : sections.reduce((h, n) => h + 28 + (n > 0 ? n * 30 : NOTE), 0);
+  return (failed ? NOTE : 0) + body + 10;
+}
 
 // src/shared/jira/actions.js
 function projectOf(issue) {
@@ -1769,7 +1774,10 @@ function briefView(page, t) {
   const head = h_flex().h(38).px(16).gap(8).flex_none().items_center().child(div().text_size(13).font_semibold().child("Brief")).child(div().text_size(11.5).text_color(t.dim).child(b.sinceMs ? `since ${shortDate2(b.sinceMs)}` : "")).child(div().flex_1()).child(page.button(t, "jira-brief-read-all", "Mark all read", (cx) => page.markAllRead(cx), { enabled: unread > 0 }));
   const failed = b.problem ? div().px(16).pb(4).text_size(12).text_color(t.blocked).child(`${PART[b.problem.part] ?? "The brief"}: ${problemText(b.problem)}`) : null;
   const scroll = page.scroll("today/brief");
-  const body = (alone ? v_flex().id("jira-brief-list").flex_1().min_h(0) : v_flex().id("jira-brief-list").flex_none().max_h(BRIEF_MAX_H)).overflow_y_scrollbar().pb(10).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(failed), (el) => el.child(failed)).children(sections);
+  const list3 = v_flex().id("jira-brief-list").flex_1().min_h(0).overflow_y_scrollbar().pb(10).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(failed), (el) => el.child(failed)).children(sections);
+  const counts = [lists.changed.length, ...alone ? [] : [lists.sprint.length], lists.bugs.length];
+  const height = Math.min(BRIEF_MAX_H, briefListHeight({ sections: counts, failed: Boolean(failed), loading: !b.at }));
+  const body = alone ? list3 : v_flex().flex_none().h(height).min_h(0).child(list3);
   return (alone ? v_flex().id("jira-brief").flex_1().min_h(0) : v_flex().id("jira-brief").flex_none().border_b(1).border_color(t.border)).min_w(0).child(head).child(body);
 }
 function changeView(page, t) {
