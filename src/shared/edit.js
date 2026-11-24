@@ -1,5 +1,6 @@
 // Placement rules and draft edits for the config UI (pure; no Node built-ins).
 import { LEFT_ONLY, PAGE_ONLY, REGION_NAMES, mergeForHost, parseConfig, parseLocal } from "./config.js";
+import { browserOf, checkBrowser } from "./browser/config.js";
 
 const LEFT_MODES = ["expanded", "icons", "hidden"];
 const FOOTER = "dock-footer";
@@ -18,13 +19,14 @@ export function canTurnOff(mod) {
 }
 
 // local: the parsed per-PC local file (or null), merged over base + machines.<host>.
+// The draft is { regions, production }: production is the browser's production host patterns.
 export function draftFromConfig(config, host, local = null) {
   const merged = JSON.parse(JSON.stringify(mergeForHost(config, host, local)));
   const regions = {};
   for (const name of REGION_NAMES) regions[name] = merged.regions[name];
   // The mode carries "hidden" for left.
   regions.left.hidden = false;
-  return { regions };
+  return { regions, production: [...browserOf(merged).production] };
 }
 
 export function regionOf(draft, mod) {
@@ -44,13 +46,18 @@ const same = (a, b) => canonical(a) === canonical(b);
 const EDITED = ["size", "hidden", "mode", "features"];
 const fields = (name) => (name === "left" ? ["size", "mode", "features"] : name === "pages" ? ["features"] : ["size", "hidden", "features"]);
 
+// A draft without production (an older caller's) counts as no hosts.
+const hostsOf = (d) => d.production ?? [];
+
 export function sameDraft(a, b) {
-  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])));
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])))
+    && same(hostsOf(a), hostsOf(b));
 }
 
 // On a conflict: the fresh draft with only the fields the user changed (draft vs baseDraft) put back on top.
 export function rebaseDraft(baseDraft, draft, freshDraft) {
   const out = JSON.parse(JSON.stringify(freshDraft));
+  if (draft.production !== undefined && !same(draft.production, hostsOf(baseDraft))) out.production = [...draft.production];
   for (const name of REGION_NAMES) {
     for (const k of fields(name)) {
       const mine = draft.regions[name]?.[k];
@@ -146,6 +153,11 @@ export function applyEdit(draft, op) {
       if (!LEFT_MODES.includes(op.value)) error = `regions.left.mode: must be one of ${LEFT_MODES.join(", ")}`;
       else d.regions.left.mode = op.value;
       break;
+    case "production":
+      // Host patterns like example.com or *.example.com; the same rule the config file is held to.
+      error = checkBrowser({ production: op.hosts });
+      if (!error) d.production = [...op.hosts];
+      break;
     default:
       error = `unknown edit: ${op.type}`;
   }
@@ -206,8 +218,18 @@ export function formatConfig(obj) {
   return pretty(obj, "") + "\n";
 }
 
+// The local file's browser block with the draft's production hosts: set when they differ from the
+// shared config's, dropped when they equal it (the block too, once empty). Its other keys stay.
+function withProduction(browser, hosts, shared) {
+  const out = { ...(browser ?? {}) };
+  if (same(hosts, shared)) delete out.production;
+  else out.production = [...hosts];
+  return out;
+}
+
 // The local file text that holds this draft: { v: 1, regions } with only what differs from the
-// shared config merged with machines.<host> (empty regions when nothing does). Other top-level
+// shared config merged with machines.<host> (empty regions when nothing does), and
+// browser.production when the draft's hosts differ from the shared config's. Other top-level
 // keys of the local file stay.
 export function planSave(baseText, localText, host, draft) {
   const base = parseConfig(baseText);
@@ -215,15 +237,27 @@ export function planSave(baseText, localText, host, draft) {
   const local = parseLocal(localText);
   if (!local.ok) return { ok: false, error: local.error };
   const shared = mergeForHost(base.config, host);
-  const section = machineSection({ v: 1, regions: shared.regions }, draft);
+  // The draft was merged with this PC's browser setting, which adds or removes dock-browser; the
+  // baseline must use the same setting, or that merge reads as a layout edit and pins the region.
+  const { enabled } = browserOf(mergeForHost(base.config, host, local.local));
+  const section = machineSection({ v: 1, regions: shared.regions, browser: { enabled } }, draft);
   const { v: _v, regions: _r, ...rest } = local.local ?? {};
+  if (draft.production !== undefined) {
+    const browser = withProduction(rest.browser, draft.production, browserOf(shared).production);
+    if (Object.keys(browser).length) rest.browser = browser;
+    else delete rest.browser;
+  }
   const text = formatConfig({ v: 1, regions: section ?? {}, ...rest });
   const check = parseLocal(text);
   return check.ok ? { ok: true, text } : { ok: false, error: check.error };
 }
 
-// Back to shared: the local file goes. Herdr has no delete API, so the session writes EMPTY_LOCAL.
-export function planReset() {
+// Back to shared: the local file goes, except its browser block (this PC's Chrome, whether the
+// browser is on, its production hosts), which Reset leaves alone. Herdr has no delete API, so a
+// session with nothing to keep writes EMPTY_LOCAL.
+export function planReset(localText = null) {
+  const { ok, local } = parseLocal(localText);
+  if (ok && local && "browser" in local) return { ok: true, text: formatConfig({ v: 1, regions: {}, browser: local.browser }) };
   return { ok: true, delete: true };
 }
 

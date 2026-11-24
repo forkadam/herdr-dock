@@ -68,7 +68,11 @@ Offer to install a missing CLI, and do it only if they say yes. Otherwise skip t
 for Testing (~150 MB). Agents then open and drive a real page with `browse`, and the person watches it in the Browser
 panel. It is off by default, and a "no" skips this step.
 
-If they say yes, set it in `<app home>/herdr-dock/local.json` (this PC only; the file is `{ "v": 1, ... }`):
+If they say yes, tell them they can turn it on themselves after the install: in the Dock layout dialog (Ctrl+Alt+,
+or the layout button in the left panel footer), its **Browser** section offers the Chrome found on this PC or Chrome
+for Testing, and **Turn on** runs the deploy below in a **Set up the browser** tab and shows the result there
+(**Turn off** removes it). Or, if they want you to do it now, set it in `<app home>/herdr-dock/local.json` (this PC
+only; the file is `{ "v": 1, ... }`):
 
 ```
 "browser": { "enabled": true }

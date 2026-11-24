@@ -4,6 +4,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { applyEdit } from "../../shared/edit.js";
 import { modRows } from "../../shared/inventory.js";
+import { BROWSER_OFF_TIP } from "./browser-view.js";
 import { segmented, tag, toggle } from "./ui.js";
 
 const SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"], ["pages", "Page"]];
@@ -23,6 +24,7 @@ const names = (t, item) => [
 function modRow(dlg, t, item, dimmed) {
   const s = dlg.session;
   const options = SEGMENTS.map(([value, text]) => {
+    if (value === "off" && item.id === "dock-browser") return { value, label: text, enabled: false, tip: BROWSER_OFF_TIP };
     const error = applyEdit(s.draft, { type: "place", mod: item.id, region: value }).error;
     return { value, label: text, enabled: dlg.editable() && !error, tip: error };
   });

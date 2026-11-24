@@ -45,6 +45,12 @@ function tarFile(tar, member) {
 var BROWSER_REL = "herdr-dock/browser";
 var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
 
+// src/shared/browser/setup-result.js
+var SETUP_RESULT_REL = "herdr-dock/browser/setup-result.json";
+var ABANDON_MS = 15 * 6e4;
+var startResult = (action, now) => ({ state: "running", startedAt: now, action });
+var endResult = (action, outcome, message, now) => ({ state: outcome, at: now, action, message });
+
 // src/shared/path.js
 function slashPath(p) {
   let s = String(p).replace(/\\/g, "/");
@@ -260,6 +266,7 @@ function browserSettings(home) {
 var SKILL_MARK = "<!-- herdr-dock: dock-browser -->";
 var SKILL_DIR = "dock-browser";
 var CHROME_MARKER = `${BROWSER_REL}/chrome-installed`;
+var MISSING_CHROME = "the Chrome set in browser.chrome was not found";
 function pinFor(platform, arch) {
   return pins_default.packages[`${platform}-${arch}`] ?? null;
 }
@@ -395,41 +402,63 @@ function removeBrowser({ appHome, dry = false, say = console.log }) {
   if (!dry) rmSync(dir, { recursive: true, force: true });
   return true;
 }
+function writeSetupResult(appHome, result) {
+  try {
+    const file = join2(appHome, SETUP_RESULT_REL);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(result));
+    return true;
+  } catch {
+    return false;
+  }
+}
 var defaultIo = () => ({ out: (s) => console.log(s), err: (s) => console.error(s) });
 async function main(argv, deps = {}) {
   const env = deps.env ?? process.env;
   const io = deps.io ?? defaultIo();
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
+  const now = deps.now ?? Date.now;
   const at = argv.indexOf("--app-home");
   const here = dirname(fileURLToPath(import.meta.url));
   const appHome = resolve(at >= 0 && argv[at + 1] ? argv[at + 1] : join2(here, "..", ".."));
   const check = argv.includes("--check");
   const cfg = browserSettings(slashPath(appHome));
   const enabled = cfg.enabled && !argv.includes("--remove");
+  const action = enabled ? "on" : "off";
   const targets = skillTargets({ env });
   const bin = join2(appHome, binRel(platform));
   const say = (s) => io.out(check ? `[check] ${s}` : s);
+  const record = (result) => {
+    if (!check) writeSetupResult(appHome, result);
+  };
+  const finish = (outcome, message, code) => {
+    record(endResult(action, outcome, message, now()));
+    return code;
+  };
+  record(startResult(action, now()));
   try {
     if (!enabled) {
       io.out(cfg.enabled ? "browser removal requested" : "browser is off (browser.enabled is false)");
       removeSkills({ targets, dry: check, say });
       removeBrowser({ appHome, dry: check, say });
-      return 0;
+      return finish("ok", "", 0);
     }
     const template = deps.template ?? readOrNull(join2(here, "browser-skill.md"));
     const r = await installAgentBrowser({ appHome, platform, arch, fetchBytes: deps.fetchBytes, dry: check, say });
-    if (r === "unsupported") return 0;
+    if (r === "unsupported") return finish("unsupported", "no agent-browser build for this computer", 0);
     const c = ensureChrome({ bin, chrome: cfg.chrome, run: deps.run, say, dry: check });
     if (argv.includes("--no-skills")) say("--no-skills: not writing the skill");
     else if (template == null) {
-      io.err("no browser-skill.md beside this script; the skill was not written");
-      return 1;
+      const message = "no browser-skill.md beside this script; the skill was not written";
+      io.err(message);
+      return finish("failed", message, 1);
     } else installSkills({ targets, text: skillText(template, { browse: join2(appHome, "mods/dock-browser/browse.mjs") }), dry: check, say });
-    return c === "failed" ? 1 : 0;
+    if (c === "failed") return finish("failed", "Chrome couldn't be set up", 1);
+    return c === "missing" ? finish("failed", MISSING_CHROME, 0) : finish("ok", "", 0);
   } catch (e) {
     io.err(`browser setup failed: ${e.message}`);
-    return 1;
+    return finish("failed", String(e.message).split("\n")[0], 1);
   }
 }
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
@@ -438,6 +467,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   });
 }
 export {
+  MISSING_CHROME,
   SKILL_MARK,
   ensureChrome,
   installAgentBrowser,
@@ -448,5 +478,6 @@ export {
   removeBrowser,
   removeSkills,
   skillTargets,
-  skillText
+  skillText,
+  writeSetupResult
 };

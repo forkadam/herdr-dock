@@ -1,7 +1,8 @@
 // The "Dock layout" dialog: places installed mods in the top, left, right or bottom region (or
 // switches them off) and saves the edits to this PC's local file (<app home>/herdr-dock/local.json,
 // only what differs from config/dock.json merged with machines.<host>); it never writes config/dock.json.
-// "Reset this PC to shared" empties the local file (Herdr has no delete API).
+// "Reset this PC to shared" empties the local file (Herdr has no delete API). The Browser section, below the
+// Updates strip, turns the browser on or off at once (outside the draft) and edits its production hosts (in the draft).
 // Opened by mod.open {name:"dock-config"} (dock-core.config, Ctrl+Alt+,). A view over session.js.
 // Icons: chevron-down.svg, x.svg, plus.svg and icon.svg (panel-left.svg) are copied from Herdr's
 // shipped workspace-chrome mod; chevron-up.svg (chevron-down flipped) and lock.svg are lucide's.
@@ -15,7 +16,11 @@ import { applyEdit, draftFromConfig, stepSize } from "../../shared/edit.js";
 import { buildInventory } from "../../shared/inventory.js";
 import { slashPath } from "../../shared/path.js";
 import { UPDATE_KEY } from "../../shared/update.js";
-import { isDirty, loadSession, resetSession, saveSession } from "./session.js";
+import { isDirty, loadSession, readBrowserStatus, resetSession, saveSession, setBrowser } from "./session.js";
+import { browserSectionView } from "./browser-section.js";
+import {
+  browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, pollDue, sectionCopy, setupWaits, turnOnChrome,
+} from "./browser-view.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
@@ -25,26 +30,41 @@ const REGIONS = ["top", "left", "right", "bottom"];
 const VIEW_KEY = "dock.config.view";
 const VIEWS = [["region", "By region"], ["mod", "By mod"]];
 const REPO_KEY = "dock.config.repo";
+const BROWSER_POLL_MS = 3000;
 
 const makeIo = () => ({
-  readTextFile, writeTextFile, exec, shared, appHome: slashPath(appHome()), platform: window()?.platform,
+  readTextFile, writeTextFile, exec, run, shared, appHome: slashPath(appHome()), platform: window()?.platform,
 });
 
 // What `herdr-app check` renders: the default config, read-only, with no files read.
 function checkSession() {
   const draft = draftFromConfig(DEFAULT_CONFIG, "");
-  return { path: null, localPath: null, host: null, baseText: null, opened: null, draft, baseDraft: draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
+  return {
+    path: null, localPath: null, host: null, mode: null, baseText: null, opened: null, draft, baseDraft: draft, browserEnabled: false,
+    inventory: buildInventory([], draft, { browserEnabled: false }), entries: [], readOnly: true, notice: null, error: null,
+  };
 }
+// ...and the browser off, with nothing found.
+const CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, sharedChrome: "", modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
 
 export default class DockConfig extends View {
   init(_props, cx) {
     this.session = null;
     this.loadError = null;
     this.editError = null; // the last refused edit, or a failed save
-    this.busy = null; // "save" or "reset" while one is running
+    this.busy = null; // "save", "reset" or "browser" while one is running
     this.confirmReset = false;
     this.showAll = false;
     this.addOpen = null; // the region whose "+ Add mod" list is open
+    this.browser = null; // the Browser section's status (readBrowserStatus), null until read
+    this.clicked = null; // { at, action }: the last click that ran a setup, until the result file shows it (clickedResult)
+    this.reading = false; // a status read is under way
+    this.browserDoing = null; // the browser action being written ("on" | "off" | "setup")
+    this.readAgain = false; // ...and another was asked for meanwhile
+    this.chromePick = undefined; // the Chrome Turn on uses (a path, or null to download); undefined: the first choice
+    this.hostsError = null; // the production hosts field's text doesn't parse: Save waits
+    this.hostsInput = InputState.new({ placeholder: "example.com, *.example.com" });
+    this.hostsInput.on("change", (_e, cx) => this.typedHosts(cx));
     this.sizes = {};
     for (const region of REGIONS) {
       const state = InputState.new({ value: "" });
@@ -61,16 +81,23 @@ export default class DockConfig extends View {
     }
     if (checking()) {
       this.session = checkSession();
+      this.browser = CHECK_BROWSER;
       return;
     }
+    // While a setup runs, the status is re-read every few seconds (the Running → On / Failed flip).
+    cx.timer.every(BROWSER_POLL_MS, (cx) => {
+      if (pollDue({ state: this.browserModel()?.section.state, reading: this.reading })) cx.spawn(async (cx) => this.readBrowser(cx));
+    });
     cx.spawn(async (cx) => {
       try {
         this.session = await loadSession(makeIo());
         this.showSizes();
+        this.showHosts();
       } catch (e) {
         this.loadError = `could not load the dock config: ${e?.message ?? e}`;
       }
       cx.notify();
+      if (this.session) await this.readBrowser(cx);
     });
   }
 
@@ -103,7 +130,7 @@ export default class DockConfig extends View {
     }
     this.editError = null;
     // A successful edit also clears the last save's error.
-    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft), error: null };
+    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft, { browserEnabled: s.browserEnabled }), error: null };
     cx.notify();
   }
 
@@ -120,6 +147,22 @@ export default class DockConfig extends View {
     const text = this.sizes[region].value().trim();
     if (!text || !this.session || Number(text) === this.session.draft.regions[region].size) return;
     this.act(cx, { type: "size", region, value: Number(text) });
+  }
+
+  // The production hosts field shows the draft's hosts again (after load, Save, Reset, a browser action).
+  showHosts() {
+    this.hostsError = null;
+    this.hostsInput.set_value((this.session?.draft.production ?? []).join(", "));
+  }
+
+  // Valid hosts go into the draft; invalid ones show why under the field and hold Save back.
+  typedHosts(cx) {
+    if (!this.session) return;
+    const r = parseHosts(this.hostsInput.value());
+    this.hostsError = r.ok ? null : r.error;
+    const now = this.session.draft.production ?? [];
+    if (r.ok && r.hosts.join(",") !== now.join(",")) this.act(cx, { type: "production", hosts: r.hosts });
+    else cx.notify();
   }
 
   step(region, delta, cx) {
@@ -141,12 +184,15 @@ export default class DockConfig extends View {
         this.session = await fn(this.session, makeIo());
         this.editError = null;
         this.showSizes();
+        this.showHosts();
       } catch (e) {
         this.editError = `${e?.message ?? e}`;
       } finally {
         this.busy = null;
         cx.notify();
       }
+      // A file changed on disk may have turned the browser on or off.
+      await this.readBrowser(cx);
     });
   }
 
@@ -170,7 +216,8 @@ export default class DockConfig extends View {
     // Clone mode runs scripts/update.mjs in the repo; app mode runs the shipped update-app.mjs (no repo).
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(runs);
+    // Update waits for a browser setup run (both deploy in a clone): two deploys never overlap.
+    const canUpdate = action?.kind !== "update" || (Boolean(runs) && !this.browserRunning());
     return h_flex().id("dc-updates").gap(8).items_center().min_h(28)
       .child(div().flex_none().text_size(12.5).text_color(t.muted).child("Updates"))
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(color).truncate()
@@ -184,11 +231,100 @@ export default class DockConfig extends View {
       run("dock-core.update.check");
       return;
     }
-    if (!runs) return;
+    if (!runs || this.browserRunning()) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);
     }
+  }
+
+  browserRunning() {
+    return this.browserModel()?.section.state === "running";
+  }
+
+  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled, tip (why the
+  // buttons wait for unsaved edits, or null) }, or null until the status is read.
+  browserModel() {
+    const s = this.session;
+    const st = this.browser;
+    if (!s || !st) return null;
+    const result = clickedResult(st.result, this.clicked);
+    const updating = !checking() && shared(UPDATE_KEY)?.status === "updating";
+    const section = browserSection({ ...st, result, updateRunning: updating, now: Date.now() });
+    const editable = !s.readOnly;
+    const how = this.browserRunsWith();
+    const tip = editable && how ? setupWaits({ mode: how.mode, dirty: isDirty(s) }) : null;
+    const enabled = editable && !this.busy && !section.busy && Boolean(how) && !tip;
+    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled, tip };
+  }
+
+  // Where the setup runs, as the Updates strip's Update does: the clone's repo, or the app install's home. null: unknown.
+  browserRunsWith() {
+    const repo = shared(REPO_KEY) ?? null;
+    const mode = this.session?.mode ?? shared(UPDATE_KEY)?.mode ?? (repo ? "clone" : null);
+    return mode === "app" || repo ? { mode, repo } : null;
+  }
+
+  // Reads the status (again, when asked during a read). The init timer re-reads it while a setup runs.
+  async readBrowser(cx) {
+    if (!this.session) return;
+    if (this.reading) {
+      this.readAgain = true;
+      return;
+    }
+    this.reading = true;
+    try {
+      do {
+        this.readAgain = false;
+        this.browser = await readBrowserStatus(this.session, makeIo());
+        if (this.clicked && clickedResult(this.browser.result, this.clicked) === this.browser.result) this.clicked = null;
+      } while (this.readAgain);
+    } catch (e) {
+      console.log(`dock-config: browser status not read: ${e?.message ?? e}`);
+    } finally {
+      this.reading = false;
+    }
+    cx.notify();
+  }
+
+  pickChrome(value, cx) {
+    this.chromePick = value;
+    cx.notify();
+  }
+
+  // Turn on (with the chosen Chrome; the download wins over a shared chrome), Turn off or Set up (this PC's chrome
+  // passed through): written at once, then the "Set up the browser" tab. A local.json changed on disk is refused with
+  // the changed-on-disk notice.
+  browserAction(action, cx) {
+    const how = this.browserRunsWith();
+    if (!this.browserModel()?.enabled || !how) return;
+    const chrome = action === "on"
+      ? turnOnChrome(chosenChrome(chromeChoices(this.browser), this.chromePick), this.browser.sharedChrome)
+      : this.browser.localChrome;
+    const now = Date.now();
+    this.busy = "browser";
+    this.browserDoing = action;
+    this.confirmReset = false;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await setBrowser(this.session, makeIo(), { action, chrome, ...how, now });
+        this.session = r.session;
+        this.editError = null;
+        // Running from the click on, even before the status is re-read: a second click can't start a second run.
+        if (r.ran) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
+        // As after a Save: a refused write rebased the draft onto the files.
+        this.showSizes();
+        this.showHosts();
+      } catch (e) {
+        this.editError = `${e?.message ?? e}`;
+      } finally {
+        this.busy = null;
+        this.browserDoing = null;
+        cx.notify();
+      }
+      await this.readBrowser(cx);
+    });
   }
 
   banner(t) {
@@ -230,7 +366,7 @@ export default class DockConfig extends View {
       .child(reset)
       .child(div().flex_1())
       .child(button(t, "dc-cancel", "Cancel", {}, () => this.cancel()))
-      .child(button(t, "dc-save", this.busy === "save" ? "Saving…" : "Save", { primary: true, enabled: canWrite && dirty },
+      .child(button(t, "dc-save", this.busy === "save" ? "Saving…" : "Save", { primary: true, enabled: canWrite && dirty && !this.hostsError },
         (_e, cx) => this.write(cx, saveSession, "save")))
       .when(dirty, (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child("● unsaved")));
   }
@@ -242,7 +378,8 @@ export default class DockConfig extends View {
       ? (view === "mod" ? byMod(this, t) : byRegion(this, t))
       : [div().py(24).text_color(t.dim).child(this.loadError ? "Couldn't load the dock config." : "Loading…")];
     return v_flex().id("dock-config").size_full().min_h(0).bg(t.popover).text_size(13).text_color(t.foreground)
-      .child(v_flex().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.updates(t)).child(this.banner(t)).child(this.tabs(t, view)))
+      .child(v_flex().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.updates(t))
+        .child(browserSectionView(this, t)).child(this.banner(t)).child(this.tabs(t, view)))
       .child(v_flex().id("dc-body").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(8).children(body))
       .child(this.footer(t));
   }

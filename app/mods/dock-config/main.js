@@ -1,6 +1,6 @@
 // src/mods/dock-config/main.js
-import { View, div as div4 } from "gpui-kit";
-import { h_flex as h_flex4, v_flex as v_flex3, InputState, Tabs, Tab } from "gpui-base";
+import { View, div as div5 } from "gpui-kit";
+import { h_flex as h_flex5, v_flex as v_flex4, InputState, Tabs, Tab } from "gpui-base";
 import {
   appHome,
   checking,
@@ -201,7 +201,7 @@ function draftFromConfig(config, host, local = null) {
   const regions = {};
   for (const name of REGION_NAMES) regions[name] = merged.regions[name];
   regions.left.hidden = false;
-  return { regions };
+  return { regions, production: [...browserOf(merged).production] };
 }
 function regionOf(draft, mod) {
   for (const name of REGION_NAMES) {
@@ -213,11 +213,13 @@ var canonical = (v) => JSON.stringify(v, (_k, x) => x !== null && typeof x === "
 var same = (a, b) => canonical(a) === canonical(b);
 var EDITED = ["size", "hidden", "mode", "features"];
 var fields = (name) => name === "left" ? ["size", "mode", "features"] : name === "pages" ? ["features"] : ["size", "hidden", "features"];
+var hostsOf = (d) => d.production ?? [];
 function sameDraft(a, b) {
-  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])));
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k]))) && same(hostsOf(a), hostsOf(b));
 }
 function rebaseDraft(baseDraft, draft, freshDraft) {
   const out = JSON.parse(JSON.stringify(freshDraft));
+  if (draft.production !== void 0 && !same(draft.production, hostsOf(baseDraft))) out.production = [...draft.production];
   for (const name of REGION_NAMES) {
     for (const k of fields(name)) {
       const mine = draft.regions[name]?.[k];
@@ -304,6 +306,10 @@ function applyEdit(draft, op) {
       if (!LEFT_MODES2.includes(op.value)) error = `regions.left.mode: must be one of ${LEFT_MODES2.join(", ")}`;
       else d.regions.left.mode = op.value;
       break;
+    case "production":
+      error = checkBrowser({ production: op.hosts });
+      if (!error) d.production = [...op.hosts];
+      break;
     default:
       error = `unknown edit: ${op.type}`;
   }
@@ -356,19 +362,33 @@ ${pad}}`;
 function formatConfig(obj) {
   return pretty(obj, "") + "\n";
 }
+function withProduction(browser, hosts, shared2) {
+  const out = { ...browser ?? {} };
+  if (same(hosts, shared2)) delete out.production;
+  else out.production = [...hosts];
+  return out;
+}
 function planSave(baseText, localText, host, draft) {
   const base = parseConfig(baseText);
   if (!base.ok) return { ok: false, error: base.error };
   const local = parseLocal(localText);
   if (!local.ok) return { ok: false, error: local.error };
   const shared2 = mergeForHost(base.config, host);
-  const section = machineSection({ v: 1, regions: shared2.regions }, draft);
+  const { enabled } = browserOf(mergeForHost(base.config, host, local.local));
+  const section = machineSection({ v: 1, regions: shared2.regions, browser: { enabled } }, draft);
   const { v: _v, regions: _r, ...rest } = local.local ?? {};
+  if (draft.production !== void 0) {
+    const browser = withProduction(rest.browser, draft.production, browserOf(shared2).production);
+    if (Object.keys(browser).length) rest.browser = browser;
+    else delete rest.browser;
+  }
   const text = formatConfig({ v: 1, regions: section ?? {}, ...rest });
   const check = parseLocal(text);
   return check.ok ? { ok: true, text } : { ok: false, error: check.error };
 }
-function planReset() {
+function planReset(localText = null) {
+  const { ok, local } = parseLocal(localText);
+  if (ok && local && "browser" in local) return { ok: true, text: formatConfig({ v: 1, regions: {}, browser: local.browser }) };
   return { ok: true, delete: true };
 }
 var EMPTY_LOCAL = formatConfig({ v: 1, regions: {} });
@@ -403,8 +423,9 @@ function installedFallbackIds(installedJsonText) {
     return [];
   }
 }
-function buildInventory(entries, draft) {
-  const items = entries.map(({ id, modJson }) => ({
+function buildInventory(entries, draft, { browserEnabled = true } = {}) {
+  const listed = browserEnabled ? entries : entries.filter((e) => e.id !== "dock-browser");
+  const items = listed.map(({ id, modJson }) => ({
     id,
     title: typeof modJson?.title === "string" && modJson.title ? modJson.title : id,
     reason: placeability(id, modJson),
@@ -441,6 +462,33 @@ var UPDATE_KEY = "dock.update.state";
 var TIMEOUT_MS = 10 * 60 * 1e3;
 var CHECK_EVERY_MS = 6 * 60 * 60 * 1e3;
 
+// src/shared/browser/session.js
+var BROWSER_REL = "herdr-dock/browser";
+var binRel = (platform) => `${BROWSER_REL}/bin/agent-browser${platform === "win32" ? ".exe" : ""}`;
+
+// src/shared/browser/setup-result.js
+var SETUP_RESULT_REL = "herdr-dock/browser/setup-result.json";
+var ABANDON_MS = 15 * 6e4;
+var OUTCOMES = ["ok", "failed", "unsupported"];
+var isObj3 = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+var startResult = (action, now) => ({ state: "running", startedAt: now, action });
+function parseSetupResult(text) {
+  let r;
+  try {
+    r = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObj3(r)) return null;
+  if (r.state === "running") return Number.isFinite(r.startedAt) ? r : null;
+  return OUTCOMES.includes(r.state) ? r : null;
+}
+function runState(result, now) {
+  if (!result) return null;
+  if (result.state === "running") return now - result.startedAt >= ABANDON_MS ? "abandoned" : "running";
+  return result.state;
+}
+
 // src/shared/install.js
 var isText = (v) => typeof v === "string" && v.trim() !== "";
 var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -475,6 +523,143 @@ function parseDirListing(platform, stdout) {
   const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (platform === "windows") return lines;
   return lines.filter((l) => l.endsWith("/")).map((l) => l.slice(0, -1));
+}
+
+// src/mods/dock-config/browser-view.js
+var ABANDONED = "the setup tab was closed or stopped";
+var TAB = '"Set up the browser" tab';
+var BROWSER_OFF_TIP = "Turn the browser off in the Browser section";
+var isObj4 = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+function chromeCandidates(platform, env = {}) {
+  if (platform === "darwin") {
+    return [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
+    ];
+  }
+  if (platform === "win32") {
+    return [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA].filter(Boolean).map((base) => `${base}\\Google\\Chrome\\Application\\chrome.exe`);
+  }
+  if (platform === "linux") {
+    return ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"];
+  }
+  return [];
+}
+function browserSection({ enabled, modInstalled, binInstalled, result, updateRunning, now }) {
+  const run2 = runState(result, now);
+  const busy = run2 === "running" || Boolean(updateRunning);
+  if (run2 === "running") return { state: "running", action: null, busy, message: "" };
+  if (run2 === "abandoned") return { state: "failed", action: result.action === "off" ? "off" : "setup", busy, message: ABANDONED };
+  const stale = result?.action === "on" && !enabled || result?.action === "off" && enabled;
+  if (run2 && !stale) {
+    const message = String(result.message ?? "");
+    if (run2 === "failed") return { state: "failed", action: result.action === "off" ? "off" : "setup", busy, message };
+    if (run2 === "unsupported") return { state: "unsupported", action: "off", busy, message };
+  }
+  if (!enabled) return { state: "off", action: "on", busy, message: "" };
+  if (modInstalled && binInstalled) return { state: "on", action: "off", busy, message: "" };
+  return { state: "notSetUp", action: "setup", busy, message: "" };
+}
+function browserRun({ mode, repo, home }) {
+  const tab = (folder, argv) => ({ command: "tab.new", args: { name: "Set up the browser", folder, argv } });
+  if (mode === "app") return tab(home, ["node", `${home}/mods/dock-browser/herdr-browser-setup.mjs`]);
+  return tab(repo, ["npm", "run", "deploy"]);
+}
+function withBrowserSetting(localText, { enabled, chrome }) {
+  let file = { v: 1, regions: {} };
+  if (localText != null) {
+    try {
+      file = JSON.parse(localText);
+    } catch (e) {
+      throw new Error(`local.json is not valid JSON: ${e.message}`);
+    }
+    if (!isObj4(file)) throw new Error("local.json must be a JSON object");
+  }
+  if ("browser" in file && !isObj4(file.browser)) throw new Error("local.json: browser must be an object");
+  const browser = { ...file.browser, enabled: enabled === true };
+  if (typeof chrome === "string") browser.chrome = chrome;
+  else delete browser.chrome;
+  return formatConfig({ ...file, browser });
+}
+function parseHosts(text) {
+  const hosts = String(text ?? "").split(/[\s,]+/).filter(Boolean).map((h) => h.toLowerCase());
+  const problem = checkBrowser({ production: hosts });
+  if (!problem) return { ok: true, hosts };
+  const bad = hosts.find((h) => checkBrowser({ production: [h] }));
+  return { ok: false, error: bad ? `"${bad}" isn't a host like example.com or *.example.com` : problem };
+}
+function clickedResult(result, clicked) {
+  if (!clicked) return result;
+  const t = result?.state === "running" ? result.startedAt : result?.at;
+  if (Number.isFinite(t) && t >= clicked.at) return result;
+  return startResult(clicked.action, clicked.at);
+}
+var KNOWN_CHROMES = { chrome: "Google Chrome", "google-chrome": "Google Chrome", "google-chrome-stable": "Google Chrome", chromium: "Chromium", "chromium-browser": "Chromium" };
+function chromeName(path) {
+  const p = String(path ?? "");
+  const app = /([^/\\]+)\.app(?:[/\\]|$)/.exec(p);
+  if (app) return app[1];
+  const base = p.split(/[/\\]/).pop().replace(/\.exe$/i, "");
+  return KNOWN_CHROMES[base.toLowerCase()] ?? base;
+}
+function chromeChoices({ chrome, chromeExists, found }) {
+  const out = [];
+  if (chrome && chromeExists) out.push({ value: chrome, label: `${chromeName(chrome)} (from your settings)` });
+  else if (found) out.push({ value: found, label: `${chromeName(found)} (found on this PC)` });
+  out.push({ value: null, label: "Download Chrome for Testing" });
+  return out;
+}
+var chosenChrome = (choices, pick) => choices.some((c) => c.value === pick) ? pick : choices[0].value;
+var turnOnChrome = (pick, sharedChrome) => typeof pick === "string" ? pick : sharedChrome ? "" : null;
+var SETUP_WAITS_TIP = "Save or cancel your layout edits first: setting up redeploys herdr-dock, which reloads this dialog";
+var setupWaits = ({ mode, dirty }) => mode !== "app" && dirty ? SETUP_WAITS_TIP : null;
+var pollDue = ({ state, reading }) => state === "running" && !reading;
+var button = (label2, action, primary) => ({ label: label2, action, primary });
+function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
+  const out = { head: "", tone: "dim", intro: "", note: "", button: null, secondary: null, chrome: false, hosts: false };
+  switch (section.state) {
+    case "off":
+      return {
+        ...out,
+        head: "\u25CB Off",
+        intro: "Let agents open and drive a real browser beside the terminal.",
+        note: "Turning it on downloads agent-browser (~20 MB) and, without a Chrome, Chrome for Testing (~150 MB).",
+        button: button("Turn on", "on", true),
+        chrome: true
+      };
+    case "running":
+      return { ...out, head: `${result?.action === "off" ? "Turning off\u2026" : "Setting up\u2026"} see the ${TAB}` };
+    case "on":
+      return { ...out, head: `\u25CF On \xB7 ${chrome ? chromeName(chrome) : "Chrome for Testing"}`, tone: "ok", button: button("Turn off", "off", false), hosts: true };
+    case "failed":
+      return {
+        ...out,
+        head: section.message ? `Setup failed: ${section.message}` : `Setup failed \u2014 see the ${TAB}`,
+        tone: "bad",
+        button: section.action === "off" ? button("Turn off", "off", false) : button("Set up again", "setup", true),
+        secondary: section.action === "off" ? null : button("Turn off", "off", false)
+      };
+    case "unsupported":
+      return { ...out, head: "Not available on this computer", tone: "bad", note: section.message, button: button("Turn off", "off", false) };
+    default: {
+      const missing = [!modInstalled && "dock-browser", !binInstalled && "agent-browser"].filter(Boolean).join(" and ");
+      return { ...out, head: `\u25CF On \xB7 not set up (${missing} missing)`, tone: "accent", button: button("Set up", "setup", true) };
+    }
+  }
+}
+var PROBE = "const fs=require('fs');const names=process.argv[1].split(',').filter(Boolean);console.log(JSON.stringify({env:Object.fromEntries(names.map((n)=>[n,process.env[n]??null])),exists:process.argv.slice(2).map((p)=>fs.existsSync(p))}))";
+var probeCommand = (names2, paths) => ({ command: "node", args: ["-e", PROBE, "--", names2.join(","), ...paths] });
+function parseProbe(stdout, paths) {
+  let r;
+  try {
+    r = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!isObj4(r) || !isObj4(r.env) || !Array.isArray(r.exists) || r.exists.length !== paths.length) return null;
+  const there = new Set(paths.filter((_p, i) => r.exists[i] === true));
+  return { env: r.env, exists: (p) => there.has(p) };
 }
 
 // src/mods/dock-config/session.js
@@ -534,6 +719,16 @@ function parseFiles(baseText, localText, host, localPath) {
   if (!local.ok) return { ok: false, error: local.error, file: localPath };
   return { ok: true, draft: draftFromConfig(base.config, host ?? "", local.local) };
 }
+function browserSettings(session) {
+  const base = session.baseText == null ? null : parseConfig(session.baseText);
+  const local = parseLocal(session.opened ?? null);
+  if (!base?.ok || !local.ok) return { enabled: regionOf(session.draft, "dock-browser") !== null, chrome: "", localChrome: null, sharedChrome: "" };
+  const text = (v) => typeof v === "string" ? v : "";
+  const b = browserOf(mergeForHost(base.config, session.host ?? "", local.local));
+  const shared2 = browserOf(mergeForHost(base.config, session.host ?? ""));
+  const mine = local.local?.browser?.chrome;
+  return { enabled: b.enabled === true, chrome: text(b.chrome), localChrome: typeof mine === "string" ? mine : null, sharedChrome: text(shared2.chrome) };
+}
 async function loadSession(io) {
   const { path, localPath, host, mode } = await resolvePaths(io);
   const baseText = path ? await io.readTextFile(path).catch(() => null) : null;
@@ -553,9 +748,25 @@ async function loadSession(io) {
     readOnly = true;
     error = mode === "app" ? "could not read this computer's hostname" : `this computer's hostname is unknown: ${fixHint(mode)}`;
   }
-  return { path, localPath, host, baseText, opened, draft, baseDraft: draft, inventory: buildInventory(entries, draft), entries, readOnly, notice, error };
+  const browserEnabled = browserSettings({ baseText, opened, host, draft }).enabled;
+  return {
+    path,
+    localPath,
+    host,
+    mode,
+    baseText,
+    opened,
+    draft,
+    baseDraft: draft,
+    browserEnabled,
+    inventory: buildInventory(entries, draft, { browserEnabled }),
+    entries,
+    readOnly,
+    notice,
+    error
+  };
 }
-var withInventory = (s, draft) => ({ ...s, draft, inventory: buildInventory(s.entries, draft) });
+var withInventory = (s, draft) => ({ ...s, draft, inventory: buildInventory(s.entries, draft, { browserEnabled: s.browserEnabled }) });
 var parseSession = (s, baseText = s.baseText, opened = s.opened) => parseFiles(baseText, opened, s.host, s.localPath);
 function rebase(session, baseText, opened) {
   const parsed = parseSession(session, baseText, opened);
@@ -563,25 +774,31 @@ function rebase(session, baseText, opened) {
     return { ...session, baseText, opened, notice: null, error: `${parsed.error} \u2014 fix ${parsed.file} by hand, then save again (your edits are kept)` };
   }
   const draft = rebaseDraft(session.baseDraft, session.draft, parsed.draft);
-  return { ...withInventory(session, draft), baseDraft: parsed.draft, baseText, opened, notice: CHANGED_NOTICE, error: null };
+  const next = { ...session, baseDraft: parsed.draft, baseText, opened, notice: CHANGED_NOTICE, error: null };
+  return withInventory({ ...next, browserEnabled: browserSettings(next).enabled }, draft);
 }
 var reread = (io, path) => path ? io.readTextFile(path).catch(() => null) : Promise.resolve(null);
-async function commit(session, io, makePlan) {
+async function writeLocal(session, io, makePlan) {
   const baseText = await reread(io, session.path);
   if (!parseSession(session).ok || baseText !== session.baseText) {
-    return rebase(session, baseText, await reread(io, session.localPath));
+    return { session: rebase(session, baseText, await reread(io, session.localPath)) };
   }
   const plan = makePlan();
-  if (!plan.ok) return { ...session, error: plan.error };
+  if (!plan.ok) return { session: { ...session, error: plan.error } };
   const text = plan.delete ? EMPTY_LOCAL : plan.text;
   try {
     await io.writeTextFile(session.localPath, text, session.opened);
   } catch (e) {
     const fresh = await reread(io, session.localPath);
-    if (fresh === session.opened) return { ...session, notice: null, error: String(e) };
-    return rebase(session, baseText, fresh);
+    if (fresh === session.opened) return { session: { ...session, notice: null, error: String(e) } };
+    return { session: rebase(session, baseText, fresh) };
   }
-  return { ...session, opened: text, baseDraft: session.draft, notice: null, error: null };
+  return { text };
+}
+async function commit(session, io, makePlan) {
+  const w = await writeLocal(session, io, makePlan);
+  if (w.session) return w.session;
+  return { ...session, opened: w.text, baseDraft: session.draft, notice: null, error: null };
 }
 async function saveSession(session, io) {
   if (session.readOnly) return session;
@@ -589,7 +806,7 @@ async function saveSession(session, io) {
 }
 async function resetSession(session, io) {
   if (session.readOnly) return session;
-  const next = await commit(session, io, () => planReset());
+  const next = await commit(session, io, () => planReset(session.opened));
   if (next.error || next.notice) return next;
   const parsed = parseSession(next);
   if (!parsed.ok) return next;
@@ -600,10 +817,84 @@ function isDirty(session) {
   if (!parsed.ok) return !session.readOnly;
   return !sameDraft(session.draft, parsed.draft);
 }
+var WIN_ENV = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"];
+var nodePlatform = (p) => ({ windows: "win32", macos: "darwin", linux: "linux" })[p] ?? p;
+async function probe(io, names2, paths) {
+  const { command, args } = probeCommand(names2, paths);
+  const r = await io.exec(command, args);
+  const p = r.code === 0 ? parseProbe(r.stdout ?? "", paths) : null;
+  if (!p) throw new Error(String(r.stderr || `node exit ${r.code}`).trim());
+  return p;
+}
+async function readBrowserStatus(session, io) {
+  const { enabled, chrome, localChrome, sharedChrome } = browserSettings(session);
+  const platform = nodePlatform(io.platform);
+  const mod = `${io.appHome}/mods/dock-browser`;
+  const bin = `${io.appHome}/${binRel(platform)}`;
+  const result = parseSetupResult(await io.readTextFile(`${io.appHome}/${SETUP_RESULT_REL}`).catch(() => null));
+  let exists = () => false;
+  let candidates = [];
+  let problem = null;
+  try {
+    const env = platform === "win32" ? (await probe(io, WIN_ENV, [])).env : {};
+    candidates = chromeCandidates(platform, env);
+    exists = (await probe(io, [], [mod, bin, ...chrome ? [chrome] : [], ...candidates])).exists;
+  } catch (e) {
+    problem = `couldn't check the browser's files: ${e?.message ?? e}`;
+  }
+  return {
+    enabled,
+    chrome,
+    localChrome,
+    sharedChrome,
+    modInstalled: exists(mod),
+    binInstalled: exists(bin),
+    chromeExists: Boolean(chrome) && exists(chrome),
+    found: candidates.find(exists) ?? null,
+    result,
+    problem
+  };
+}
+async function writeStart(io, result) {
+  const path = `${io.appHome}/${SETUP_RESULT_REL}`;
+  try {
+    const now = await io.readTextFile(path).catch(() => null);
+    await io.writeTextFile(path, JSON.stringify(result), now);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function setBrowser(session, io, { action, chrome = null, mode, repo, now }) {
+  const none = (s) => ({ session: s, ran: false, recorded: false });
+  if (session.readOnly) return none(session);
+  if (mode !== "app" && !repo) return none({ ...session, error: `can't set up the browser: herdr-dock's folder is unknown (${fixHint(mode)})` });
+  const enabled = action !== "off";
+  const w = await writeLocal(session, io, () => {
+    try {
+      return { ok: true, text: withBrowserSetting(session.opened, { enabled, chrome }) };
+    } catch (e) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  });
+  if (w.session) return none(w.session);
+  let next = { ...session, opened: w.text, notice: null, error: null };
+  const parsed = parseSession(next);
+  if (parsed.ok) {
+    const on = browserSettings(next).enabled;
+    const kept = rebaseDraft(session.baseDraft, session.draft, parsed.draft);
+    const draft = { ...kept, regions: withBrowserFeature(kept.regions, on) };
+    next = withInventory({ ...next, baseDraft: parsed.draft, browserEnabled: on }, draft);
+  }
+  const recorded = await writeStart(io, startResult(enabled ? "on" : "off", now));
+  const { command, args } = browserRun({ mode, repo, home: io.appHome });
+  io.run(command, args);
+  return { session: next, ran: true, recorded };
+}
 
-// src/mods/dock-config/by-mod.js
+// src/mods/dock-config/browser-section.js
 import { div as div2 } from "gpui-kit";
-import { h_flex as h_flex2, v_flex } from "gpui-base";
+import { h_flex as h_flex2, v_flex, Input } from "gpui-base";
 
 // src/mods/dock-config/ui.js
 import { div, svg } from "gpui-kit";
@@ -612,8 +903,8 @@ var icon = (name) => svg(`mods/dock-config/${name}.svg`);
 function iconButton(t, id, name, tip, enabled, onClick) {
   return h_flex().id(id).size(22).flex_none().items_center().justify_center().rounded(6).tooltip(tip).when(enabled, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(onClick)).when(!enabled, (el) => el.text_color(t.dim).opacity(0.35)).child(icon(name).size(12));
 }
-function button(t, id, label2, { primary = false, enabled = true } = {}, onClick) {
-  return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click(onClick).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.4)).child(label2);
+function button2(t, id, label2, { primary = false, enabled = true, tip = null } = {}, onClick) {
+  return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click(onClick).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.4)).when(Boolean(tip), (el) => el.tooltip(tip)).child(label2);
 }
 function toggle(t, id, on, enabled, onChange) {
   return Switch.new(id).checked(on).disabled(!enabled).on_change(onChange).flex().flex_row().items_center().flex_none().w(28).h(16).p(2).rounded_full().bg(on ? t.accent : t.border).when(enabled, (el) => el.cursor_pointer()).when(!enabled, (el) => el.opacity(0.4)).child(div().size(12).rounded_full().bg(on ? t.accent_foreground : t.muted).when(on, (el) => el.ml(12)));
@@ -626,7 +917,43 @@ function segmented(t, id, options, selected, onPick) {
 }
 var tag = (t, text) => div().flex_none().px(6).py(1).rounded(4).text_size(11).text_color(t.dim).border_1().border_color(t.border).child(text);
 
+// src/mods/dock-config/browser-section.js
+var HOSTS_NOTE = "Agents get a warning on these sites; nothing is blocked.";
+function chromeRow(dlg, t, choices, picked, enabled) {
+  return h_flex2().gap(10).items_center().min_h(24).child(div2().flex_none().text_color(t.muted).child("Chrome:")).children(choices.map((c, i) => {
+    const on = c.value === picked;
+    return h_flex2().id(`dc-chrome-${i}`).flex_none().h(22).px(4).gap(6).items_center().rounded(5).text_color(on ? t.foreground : t.muted).when(enabled && !on, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => dlg.pickChrome(c.value, cx))).when(!enabled, (el) => el.opacity(0.5)).child(div2().flex_none().text_color(on ? t.accent : t.dim).child(on ? "\u25CF" : "\u25CB")).child(c.label);
+  }));
+}
+function hostsRow(dlg, t, enabled) {
+  const error = dlg.hostsError;
+  return v_flex().gap(4).child(h_flex2().gap(8).items_center().child(div2().flex_none().text_color(t.muted).child("Production hosts")).child(Input.new(dlg.hostsInput).disabled(!enabled).flex_1().min_w(0).h(26).px(8).rounded(6).bg(t.background).border_1().border_color(error ? t.blocked : t.border).text_size(12.5).text_color(t.foreground))).child(div2().text_size(12).text_color(error ? t.blocked : t.dim).child(error ?? HOSTS_NOTE));
+}
+function browserSectionView(dlg, t) {
+  const m = dlg.browserModel();
+  const label2 = div2().flex_none().text_size(12.5).text_color(t.muted).child("Browser");
+  const row = h_flex2().id("dc-browser").gap(8).items_start().text_size(12.5);
+  if (!m) return row.child(label2.mt(6)).child(div2().min_h(28).flex().items_center().text_color(t.dim).child("Checking\u2026"));
+  const { copy, status, editable, enabled, tip } = m;
+  const tone = { ok: t.done ?? t.accent, bad: t.blocked, accent: t.accent, dim: t.dim }[copy.tone] ?? t.dim;
+  const draw = (b) => button2(
+    t,
+    `dc-browser-${b.action}`,
+    dlg.busy === "browser" && dlg.browserDoing === b.action ? "Working\u2026" : b.label,
+    { primary: b.primary, enabled, tip },
+    (_e, cx) => dlg.browserAction(b.action, cx)
+  );
+  const act = copy.button && editable ? draw(copy.button) : null;
+  const second = copy.secondary && editable ? draw(copy.secondary) : null;
+  const choices = chromeChoices(status);
+  const picked = chosenChrome(choices, dlg.chromePick);
+  const head = h_flex2().gap(10).items_center().min_h(28).child(div2().flex_none().text_color(tone).child(copy.head)).child(div2().flex_1().min_w(0).text_color(t.muted).child(copy.intro)).when(Boolean(second), (el) => el.child(second)).when(Boolean(act) && !copy.chrome, (el) => el.child(act));
+  return row.child(label2.mt(6)).child(v_flex().flex_1().min_w(0).gap(4).child(head).when(Boolean(copy.note), (el) => el.child(div2().text_color(t.dim).child(copy.note))).when(Boolean(status.problem), (el) => el.child(div2().text_color(t.dim).child(status.problem))).when(copy.chrome && editable, (el) => el.child(chromeRow(dlg, t, choices, picked, enabled))).when(Boolean(act) && copy.chrome, (el) => el.child(h_flex2().child(act))).when(copy.hosts && editable, (el) => el.child(hostsRow(dlg, t, dlg.editable()))));
+}
+
 // src/mods/dock-config/by-mod.js
+import { div as div3 } from "gpui-kit";
+import { h_flex as h_flex3, v_flex as v_flex2 } from "gpui-base";
 var SEGMENTS = [["off", "Off"], ["top", "Top"], ["left", "Left"], ["right", "Right"], ["bottom", "Bottom"], ["pages", "Page"]];
 var REASONS = {
   self: "this dialog",
@@ -636,16 +963,17 @@ var REASONS = {
   overlay: "dialog or popup"
 };
 var names = (t, item) => [
-  div2().w(200).flex_none().truncate().child(item.title),
-  div2().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(item.id)
+  div3().w(200).flex_none().truncate().child(item.title),
+  div3().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(item.id)
 ];
 function modRow(dlg, t, item, dimmed) {
   const s = dlg.session;
   const options = SEGMENTS.map(([value, text]) => {
+    if (value === "off" && item.id === "dock-browser") return { value, label: text, enabled: false, tip: BROWSER_OFF_TIP };
     const error = applyEdit(s.draft, { type: "place", mod: item.id, region: value }).error;
     return { value, label: text, enabled: dlg.editable() && !error, tip: error };
   });
-  return h_flex2().id(`dc-mod-${item.id}`).h(34).px(4).gap(8).items_center().rounded(6).hover((st) => st.bg(t.hover)).children(names(t, item).map((el) => dimmed ? el.opacity(0.5) : el)).when(!item.installed, (el) => el.child(tag(t, "not installed"))).when(item.reason !== null, (el) => el.child(tag(t, REASONS[item.reason] ?? item.reason))).child(segmented(
+  return h_flex3().id(`dc-mod-${item.id}`).h(34).px(4).gap(8).items_center().rounded(6).hover((st) => st.bg(t.hover)).children(names(t, item).map((el) => dimmed ? el.opacity(0.5) : el)).when(!item.installed, (el) => el.child(tag(t, "not installed"))).when(item.reason !== null, (el) => el.child(tag(t, REASONS[item.reason] ?? item.reason))).child(segmented(
     t,
     `dc-seg-${item.id}`,
     options,
@@ -656,33 +984,33 @@ function modRow(dlg, t, item, dimmed) {
 function byMod(dlg, t) {
   const { normal, others } = modRows(dlg.session.inventory);
   return [
-    h_flex2().h(36).gap(8).items_center().child(div2().flex_1().text_size(12).text_color(t.dim).child(`${normal.length} mods can be placed`)).child(div2().text_size(12).text_color(t.muted).child("Show all mods")).child(toggle(t, "dc-show-all", dlg.showAll, true, (on, cx) => {
+    h_flex3().h(36).gap(8).items_center().child(div3().flex_1().text_size(12).text_color(t.dim).child(`${normal.length} mods can be placed`)).child(div3().text_size(12).text_color(t.muted).child("Show all mods")).child(toggle(t, "dc-show-all", dlg.showAll, true, (on, cx) => {
       dlg.showAll = on;
       cx.notify();
     })),
-    v_flex().gap(1).children(normal.map((i) => modRow(dlg, t, i, false))),
-    ...dlg.showAll && others.length ? [v_flex().gap(1).pt(8).mt(6).border_t(1).border_color(t.border).children(others.map((i) => modRow(dlg, t, i, true)))] : []
+    v_flex2().gap(1).children(normal.map((i) => modRow(dlg, t, i, false))),
+    ...dlg.showAll && others.length ? [v_flex2().gap(1).pt(8).mt(6).border_t(1).border_color(t.border).children(others.map((i) => modRow(dlg, t, i, true)))] : []
   ];
 }
 
 // src/mods/dock-config/by-region.js
-import { div as div3 } from "gpui-kit";
-import { h_flex as h_flex3, v_flex as v_flex2, NumberInput, Popover } from "gpui-base";
+import { div as div4 } from "gpui-kit";
+import { h_flex as h_flex4, v_flex as v_flex3, NumberInput, Popover } from "gpui-base";
 var LEFT_MODES3 = [["expanded", "expanded"], ["icons", "icons"], ["hidden", "hidden"]];
 var LABEL_W = 64;
-var label = (t, text) => div3().flex_none().text_size(12).text_color(t.dim).child(text);
+var label = (t, text) => div4().flex_none().text_size(12).text_color(t.dim).child(text);
 function sizeInput(dlg, t, region) {
-  const step = (h) => h_flex3().w(18).h(11).items_center().justify_center().text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground)).child(icon(h).size(10));
+  const step = (h) => h_flex4().w(18).h(11).items_center().justify_center().text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground)).child(icon(h).size(10));
   return NumberInput.new(dlg.sizes[region]).controls_right().disabled(!dlg.editable()).flex().flex_row().items_center().w(84).h(26).pl(8).pr(2).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(12.5).on_step((action, cx) => dlg.step(region, action === "increment" ? 1 : -1, cx)).decrement_button(step("chevron-down")).increment_button(step("chevron-up"));
 }
 function regionControls(dlg, t, region) {
   const r = dlg.session.draft.regions[region];
   const on = dlg.editable();
-  const title = div3().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase());
+  const title = div4().w(LABEL_W).flex_none().text_size(11.5).font_semibold().text_color(t.muted).child(region.toUpperCase());
   if (region === "pages") {
-    return h_flex3().h(32).gap(10).items_center().child(title).child(label(t, "shown one at a time in place of the terminal, from the Pages list (Ctrl+Alt+P cycles)"));
+    return h_flex4().h(32).gap(10).items_center().child(title).child(label(t, "shown one at a time in place of the terminal, from the Pages list (Ctrl+Alt+P cycles)"));
   }
-  const row = h_flex3().h(32).gap(10).items_center().child(title).child(label(t, "size")).child(sizeInput(dlg, t, region));
+  const row = h_flex4().h(32).gap(10).items_center().child(title).child(label(t, "size")).child(sizeInput(dlg, t, region));
   if (region === "right" || region === "bottom") {
     const text = region === "right" ? "shown by default" : "shown";
     return row.child(label(t, text)).child(toggle(
@@ -711,24 +1039,24 @@ function featureRow(dlg, t, region, list, i) {
   const pinned = (m) => region === "top" && m === "dock-core";
   const canUp = on && i > 0 && !pinned(f.mod) && !pinned(list[i - 1].mod);
   const canDown = on && i < list.length - 1 && !pinned(f.mod) && !pinned(list[i + 1].mod);
-  const controls = f.mod === "dock-core" ? [h_flex3().id("dc-lock").size(22).items_center().justify_center().text_color(t.dim).tooltip("dock-core stays first in the top bar").child(icon("lock").size(12))] : [
+  const controls = f.mod === "dock-core" ? [h_flex4().id("dc-lock").size(22).items_center().justify_center().text_color(t.dim).tooltip("dock-core stays first in the top bar").child(icon("lock").size(12))] : [
     iconButton(t, `dc-up-${region}-${i}`, "chevron-up", "Move up", canUp, (_e, cx) => dlg.act(cx, { type: "move", region, index: i, delta: -1 })),
     iconButton(t, `dc-down-${region}-${i}`, "chevron-down", "Move down", canDown, (_e, cx) => dlg.act(cx, { type: "move", region, index: i, delta: 1 })),
-    iconButton(t, `dc-off-${region}-${i}`, "x", "Turn off", on, (_e, cx) => dlg.act(cx, { type: "place", mod: f.mod, region: "off" }))
+    f.mod === "dock-browser" ? iconButton(t, `dc-off-${region}-${i}`, "x", BROWSER_OFF_TIP, false, null) : iconButton(t, `dc-off-${region}-${i}`, "x", "Turn off", on, (_e, cx) => dlg.act(cx, { type: "place", mod: f.mod, region: "off" }))
   ];
-  return h_flex3().id(`dc-row-${region}-${f.mod}`).h(28).pl(LABEL_W + 10).pr(4).gap(8).items_center().rounded(6).hover((s) => s.bg(t.hover)).child(div3().w(200).flex_none().truncate().child(item?.title ?? f.mod)).child(div3().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(f.mod)).when(item && !item.installed, (el) => el.child(tag(t, "not installed"))).child(h_flex3().flex_none().gap(2).children(controls));
+  return h_flex4().id(`dc-row-${region}-${f.mod}`).h(28).pl(LABEL_W + 10).pr(4).gap(8).items_center().rounded(6).hover((s) => s.bg(t.hover)).child(div4().w(200).flex_none().truncate().child(item?.title ?? f.mod)).child(div4().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(f.mod)).when(item && !item.installed, (el) => el.child(tag(t, "not installed"))).child(h_flex4().flex_none().gap(2).children(controls));
 }
 function addMod(dlg, t, region) {
-  const trigger = (enabled) => h_flex3().id(`dc-add-${region}-trigger`).h(26).px(8).gap(6).items_center().rounded(6).text_size(12.5).text_color(t.muted).when(enabled, (el) => el.cursor_pointer().hover((s2) => s2.bg(t.hover).text_color(t.foreground))).when(!enabled, (el) => el.opacity(0.4)).child(icon("plus").size(12)).child("Add mod").child(icon("chevron-down").size(11));
-  const wrap = (el) => h_flex3().pl(LABEL_W + 6).child(el);
+  const trigger = (enabled) => h_flex4().id(`dc-add-${region}-trigger`).h(26).px(8).gap(6).items_center().rounded(6).text_size(12.5).text_color(t.muted).when(enabled, (el) => el.cursor_pointer().hover((s2) => s2.bg(t.hover).text_color(t.foreground))).when(!enabled, (el) => el.opacity(0.4)).child(icon("plus").size(12)).child("Add mod").child(icon("chevron-down").size(11));
+  const wrap = (el) => h_flex4().pl(LABEL_W + 6).child(el);
   if (!dlg.editable()) return wrap(trigger(false));
   const s = dlg.session;
   const candidates = s.inventory.filter((i) => i.reason === null && i.region !== region && allowedRegions(i.id).includes(region));
-  const rows = candidates.map((i) => h_flex3().id(`dc-add-${region}-${i.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
+  const rows = candidates.map((i) => h_flex4().id(`dc-add-${region}-${i.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
     dlg.addOpen = null;
     dlg.act(cx, { type: "place", mod: i.id, region });
-  }).child(div3().flex_1().min_w(0).truncate().child(i.title)).child(div3().flex_none().text_size(11.5).text_color(t.dim).child(i.region ? `in ${i.region}` : i.id)));
-  const content = v_flex2().id(`dc-add-${region}-list`).w(280).max_h(300).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows.length ? rows : [div3().p(8).text_color(t.dim).child("Every mod that fits here is already in it")]);
+  }).child(div4().flex_1().min_w(0).truncate().child(i.title)).child(div4().flex_none().text_size(11.5).text_color(t.dim).child(i.region ? `in ${i.region}` : i.id)));
+  const content = v_flex3().id(`dc-add-${region}-list`).w(280).max_h(300).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows.length ? rows : [div4().p(8).text_color(t.dim).child("Every mod that fits here is already in it")]);
   return wrap(Popover.new(`dc-add-${region}`).open(dlg.addOpen === region).on_open_change((open, cx) => {
     dlg.addOpen = open ? region : null;
     cx.notify();
@@ -738,7 +1066,7 @@ function byRegion(dlg, t) {
   const regions = dlg.session.draft.regions;
   return ["top", "left", "right", "bottom", "pages"].map((region) => {
     const list = regions[region].features;
-    return v_flex2().gap(2).py(8).border_b(1).border_color(t.border).child(regionControls(dlg, t, region)).children(list.map((_f, i) => featureRow(dlg, t, region, list, i))).when(!list.length, (el) => el.child(div3().pl(LABEL_W + 10).h(24).text_size(12).text_color(t.dim).child("no mods"))).child(addMod(dlg, t, region));
+    return v_flex3().gap(2).py(8).border_b(1).border_color(t.border).child(regionControls(dlg, t, region)).children(list.map((_f, i) => featureRow(dlg, t, region, list, i))).when(!list.length, (el) => el.child(div4().pl(LABEL_W + 10).h(24).text_size(12).text_color(t.dim).child("no mods"))).child(addMod(dlg, t, region));
   });
 }
 
@@ -808,18 +1136,36 @@ var REGIONS = ["top", "left", "right", "bottom"];
 var VIEW_KEY = "dock.config.view";
 var VIEWS = [["region", "By region"], ["mod", "By mod"]];
 var REPO_KEY = "dock.config.repo";
+var BROWSER_POLL_MS = 3e3;
 var makeIo = () => ({
   readTextFile,
   writeTextFile,
   exec,
+  run,
   shared,
   appHome: slashPath(appHome()),
   platform: window()?.platform
 });
 function checkSession() {
   const draft = draftFromConfig(DEFAULT_CONFIG, "");
-  return { path: null, localPath: null, host: null, baseText: null, opened: null, draft, baseDraft: draft, inventory: buildInventory([], draft), entries: [], readOnly: true, notice: null, error: null };
+  return {
+    path: null,
+    localPath: null,
+    host: null,
+    mode: null,
+    baseText: null,
+    opened: null,
+    draft,
+    baseDraft: draft,
+    browserEnabled: false,
+    inventory: buildInventory([], draft, { browserEnabled: false }),
+    entries: [],
+    readOnly: true,
+    notice: null,
+    error: null
+  };
 }
+var CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, sharedChrome: "", modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
 var DockConfig = class extends View {
   init(_props, cx) {
     this.session = null;
@@ -829,6 +1175,15 @@ var DockConfig = class extends View {
     this.confirmReset = false;
     this.showAll = false;
     this.addOpen = null;
+    this.browser = null;
+    this.clicked = null;
+    this.reading = false;
+    this.browserDoing = null;
+    this.readAgain = false;
+    this.chromePick = void 0;
+    this.hostsError = null;
+    this.hostsInput = InputState.new({ placeholder: "example.com, *.example.com" });
+    this.hostsInput.on("change", (_e, cx2) => this.typedHosts(cx2));
     this.sizes = {};
     for (const region of REGIONS) {
       const state = InputState.new({ value: "" });
@@ -844,16 +1199,22 @@ var DockConfig = class extends View {
     }
     if (checking()) {
       this.session = checkSession();
+      this.browser = CHECK_BROWSER;
       return;
     }
+    cx.timer.every(BROWSER_POLL_MS, (cx2) => {
+      if (pollDue({ state: this.browserModel()?.section.state, reading: this.reading })) cx2.spawn(async (cx3) => this.readBrowser(cx3));
+    });
     cx.spawn(async (cx2) => {
       try {
         this.session = await loadSession(makeIo());
         this.showSizes();
+        this.showHosts();
       } catch (e) {
         this.loadError = `could not load the dock config: ${e?.message ?? e}`;
       }
       cx2.notify();
+      if (this.session) await this.readBrowser(cx2);
     });
   }
   editable() {
@@ -881,7 +1242,7 @@ var DockConfig = class extends View {
       draft = r.draft;
     }
     this.editError = null;
-    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft), error: null };
+    this.session = { ...s, draft, inventory: buildInventory(s.entries, draft, { browserEnabled: s.browserEnabled }), error: null };
     cx.notify();
   }
   showSize(region) {
@@ -895,6 +1256,20 @@ var DockConfig = class extends View {
     const text = this.sizes[region].value().trim();
     if (!text || !this.session || Number(text) === this.session.draft.regions[region].size) return;
     this.act(cx, { type: "size", region, value: Number(text) });
+  }
+  // The production hosts field shows the draft's hosts again (after load, Save, Reset, a browser action).
+  showHosts() {
+    this.hostsError = null;
+    this.hostsInput.set_value((this.session?.draft.production ?? []).join(", "));
+  }
+  // Valid hosts go into the draft; invalid ones show why under the field and hold Save back.
+  typedHosts(cx) {
+    if (!this.session) return;
+    const r = parseHosts(this.hostsInput.value());
+    this.hostsError = r.ok ? null : r.error;
+    const now = this.session.draft.production ?? [];
+    if (r.ok && r.hosts.join(",") !== now.join(",")) this.act(cx, { type: "production", hosts: r.hosts });
+    else cx.notify();
   }
   step(region, delta, cx) {
     if (!this.session) return;
@@ -914,12 +1289,14 @@ var DockConfig = class extends View {
         this.session = await fn(this.session, makeIo());
         this.editError = null;
         this.showSizes();
+        this.showHosts();
       } catch (e) {
         this.editError = `${e?.message ?? e}`;
       } finally {
         this.busy = null;
         cx2.notify();
       }
+      await this.readBrowser(cx2);
     });
   }
   cancel() {
@@ -928,7 +1305,7 @@ var DockConfig = class extends View {
   }
   header(t) {
     const host = this.session?.host ?? shared("dock.host");
-    return h_flex4().gap(10).items_baseline().child(div4().text_size(15).font_semibold().child("Dock layout")).child(div4().text_size(12.5).text_color(t.dim).child(`this PC: ${host || "unknown"}`));
+    return h_flex5().gap(10).items_baseline().child(div5().text_size(15).font_semibold().child("Dock layout")).child(div5().text_size(12.5).text_color(t.dim).child(`this PC: ${host || "unknown"}`));
   }
   // The Updates strip: dock-core's update state, with Check now or Update.
   updates(t) {
@@ -937,8 +1314,8 @@ var DockConfig = class extends View {
     const color = { accent: t.accent, ok: t.done ?? t.accent, bad: t.blocked, dim: t.dim }[strip.tone] ?? t.dim;
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(runs);
-    return h_flex4().id("dc-updates").gap(8).items_center().min_h(28).child(div4().flex_none().text_size(12.5).text_color(t.muted).child("Updates")).child(div4().flex_1().min_w(0).text_size(12.5).text_color(color).truncate().child(strip.tone === "accent" ? `\u25CF ${strip.text}` : strip.text)).when(Boolean(action), (el) => el.child(button(
+    const canUpdate = action?.kind !== "update" || Boolean(runs) && !this.browserRunning();
+    return h_flex5().id("dc-updates").gap(8).items_center().min_h(28).child(div5().flex_none().text_size(12.5).text_color(t.muted).child("Updates")).child(div5().flex_1().min_w(0).text_size(12.5).text_color(color).truncate().child(strip.tone === "accent" ? `\u25CF ${strip.text}` : strip.text)).when(Boolean(action), (el) => el.child(button2(
       t,
       `dc-update-${action.kind}`,
       action.label,
@@ -951,44 +1328,123 @@ var DockConfig = class extends View {
       run("dock-core.update.check");
       return;
     }
-    if (!runs) return;
+    if (!runs || this.browserRunning()) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);
     }
   }
+  browserRunning() {
+    return this.browserModel()?.section.state === "running";
+  }
+  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled, tip (why the
+  // buttons wait for unsaved edits, or null) }, or null until the status is read.
+  browserModel() {
+    const s = this.session;
+    const st = this.browser;
+    if (!s || !st) return null;
+    const result = clickedResult(st.result, this.clicked);
+    const updating = !checking() && shared(UPDATE_KEY)?.status === "updating";
+    const section = browserSection({ ...st, result, updateRunning: updating, now: Date.now() });
+    const editable = !s.readOnly;
+    const how = this.browserRunsWith();
+    const tip = editable && how ? setupWaits({ mode: how.mode, dirty: isDirty(s) }) : null;
+    const enabled = editable && !this.busy && !section.busy && Boolean(how) && !tip;
+    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled, tip };
+  }
+  // Where the setup runs, as the Updates strip's Update does: the clone's repo, or the app install's home. null: unknown.
+  browserRunsWith() {
+    const repo = shared(REPO_KEY) ?? null;
+    const mode = this.session?.mode ?? shared(UPDATE_KEY)?.mode ?? (repo ? "clone" : null);
+    return mode === "app" || repo ? { mode, repo } : null;
+  }
+  // Reads the status (again, when asked during a read). The init timer re-reads it while a setup runs.
+  async readBrowser(cx) {
+    if (!this.session) return;
+    if (this.reading) {
+      this.readAgain = true;
+      return;
+    }
+    this.reading = true;
+    try {
+      do {
+        this.readAgain = false;
+        this.browser = await readBrowserStatus(this.session, makeIo());
+        if (this.clicked && clickedResult(this.browser.result, this.clicked) === this.browser.result) this.clicked = null;
+      } while (this.readAgain);
+    } catch (e) {
+      console.log(`dock-config: browser status not read: ${e?.message ?? e}`);
+    } finally {
+      this.reading = false;
+    }
+    cx.notify();
+  }
+  pickChrome(value, cx) {
+    this.chromePick = value;
+    cx.notify();
+  }
+  // Turn on (with the chosen Chrome; the download wins over a shared chrome), Turn off or Set up (this PC's chrome
+  // passed through): written at once, then the "Set up the browser" tab. A local.json changed on disk is refused with
+  // the changed-on-disk notice.
+  browserAction(action, cx) {
+    const how = this.browserRunsWith();
+    if (!this.browserModel()?.enabled || !how) return;
+    const chrome = action === "on" ? turnOnChrome(chosenChrome(chromeChoices(this.browser), this.chromePick), this.browser.sharedChrome) : this.browser.localChrome;
+    const now = Date.now();
+    this.busy = "browser";
+    this.browserDoing = action;
+    this.confirmReset = false;
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      try {
+        const r = await setBrowser(this.session, makeIo(), { action, chrome, ...how, now });
+        this.session = r.session;
+        this.editError = null;
+        if (r.ran) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
+        this.showSizes();
+        this.showHosts();
+      } catch (e) {
+        this.editError = `${e?.message ?? e}`;
+      } finally {
+        this.busy = null;
+        this.browserDoing = null;
+        cx2.notify();
+      }
+      await this.readBrowser(cx2);
+    });
+  }
   banner(t) {
     const s = this.session;
     const errors = [...new Set([shared("dock.config.error"), s?.error, this.editError, this.loadError].filter(Boolean))];
-    return v_flex3().gap(6).children(errors.map((e, i) => h_flex4().id(`dc-error-${i}`).px(10).py(6).gap(8).rounded(8).text_size(12.5).bg(t.blocked + "14").border_1().border_color(t.blocked + "40").text_color(t.foreground).child(div4().flex_none().text_color(t.blocked).child("\u26A0")).child(div4().flex_1().min_w(0).child(String(e))))).when(Boolean(s?.notice), (el) => el.child(div4().px(2).text_size(12.5).text_color(t.muted).child(s.notice)));
+    return v_flex4().gap(6).children(errors.map((e, i) => h_flex5().id(`dc-error-${i}`).px(10).py(6).gap(8).rounded(8).text_size(12.5).bg(t.blocked + "14").border_1().border_color(t.blocked + "40").text_color(t.foreground).child(div5().flex_none().text_color(t.blocked).child("\u26A0")).child(div5().flex_1().min_w(0).child(String(e))))).when(Boolean(s?.notice), (el) => el.child(div5().px(2).text_size(12.5).text_color(t.muted).child(s.notice)));
   }
   tabs(t, view) {
-    return h_flex4().child(Tabs.new("dc-tabs").flex().flex_row().gap(2).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).children(VIEWS.map(([value, text], i) => Tab.new(`dc-tab-${value}`).selected(view === value).set_position(i + 1, VIEWS.length).flex().flex_row().items_center().h(24).px(12).rounded(6).text_size(12.5).when(view === value, (el) => el.bg(t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))).on_click(() => setShared(VIEW_KEY, value)).child(text))));
+    return h_flex5().child(Tabs.new("dc-tabs").flex().flex_row().gap(2).p(2).rounded(8).bg(t.background).border_1().border_color(t.border).children(VIEWS.map(([value, text], i) => Tab.new(`dc-tab-${value}`).selected(view === value).set_position(i + 1, VIEWS.length).flex().flex_row().items_center().h(24).px(12).rounded(6).text_size(12.5).when(view === value, (el) => el.bg(t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))).on_click(() => setShared(VIEW_KEY, value)).child(text))));
   }
   footer(t) {
     const s = this.session;
     const canWrite = Boolean(s) && !s.readOnly && !this.busy;
     const dirty = Boolean(s) && isDirty(s);
-    const reset = this.confirmReset ? h_flex4().gap(6).items_center().child(div4().text_size(12.5).child("Reset this PC to shared?")).child(button(t, "dc-reset-yes", "Yes", { enabled: canWrite }, (_e, cx) => this.write(cx, resetSession, "reset"))).child(button(t, "dc-reset-no", "No", {}, (_e, cx) => {
+    const reset = this.confirmReset ? h_flex5().gap(6).items_center().child(div5().text_size(12.5).child("Reset this PC to shared?")).child(button2(t, "dc-reset-yes", "Yes", { enabled: canWrite }, (_e, cx) => this.write(cx, resetSession, "reset"))).child(button2(t, "dc-reset-no", "No", {}, (_e, cx) => {
       this.confirmReset = false;
       cx.notify();
-    })) : h_flex4().id("dc-reset").h(28).px(8).items_center().rounded(7).text_size(12.5).text_color(t.muted).when(canWrite, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
+    })) : h_flex5().id("dc-reset").h(28).px(8).items_center().rounded(7).text_size(12.5).text_color(t.muted).when(canWrite, (el) => el.cursor_pointer().hover((st) => st.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
       this.confirmReset = true;
       cx.notify();
     })).when(!canWrite, (el) => el.opacity(0.4)).child("Reset this PC to shared");
-    return h_flex4().flex_none().h(52).px(16).gap(8).items_center().border_t(1).border_color(t.border).child(reset).child(div4().flex_1()).child(button(t, "dc-cancel", "Cancel", {}, () => this.cancel())).child(button(
+    return h_flex5().flex_none().h(52).px(16).gap(8).items_center().border_t(1).border_color(t.border).child(reset).child(div5().flex_1()).child(button2(t, "dc-cancel", "Cancel", {}, () => this.cancel())).child(button2(
       t,
       "dc-save",
       this.busy === "save" ? "Saving\u2026" : "Save",
-      { primary: true, enabled: canWrite && dirty },
+      { primary: true, enabled: canWrite && dirty && !this.hostsError },
       (_e, cx) => this.write(cx, saveSession, "save")
-    )).when(dirty, (el) => el.child(div4().flex_none().text_size(12).text_color(t.accent).child("\u25CF unsaved")));
+    )).when(dirty, (el) => el.child(div5().flex_none().text_size(12).text_color(t.accent).child("\u25CF unsaved")));
   }
   render() {
     const t = theme();
     const view = shared(VIEW_KEY) === "mod" ? "mod" : "region";
-    const body = this.session ? view === "mod" ? byMod(this, t) : byRegion(this, t) : [div4().py(24).text_color(t.dim).child(this.loadError ? "Couldn't load the dock config." : "Loading\u2026")];
-    return v_flex3().id("dock-config").size_full().min_h(0).bg(t.popover).text_size(13).text_color(t.foreground).child(v_flex3().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.updates(t)).child(this.banner(t)).child(this.tabs(t, view))).child(v_flex3().id("dc-body").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(8).children(body)).child(this.footer(t));
+    const body = this.session ? view === "mod" ? byMod(this, t) : byRegion(this, t) : [div5().py(24).text_color(t.dim).child(this.loadError ? "Couldn't load the dock config." : "Loading\u2026")];
+    return v_flex4().id("dock-config").size_full().min_h(0).bg(t.popover).text_size(13).text_color(t.foreground).child(v_flex4().flex_none().px(16).pt(14).pb(10).gap(10).child(this.header(t)).child(this.updates(t)).child(browserSectionView(this, t)).child(this.banner(t)).child(this.tabs(t, view))).child(v_flex4().id("dc-body").flex_1().min_h(0).overflow_y_scrollbar().px(16).pb(8).children(body)).child(this.footer(t));
   }
 };
 export {

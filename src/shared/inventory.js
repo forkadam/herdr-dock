@@ -27,9 +27,11 @@ export function installedFallbackIds(installedJsonText) {
   }
 }
 
-// One Item per installed mod, plus any mod the config names that isn't installed.
-export function buildInventory(entries, draft) {
-  const items = entries.map(({ id, modJson }) => ({
+// One Item per installed mod, plus any mod the config names that isn't installed. While the browser is off
+// (browserEnabled false) dock-browser isn't listed: the Browser section turns it on, and an app install ships it anyway.
+export function buildInventory(entries, draft, { browserEnabled = true } = {}) {
+  const listed = browserEnabled ? entries : entries.filter((e) => e.id !== "dock-browser");
+  const items = listed.map(({ id, modJson }) => ({
     id,
     title: typeof modJson?.title === "string" && modJson.title ? modJson.title : id,
     reason: placeability(id, modJson),

@@ -6,6 +6,7 @@
 //
 // Enabled (browser.enabled): install agent-browser, Chrome, the skills. Disabled or --remove: remove the skills this
 // wrote and the binary folder. The signed-in profile is never touched. --check prints the state and changes nothing.
+// Each run (not --check) records its outcome in herdr-dock/browser/setup-result.json (see shared/browser/setup-result.js).
 // The app home defaults to two folders above this script. Exit code 0 unless it failed.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,12 +18,15 @@ import { gunzipSync } from "node:zlib";
 import pins from "../shared/browser/pins.json" with { type: "json" };
 import { tarFile } from "../shared/browser/tar.js";
 import { BROWSER_REL, binRel } from "../shared/browser/session.js";
+import { SETUP_RESULT_REL, endResult, startResult } from "../shared/browser/setup-result.js";
 import { slashPath } from "../shared/path.js";
 import { browserSettings } from "./browser-settings.js";
 
 export const SKILL_MARK = "<!-- herdr-dock: dock-browser -->";
 const SKILL_DIR = "dock-browser";
 const CHROME_MARKER = `${BROWSER_REL}/chrome-installed`;
+// What a setup result says when browser.chrome points at a Chrome that isn't there (ensureChrome -> "missing").
+export const MISSING_CHROME = "the Chrome set in browser.chrome was not found";
 
 // {name, integrity, member} for this platform and CPU, or null when agent-browser has no build for it.
 export function pinFor(platform, arch) {
@@ -154,41 +158,65 @@ export function removeBrowser({ appHome, dry = false, say = console.log }) {
   return true;
 }
 
+// Writes the whole result file under the app home, creating its folder. A result that can't be written must never fail
+// the setup itself: -> whether it was written.
+export function writeSetupResult(appHome, result) {
+  try {
+    const file = join(appHome, SETUP_RESULT_REL);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(result));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const defaultIo = () => ({ out: (s) => console.log(s), err: (s) => console.error(s) });
 
-// deps (tests): env, io, fetchBytes, run, template, platform, arch. -> exit code.
+// deps (tests): env, io, fetchBytes, run, template, platform, arch, now (ms). -> exit code.
 export async function main(argv, deps = {}) {
   const env = deps.env ?? process.env;
   const io = deps.io ?? defaultIo();
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
+  const now = deps.now ?? Date.now;
   const at = argv.indexOf("--app-home");
   const here = dirname(fileURLToPath(import.meta.url));
   const appHome = resolve(at >= 0 && argv[at + 1] ? argv[at + 1] : join(here, "..", ".."));
   const check = argv.includes("--check");
   const cfg = browserSettings(slashPath(appHome));
   const enabled = cfg.enabled && !argv.includes("--remove");
+  const action = enabled ? "on" : "off";
   const targets = skillTargets({ env });
   const bin = join(appHome, binRel(platform));
   const say = (s) => io.out(check ? `[check] ${s}` : s);
+  // --check changes nothing, so it records nothing.
+  const record = (result) => { if (!check) writeSetupResult(appHome, result); };
+  const finish = (outcome, message, code) => { record(endResult(action, outcome, message, now())); return code; };
+  record(startResult(action, now()));
   try {
     if (!enabled) {
       io.out(cfg.enabled ? "browser removal requested" : "browser is off (browser.enabled is false)");
       removeSkills({ targets, dry: check, say });
       removeBrowser({ appHome, dry: check, say });
-      return 0;
+      return finish("ok", "", 0);
     }
     const template = deps.template ?? readOrNull(join(here, "browser-skill.md"));
     const r = await installAgentBrowser({ appHome, platform, arch, fetchBytes: deps.fetchBytes, dry: check, say });
-    if (r === "unsupported") return 0;
+    if (r === "unsupported") return finish("unsupported", "no agent-browser build for this computer", 0);
     const c = ensureChrome({ bin, chrome: cfg.chrome, run: deps.run, say, dry: check });
     if (argv.includes("--no-skills")) say("--no-skills: not writing the skill");
-    else if (template == null) { io.err("no browser-skill.md beside this script; the skill was not written"); return 1; }
-    else installSkills({ targets, text: skillText(template, { browse: join(appHome, "mods/dock-browser/browse.mjs") }), dry: check, say });
-    return c === "failed" ? 1 : 0;
+    else if (template == null) {
+      const message = "no browser-skill.md beside this script; the skill was not written";
+      io.err(message);
+      return finish("failed", message, 1);
+    } else installSkills({ targets, text: skillText(template, { browse: join(appHome, "mods/dock-browser/browse.mjs") }), dry: check, say });
+    if (c === "failed") return finish("failed", "Chrome couldn't be set up", 1);
+    // A configured chrome that isn't there is recorded as failed; the exit code stays 0 (the warning is printed).
+    return c === "missing" ? finish("failed", MISSING_CHROME, 0) : finish("ok", "", 0);
   } catch (e) {
     io.err(`browser setup failed: ${e.message}`);
-    return 1;
+    return finish("failed", String(e.message).split("\n")[0], 1);
   }
 }
 

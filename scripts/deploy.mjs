@@ -12,8 +12,9 @@ import { resolveAppHome } from "./app-home.mjs";
 import { setupStatusline } from "../src/app/statusline-setup.js";
 import { AGY_MARK } from "../src/shared/statusline.js";
 import { browserOf } from "../src/shared/browser/config.js";
-import { binRel } from "../src/shared/browser/session.js";
-import { ensureChrome, installAgentBrowser, installSkills, removeBrowser, removeSkills, skillTargets, skillText } from "../src/app/browser-install.js";
+import { BROWSER_REL, binRel } from "../src/shared/browser/session.js";
+import { endResult, startResult } from "../src/shared/browser/setup-result.js";
+import { MISSING_CHROME, ensureChrome, installAgentBrowser, installSkills, removeBrowser, removeSkills, skillTargets, skillText, writeSetupResult } from "../src/app/browser-install.js";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
@@ -53,6 +54,22 @@ try { sharedState = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8"
 const merged = mergeWithLocal(parsed.config, host, local.local);
 const layout = buildLayout(merged, rightStateFromShared(sharedState));
 const browser = browserOf(merged);
+
+// The browser setup records its outcome for the Dock layout dialog (herdr-dock/browser/setup-result.json): running now,
+// ok / failed / unsupported at the browser step. Only when the browser is on or has been set up here, so a deploy of a
+// never-enabled browser creates no folder; never on a dry run. A deploy that stops before the browser step ends it as failed.
+const browserAction = browser.enabled ? "on" : "off";
+const recordBrowser = !dry && (browser.enabled || existsSync(join(appHome, BROWSER_REL)));
+let browserEnded = false;
+const endBrowser = (outcome, message) => {
+  if (!recordBrowser) return;
+  browserEnded = true;
+  writeSetupResult(appHome, endResult(browserAction, outcome, message, Date.now()));
+};
+if (recordBrowser) {
+  writeSetupResult(appHome, startResult(browserAction, Date.now()));
+  process.on("exit", () => { if (!browserEnded) endBrowser("failed", "deploy stopped before the browser step finished"); });
+}
 
 // Read and validate keys.json before any write.
 const keysPath = join(appHome, "keys.json");
@@ -163,11 +180,17 @@ if (existsSync(agyHome) && !noStatusline) {
 // the binary and the skill are removed. The signed-in profile is left alone either way.
 const skillTargetList = skillTargets({});
 try {
+  let outcome = ["ok", ""];
   if (browser.enabled) {
     const r = await installAgentBrowser({ appHome, dry, say });
-    if (r !== "unsupported") {
+    if (r === "unsupported") outcome = ["unsupported", "no agent-browser build for this computer"];
+    else {
       // A browser that can't start is a failed deploy, even though everything else went in.
-      if (ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say }) === "failed") process.exitCode = 1;
+      const chrome = ensureChrome({ bin: join(appHome, binRel(process.platform)), chrome: browser.chrome, dry, say });
+      if (chrome === "failed") {
+        process.exitCode = 1;
+        outcome = ["failed", "Chrome couldn't be set up"];
+      } else if (chrome === "missing") outcome = ["failed", MISSING_CHROME]; // recorded only: the exit code stays 0
       if (noSkills) console.log("--no-skills: not writing the dock-browser skill");
       else {
         const template = readFileSync(join(ROOT, "src/app/browser-skill.md"), "utf8");
@@ -178,9 +201,11 @@ try {
     removeSkills({ targets: skillTargetList, dry, say });
     removeBrowser({ appHome, dry, say });
   }
+  endBrowser(...outcome);
 } catch (e) {
   console.error(`browser setup failed (run node mods/dock-browser/herdr-browser-setup.mjs to retry): ${e.message}`);
   process.exitCode = 1;
+  endBrowser("failed", String(e.message).split("\n")[0]);
 }
 
 if (!hasKeys) {
