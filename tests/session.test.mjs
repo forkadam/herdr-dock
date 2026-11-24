@@ -200,6 +200,19 @@ test("reset empties the local file (no delete API) and keeps machines.<host>", a
   assert.equal(isDirty(s), false);
 });
 
+test("reset keeps the local browser block, production hosts included, and drops the layout edits", async () => {
+  const browser = { enabled: true, chrome: "/c", production: ["b.com"] };
+  const { io, files } = fakeIo({ local: localText({ left: { size: 300 } }, { browser }) });
+  let s = await loadSession(io);
+  assert.deepEqual(s.draft.production, ["b.com"]);
+  s = await resetSession(s, io);
+  assert.equal(s.error, null);
+  assert.equal(files.get(LOCAL), formatConfig({ v: 1, regions: {}, browser }));
+  assert.equal(s.draft.regions.left.size, JSON.parse(text).regions.left.size);
+  assert.deepEqual(s.draft.production, ["b.com"]);
+  assert.equal(isDirty(s), false);
+});
+
 test("reset with no local file and a dirty draft discards the edits", async () => {
   const base = JSON.parse(text);
   delete base.machines;

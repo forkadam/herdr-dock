@@ -201,7 +201,7 @@ function draftFromConfig(config, host, local = null) {
   const regions = {};
   for (const name of REGION_NAMES) regions[name] = merged.regions[name];
   regions.left.hidden = false;
-  return { regions };
+  return { regions, production: [...browserOf(merged).production] };
 }
 function regionOf(draft, mod) {
   for (const name of REGION_NAMES) {
@@ -213,11 +213,13 @@ var canonical = (v) => JSON.stringify(v, (_k, x) => x !== null && typeof x === "
 var same = (a, b) => canonical(a) === canonical(b);
 var EDITED = ["size", "hidden", "mode", "features"];
 var fields = (name) => name === "left" ? ["size", "mode", "features"] : name === "pages" ? ["features"] : ["size", "hidden", "features"];
+var hostsOf = (d) => d.production ?? [];
 function sameDraft(a, b) {
-  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k])));
+  return REGION_NAMES.every((name) => fields(name).every((k) => same(a.regions[name]?.[k], b.regions[name]?.[k]))) && same(hostsOf(a), hostsOf(b));
 }
 function rebaseDraft(baseDraft, draft, freshDraft) {
   const out = JSON.parse(JSON.stringify(freshDraft));
+  if (draft.production !== void 0 && !same(draft.production, hostsOf(baseDraft))) out.production = [...draft.production];
   for (const name of REGION_NAMES) {
     for (const k of fields(name)) {
       const mine = draft.regions[name]?.[k];
@@ -304,6 +306,10 @@ function applyEdit(draft, op) {
       if (!LEFT_MODES2.includes(op.value)) error = `regions.left.mode: must be one of ${LEFT_MODES2.join(", ")}`;
       else d.regions.left.mode = op.value;
       break;
+    case "production":
+      error = checkBrowser({ production: op.hosts });
+      if (!error) d.production = [...op.hosts];
+      break;
     default:
       error = `unknown edit: ${op.type}`;
   }
@@ -356,6 +362,12 @@ ${pad}}`;
 function formatConfig(obj) {
   return pretty(obj, "") + "\n";
 }
+function withProduction(browser, hosts, shared2) {
+  const out = { ...browser ?? {} };
+  if (same(hosts, shared2)) delete out.production;
+  else out.production = [...hosts];
+  return out;
+}
 function planSave(baseText, localText, host, draft) {
   const base = parseConfig(baseText);
   if (!base.ok) return { ok: false, error: base.error };
@@ -364,11 +376,18 @@ function planSave(baseText, localText, host, draft) {
   const shared2 = mergeForHost(base.config, host);
   const section = machineSection({ v: 1, regions: shared2.regions }, draft);
   const { v: _v, regions: _r, ...rest } = local.local ?? {};
+  if (draft.production !== void 0) {
+    const browser = withProduction(rest.browser, draft.production, browserOf(shared2).production);
+    if (Object.keys(browser).length) rest.browser = browser;
+    else delete rest.browser;
+  }
   const text = formatConfig({ v: 1, regions: section ?? {}, ...rest });
   const check = parseLocal(text);
   return check.ok ? { ok: true, text } : { ok: false, error: check.error };
 }
-function planReset() {
+function planReset(localText = null) {
+  const { ok, local } = parseLocal(localText);
+  if (ok && local && "browser" in local) return { ok: true, text: formatConfig({ v: 1, regions: {}, browser: local.browser }) };
   return { ok: true, delete: true };
 }
 var EMPTY_LOCAL = formatConfig({ v: 1, regions: {} });
@@ -589,7 +608,7 @@ async function saveSession(session, io) {
 }
 async function resetSession(session, io) {
   if (session.readOnly) return session;
-  const next = await commit(session, io, () => planReset());
+  const next = await commit(session, io, () => planReset(session.opened));
   if (next.error || next.notice) return next;
   const parsed = parseSession(next);
   if (!parsed.ok) return next;

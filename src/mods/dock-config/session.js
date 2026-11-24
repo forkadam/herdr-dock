@@ -136,7 +136,7 @@ export async function saveSession(session, io) {
 
 export async function resetSession(session, io) {
   if (session.readOnly) return session;
-  const next = await commit(session, io, () => planReset());
+  const next = await commit(session, io, () => planReset(session.opened));
   if (next.error || next.notice) return next;
   const parsed = parseSession(next);
   if (!parsed.ok) return next;

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseConfig } from "../src/shared/config.js";
-import { allowedRegions, canTurnOff, draftFromConfig, regionOf, applyEdit, sameDraft } from "../src/shared/edit.js";
+import { allowedRegions, canTurnOff, draftFromConfig, regionOf, applyEdit, sameDraft, rebaseDraft } from "../src/shared/edit.js";
 
 const fixture = () => JSON.parse(readFileSync(new URL("./fixtures/dock.json", import.meta.url), "utf8"));
 const REGIONS = ["top", "left", "right", "bottom", "pages"];
@@ -153,4 +153,59 @@ test("sameDraft ignores key order and compares features by content", async () =>
   assert.equal(sameDraft(a, b), true);
   b.regions.left.mode = "hidden";
   assert.equal(sameDraft(a, b), false);
+});
+
+test("draftFromConfig: production hosts come from the merged browser section, default none", () => {
+  assert.deepEqual(base().production, []);
+  const c = fixture();
+  c.browser = { production: ["a.com"] };
+  const d = draftFromConfig(c, "h");
+  assert.deepEqual(d.production, ["a.com"]);
+  // The local file's browser block wins over the shared one; the draft holds a copy.
+  const l = draftFromConfig(c, "h", { v: 1, regions: {}, browser: { production: ["l.com", "*.l.com"] } });
+  assert.deepEqual(l.production, ["l.com", "*.l.com"]);
+  d.production.push("x.com");
+  assert.deepEqual(c.browser.production, ["a.com"]);
+});
+
+test("applyEdit production sets the hosts and sameDraft sees the difference", () => {
+  const c = fixture();
+  c.browser = { production: ["a.com"] };
+  const d = draftFromConfig(c, "h");
+  const r = applyEdit(d, { type: "production", hosts: ["b.com"] });
+  assert.equal(r.error, null);
+  assert.deepEqual(r.draft.production, ["b.com"]);
+  assert.deepEqual(d.production, ["a.com"]);
+  assert.equal(sameDraft(r.draft, d), false);
+  assert.equal(sameDraft(applyEdit(d, { type: "production", hosts: ["a.com"] }).draft, d), true);
+  assert.deepEqual(applyEdit(d, { type: "production", hosts: [] }).draft.production, []);
+});
+
+test("applyEdit production rejects bad hosts and leaves the draft unchanged", () => {
+  const d = applyEdit(base(), { type: "production", hosts: ["a.com"] }).draft;
+  for (const hosts of ["a.com", null, undefined, [1], ["https://a.com"], ["a.com/x"], ["a.com:80"], [""], ["a.com", "*"]]) {
+    const r = applyEdit(d, { type: "production", hosts });
+    assert.equal(typeof r.error, "string", JSON.stringify(hosts));
+    assert.equal(r.draft, d);
+  }
+});
+
+test("rebaseDraft carries the user's changed production hosts over the fresh draft", () => {
+  const withProd = (production) => ({ ...base(), production });
+  const baseDraft = withProd(["a.com"]);
+  // The user edited the hosts; the file moved on with other changes.
+  const fresh = applyEdit(withProd(["a.com"]), { type: "size", region: "left", value: 310 }).draft;
+  const mine = withProd(["b.com"]);
+  const out = rebaseDraft(baseDraft, mine, fresh);
+  assert.deepEqual(out.production, ["b.com"]);
+  assert.equal(out.regions.left.size, 310);
+  // Not changed by the user: the fresh draft's hosts stand.
+  const kept = rebaseDraft(baseDraft, applyEdit(baseDraft, { type: "size", region: "left", value: 300 }).draft, withProd(["f.com"]));
+  assert.deepEqual(kept.production, ["f.com"]);
+  assert.equal(kept.regions.left.size, 300);
+  // The user clearing every host is a change too.
+  assert.deepEqual(rebaseDraft(baseDraft, withProd([]), withProd(["f.com"])).production, []);
+  // The result is a copy.
+  mine.production.push("z.com");
+  assert.deepEqual(out.production, ["b.com"]);
 });
