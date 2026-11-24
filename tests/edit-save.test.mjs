@@ -178,6 +178,29 @@ test("planSave: a draft without production leaves the local browser block untouc
   assert.deepEqual(JSON.parse(planSave(JSON.stringify(c), opened, HOST, d).text).browser, { enabled: true, production: ["l.com"] });
 });
 
+// The browser puts dock-browser in the right region through the merge, so a Save with it on must not
+// write that region into the local file (it would pin this PC's right panel to today's shared list).
+test("planSave: with the browser on, only real layout edits are written", () => {
+  const c = fixture();
+  const opened = local({}, { browser: { enabled: true } });
+  const untouched = draftFromConfig(c, HOST, JSON.parse(opened));
+  assert.deepEqual(JSON.parse(planSave(JSON.stringify(c), opened, HOST, untouched).text), { v: 1, regions: {}, browser: { enabled: true } });
+  assert.deepEqual(JSON.parse(planSave(JSON.stringify(c), opened, HOST, prodDraft(c, ["b.com"], opened)).text),
+    { v: 1, regions: {}, browser: { enabled: true, production: ["b.com"] } });
+  // Turned on in the shared config instead: the same.
+  const on = { ...fixture(), browser: { enabled: true } };
+  assert.deepEqual(JSON.parse(planSave(JSON.stringify(on), null, HOST, draftFromConfig(on, HOST)).text), { v: 1, regions: {} });
+  // Turned off on this PC while the shared config has it on: nothing to pin either.
+  const off = local({}, { browser: { enabled: false } });
+  assert.deepEqual(JSON.parse(planSave(JSON.stringify(on), off, HOST, draftFromConfig(on, HOST, JSON.parse(off))).text),
+    { v: 1, regions: {}, browser: { enabled: false } });
+  // Moving dock-browser is a real edit: both regions are written.
+  const moved = edit(untouched, { type: "place", mod: "dock-browser", region: "bottom" });
+  const r = JSON.parse(planSave(JSON.stringify(c), opened, HOST, moved).text);
+  assert.deepEqual(r.regions.bottom.features, [...c.regions.bottom.features, { mod: "dock-browser" }]);
+  assert.deepEqual(r.regions.right.features, []);
+});
+
 test("planReset keeps the local browser block and drops the regions", () => {
   const r = planReset('{"v":1,"regions":{"left":{"size":9}},"browser":{"enabled":true}}');
   assert.equal(r.ok, true);

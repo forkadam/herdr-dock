@@ -237,7 +237,10 @@ export function planSave(baseText, localText, host, draft) {
   const local = parseLocal(localText);
   if (!local.ok) return { ok: false, error: local.error };
   const shared = mergeForHost(base.config, host);
-  const section = machineSection({ v: 1, regions: shared.regions }, draft);
+  // The draft was merged with this PC's browser setting, which adds or removes dock-browser; the
+  // baseline must use the same setting, or that merge reads as a layout edit and pins the region.
+  const { enabled } = browserOf(mergeForHost(base.config, host, local.local));
+  const section = machineSection({ v: 1, regions: shared.regions, browser: { enabled } }, draft);
   const { v: _v, regions: _r, ...rest } = local.local ?? {};
   if (draft.production !== undefined) {
     const browser = withProduction(rest.browser, draft.production, browserOf(shared).production);

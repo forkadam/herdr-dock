@@ -374,7 +374,8 @@ function planSave(baseText, localText, host, draft) {
   const local = parseLocal(localText);
   if (!local.ok) return { ok: false, error: local.error };
   const shared2 = mergeForHost(base.config, host);
-  const section = machineSection({ v: 1, regions: shared2.regions }, draft);
+  const { enabled } = browserOf(mergeForHost(base.config, host, local.local));
+  const section = machineSection({ v: 1, regions: shared2.regions, browser: { enabled } }, draft);
   const { v: _v, regions: _r, ...rest } = local.local ?? {};
   if (draft.production !== void 0) {
     const browser = withProduction(rest.browser, draft.production, browserOf(shared2).production);
