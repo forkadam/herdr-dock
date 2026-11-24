@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { loadSession, saveSession, resetSession, isDirty, readBrowserStatus, setBrowser } from "../src/mods/dock-config/session.js";
 import { applyEdit, draftFromConfig, formatConfig } from "../src/shared/edit.js";
+import { turnOnChrome } from "../src/mods/dock-config/browser-view.js";
 
 const HOST = "forkadam-pc";
 const CFG = "C:/repo/config/dock.json";
@@ -393,7 +394,7 @@ test("readBrowserStatus: the merged setting, the files that are there, the resul
   files.set(RESULT, JSON.stringify({ state: "ok", at: 3, action: "on", message: "" }));
   const s = await loadSession(io);
   assert.deepEqual(await readBrowserStatus(s, io), {
-    enabled: true, chrome, localChrome: chrome, modInstalled: true, binInstalled: true, chromeExists: true, found,
+    enabled: true, chrome, localChrome: chrome, sharedChrome: "", modInstalled: true, binInstalled: true, chromeExists: true, found,
     result: { state: "ok", at: 3, action: "on", message: "" }, problem: null,
   });
 });
@@ -404,8 +405,8 @@ test("readBrowserStatus: off by default; macOS paths; no result", async () => {
   io.platform = "macos";
   const s = await loadSession(io);
   assert.deepEqual(await readBrowserStatus(s, io), {
-    enabled: false, chrome: "", localChrome: null, modInstalled: false, binInstalled: false, chromeExists: false, found: chromium,
-    result: null, problem: null,
+    enabled: false, chrome: "", localChrome: null, sharedChrome: "", modInstalled: false, binInstalled: false, chromeExists: false,
+    found: chromium, result: null, problem: null,
   });
 });
 
@@ -418,8 +419,33 @@ test("readBrowserStatus: a Chrome set in config/dock.json is the setting, but no
   assert.equal(st.enabled, true);
   assert.equal(st.chrome, "/shared/chrome");
   assert.equal(st.localChrome, null);
+  assert.equal(st.sharedChrome, "/shared/chrome");
   assert.equal(st.chromeExists, true);
   assert.equal(st.found, null);
+});
+
+test("readBrowserStatus: sharedChrome is the shared config's with machines.<host>, without this PC's file", async () => {
+  const c = JSON.parse(text);
+  c.machines = { [HOST]: { regions: {}, browser: { chrome: "/host/chrome" } } };
+  const { io } = browserIo({ file: JSON.stringify(c, null, 2), local: localText({}, { browser: { chrome: "" } }) });
+  const st = await readBrowserStatus(await loadSession(io), io);
+  assert.equal(st.sharedChrome, "/host/chrome");
+  assert.equal(st.chrome, "");
+  assert.equal(st.localChrome, "");
+});
+
+test("setBrowser on with the download over a shared Chrome writes an empty chrome, which wins in the merge", async () => {
+  const c = JSON.parse(text);
+  c.browser = { chrome: "/shared/chrome" };
+  const { io, files } = browserIo({ file: JSON.stringify(c, null, 2) });
+  const s = await loadSession(io);
+  const st = await readBrowserStatus(s, io);
+  const r = await setBrowser(s, io, set({ action: "on", chrome: turnOnChrome(null, st.sharedChrome) }));
+  assert.equal(r.ran, true);
+  assert.deepEqual(JSON.parse(files.get(LOCAL)).browser, { enabled: true, chrome: "" });
+  const after = await readBrowserStatus(r.session, io);
+  assert.equal(after.chrome, "");
+  assert.equal(after.localChrome, "");
 });
 
 test("readBrowserStatus: a probe that can't run says so and finds nothing", async () => {

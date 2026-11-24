@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserRun, browserSection, chosenChrome, chromeCandidates, chromeChoices, chromeName, clickedResult, parseHosts, parseProbe,
-  probeCommand, sectionCopy, withBrowserSetting,
+  probeCommand, sectionCopy, turnOnChrome, withBrowserSetting,
 } from "../src/mods/dock-config/browser-view.js";
 import { ABANDON_MS, endResult, startResult } from "../src/shared/browser/setup-result.js";
 import { parseLocal } from "../src/shared/config.js";
@@ -226,7 +226,7 @@ test("sectionCopy: the sketch's words in each state", () => {
   assert.deepEqual(copy({ state: "off", action: "on", message: "" }), {
     head: "○ Off", tone: "dim", intro: "Let agents open and drive a real browser beside the terminal.",
     note: "Turning it on downloads agent-browser (~20 MB) and, without a Chrome, Chrome for Testing (~150 MB).",
-    button: { label: "Turn on", action: "on", primary: true }, chrome: true, hosts: false,
+    button: { label: "Turn on", action: "on", primary: true }, secondary: null, chrome: true, hosts: false,
   });
   const on = copy({ state: "on", action: "off", message: "" }, { chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
   assert.equal(on.head, "● On · Google Chrome");
@@ -261,6 +261,27 @@ test("sectionCopy: failed shows its message, or where to look when it has none; 
   assert.equal(unsupported.head, "Not available on this computer");
   assert.equal(unsupported.note, "no agent-browser build for this computer");
   assert.deepEqual(unsupported.button, { label: "Turn off", action: "off", primary: false });
+});
+
+test("sectionCopy: a failed set-up can also be turned off; every other state has one button", () => {
+  const failed = copy({ state: "failed", action: "setup", message: "Chrome couldn't be set up" });
+  assert.deepEqual(failed.button, { label: "Set up again", action: "setup", primary: true });
+  assert.deepEqual(failed.secondary, { label: "Turn off", action: "off", primary: false });
+  assert.deepEqual(copy({ state: "failed", action: "setup", message: "" }).secondary, { label: "Turn off", action: "off", primary: false });
+  // A failed turn-off already offers Turn off; Not set up offers only Set up.
+  assert.equal(copy({ state: "failed", action: "off", message: "x" }).secondary, null);
+  assert.equal(copy({ state: "notSetUp", action: "setup", message: "" }).secondary, null);
+  for (const state of ["off", "running", "on", "unsupported"]) assert.equal(copy({ state, action: null, message: "" }).secondary, null, state);
+});
+
+test("turnOnChrome: the pick wins — a path, or the download, which overrides a Chrome the shared config sets", () => {
+  assert.equal(turnOnChrome("/Applications/Chromium.app/Contents/MacOS/Chromium", ""), "/Applications/Chromium.app/Contents/MacOS/Chromium");
+  assert.equal(turnOnChrome("/a", "/shared"), "/a");
+  // Download: an empty chrome when the shared config (without this PC's file) sets one, else no chrome key.
+  assert.equal(turnOnChrome(null, "/shared/chrome"), "");
+  assert.equal(turnOnChrome(null, ""), null);
+  assert.equal(turnOnChrome(null, null), null);
+  assert.equal(turnOnChrome(null, undefined), null);
 });
 
 test("probeCommand runs in node and says which paths exist and what the named variables hold", () => {

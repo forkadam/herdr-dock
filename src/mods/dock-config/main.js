@@ -18,7 +18,7 @@ import { slashPath } from "../../shared/path.js";
 import { UPDATE_KEY } from "../../shared/update.js";
 import { isDirty, loadSession, readBrowserStatus, resetSession, saveSession, setBrowser } from "./session.js";
 import { browserSectionView } from "./browser-section.js";
-import { browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, sectionCopy } from "./browser-view.js";
+import { browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, sectionCopy, turnOnChrome } from "./browser-view.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
@@ -43,7 +43,7 @@ function checkSession() {
   };
 }
 // ...and the browser off, with nothing found.
-const CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
+const CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, sharedChrome: "", modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
 
 export default class DockConfig extends View {
   init(_props, cx) {
@@ -58,6 +58,7 @@ export default class DockConfig extends View {
     this.clicked = null; // { at, action }: a click whose start the result file didn't get (clickedResult)
     this.poll = null; // re-reads the status while a setup runs
     this.reading = false; // a status read is under way
+    this.browserDoing = null; // the browser action being written ("on" | "off" | "setup")
     this.readAgain = false; // ...and another was asked for meanwhile
     this.chromePick = undefined; // the Chrome Turn on uses (a path, or null to download); undefined: the first choice
     this.hostsError = null; // the production hosts field's text doesn't parse: Save waits
@@ -285,14 +286,18 @@ export default class DockConfig extends View {
     cx.notify();
   }
 
-  // Turn on (with the chosen Chrome), Turn off or Set up (this PC's chrome passed through): written at once, then the
-  // "Set up the browser" tab. A local.json changed on disk is refused with the changed-on-disk notice.
+  // Turn on (with the chosen Chrome; the download wins over a shared chrome), Turn off or Set up (this PC's chrome
+  // passed through): written at once, then the "Set up the browser" tab. A local.json changed on disk is refused with
+  // the changed-on-disk notice.
   browserAction(action, cx) {
     const how = this.browserRunsWith();
     if (!this.browserModel()?.enabled || !how) return;
-    const chrome = action === "on" ? chosenChrome(chromeChoices(this.browser), this.chromePick) : this.browser.localChrome;
+    const chrome = action === "on"
+      ? turnOnChrome(chosenChrome(chromeChoices(this.browser), this.chromePick), this.browser.sharedChrome)
+      : this.browser.localChrome;
     const now = Date.now();
     this.busy = "browser";
+    this.browserDoing = action;
     this.confirmReset = false;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -308,6 +313,7 @@ export default class DockConfig extends View {
         this.editError = `${e?.message ?? e}`;
       } finally {
         this.busy = null;
+        this.browserDoing = null;
         cx.notify();
       }
       await this.readBrowser(cx);

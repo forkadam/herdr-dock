@@ -610,9 +610,10 @@ function chromeChoices({ chrome, chromeExists, found }) {
   return out;
 }
 var chosenChrome = (choices, pick) => choices.some((c) => c.value === pick) ? pick : choices[0].value;
+var turnOnChrome = (pick, sharedChrome) => typeof pick === "string" ? pick : sharedChrome ? "" : null;
 var button = (label2, action, primary) => ({ label: label2, action, primary });
 function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
-  const out = { head: "", tone: "dim", intro: "", note: "", button: null, chrome: false, hosts: false };
+  const out = { head: "", tone: "dim", intro: "", note: "", button: null, secondary: null, chrome: false, hosts: false };
   switch (section.state) {
     case "off":
       return {
@@ -632,7 +633,8 @@ function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
         ...out,
         head: section.message ? `Setup failed: ${section.message}` : `Setup failed \u2014 see the ${TAB}`,
         tone: "bad",
-        button: section.action === "off" ? button("Turn off", "off", false) : button("Set up again", "setup", true)
+        button: section.action === "off" ? button("Turn off", "off", false) : button("Set up again", "setup", true),
+        secondary: section.action === "off" ? null : button("Turn off", "off", false)
       };
     case "unsupported":
       return { ...out, head: "Not available on this computer", tone: "bad", note: section.message, button: button("Turn off", "off", false) };
@@ -716,10 +718,12 @@ function parseFiles(baseText, localText, host, localPath) {
 function browserSettings(session) {
   const base = session.baseText == null ? null : parseConfig(session.baseText);
   const local = parseLocal(session.opened ?? null);
-  if (!base?.ok || !local.ok) return { enabled: regionOf(session.draft, "dock-browser") !== null, chrome: "", localChrome: null };
+  if (!base?.ok || !local.ok) return { enabled: regionOf(session.draft, "dock-browser") !== null, chrome: "", localChrome: null, sharedChrome: "" };
+  const text = (v) => typeof v === "string" ? v : "";
   const b = browserOf(mergeForHost(base.config, session.host ?? "", local.local));
+  const shared2 = browserOf(mergeForHost(base.config, session.host ?? ""));
   const mine = local.local?.browser?.chrome;
-  return { enabled: b.enabled === true, chrome: typeof b.chrome === "string" ? b.chrome : "", localChrome: typeof mine === "string" ? mine : null };
+  return { enabled: b.enabled === true, chrome: text(b.chrome), localChrome: typeof mine === "string" ? mine : null, sharedChrome: text(shared2.chrome) };
 }
 async function loadSession(io) {
   const { path, localPath, host, mode } = await resolvePaths(io);
@@ -819,7 +823,7 @@ async function probe(io, names2, paths) {
   return p;
 }
 async function readBrowserStatus(session, io) {
-  const { enabled, chrome, localChrome } = browserSettings(session);
+  const { enabled, chrome, localChrome, sharedChrome } = browserSettings(session);
   const platform = nodePlatform(io.platform);
   const mod = `${io.appHome}/mods/dock-browser`;
   const bin = `${io.appHome}/${binRel(platform)}`;
@@ -838,6 +842,7 @@ async function readBrowserStatus(session, io) {
     enabled,
     chrome,
     localChrome,
+    sharedChrome,
     modInstalled: exists(mod),
     binInstalled: exists(bin),
     chromeExists: Boolean(chrome) && exists(chrome),
@@ -927,16 +932,18 @@ function browserSectionView(dlg, t) {
   if (!m) return row.child(label2.mt(6)).child(div2().min_h(28).flex().items_center().text_color(t.dim).child("Checking\u2026"));
   const { copy, status, editable, enabled } = m;
   const tone = { ok: t.done ?? t.accent, bad: t.blocked, accent: t.accent, dim: t.dim }[copy.tone] ?? t.dim;
-  const act = copy.button && editable ? button2(
+  const draw = (b) => button2(
     t,
-    `dc-browser-${copy.button.action}`,
-    dlg.busy === "browser" ? "Working\u2026" : copy.button.label,
-    { primary: copy.button.primary, enabled },
-    (_e, cx) => dlg.browserAction(copy.button.action, cx)
-  ) : null;
+    `dc-browser-${b.action}`,
+    dlg.busy === "browser" && dlg.browserDoing === b.action ? "Working\u2026" : b.label,
+    { primary: b.primary, enabled },
+    (_e, cx) => dlg.browserAction(b.action, cx)
+  );
+  const act = copy.button && editable ? draw(copy.button) : null;
+  const second = copy.secondary && editable ? draw(copy.secondary) : null;
   const choices = chromeChoices(status);
   const picked = chosenChrome(choices, dlg.chromePick);
-  const head = h_flex2().gap(10).items_center().min_h(28).child(div2().flex_none().text_color(tone).child(copy.head)).child(div2().flex_1().min_w(0).text_color(t.muted).child(copy.intro)).when(Boolean(act) && !copy.chrome, (el) => el.child(act));
+  const head = h_flex2().gap(10).items_center().min_h(28).child(div2().flex_none().text_color(tone).child(copy.head)).child(div2().flex_1().min_w(0).text_color(t.muted).child(copy.intro)).when(Boolean(second), (el) => el.child(second)).when(Boolean(act) && !copy.chrome, (el) => el.child(act));
   return row.child(label2.mt(6)).child(v_flex().flex_1().min_w(0).gap(4).child(head).when(Boolean(copy.note), (el) => el.child(div2().text_color(t.dim).child(copy.note))).when(Boolean(status.problem), (el) => el.child(div2().text_color(t.dim).child(status.problem))).when(copy.chrome && editable, (el) => el.child(chromeRow(dlg, t, choices, picked, enabled))).when(Boolean(act) && copy.chrome, (el) => el.child(h_flex2().child(act))).when(copy.hosts && editable, (el) => el.child(hostsRow(dlg, t, dlg.editable()))));
 }
 
@@ -1154,7 +1161,7 @@ function checkSession() {
     error: null
   };
 }
-var CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
+var CHECK_BROWSER = { enabled: false, chrome: "", localChrome: null, sharedChrome: "", modInstalled: false, binInstalled: false, chromeExists: false, found: null, result: null, problem: null };
 var DockConfig = class extends View {
   init(_props, cx) {
     this.session = null;
@@ -1168,6 +1175,7 @@ var DockConfig = class extends View {
     this.clicked = null;
     this.poll = null;
     this.reading = false;
+    this.browserDoing = null;
     this.readAgain = false;
     this.chromePick = void 0;
     this.hostsError = null;
@@ -1370,14 +1378,16 @@ var DockConfig = class extends View {
     this.chromePick = value;
     cx.notify();
   }
-  // Turn on (with the chosen Chrome), Turn off or Set up (this PC's chrome passed through): written at once, then the
-  // "Set up the browser" tab. A local.json changed on disk is refused with the changed-on-disk notice.
+  // Turn on (with the chosen Chrome; the download wins over a shared chrome), Turn off or Set up (this PC's chrome
+  // passed through): written at once, then the "Set up the browser" tab. A local.json changed on disk is refused with
+  // the changed-on-disk notice.
   browserAction(action, cx) {
     const how = this.browserRunsWith();
     if (!this.browserModel()?.enabled || !how) return;
-    const chrome = action === "on" ? chosenChrome(chromeChoices(this.browser), this.chromePick) : this.browser.localChrome;
+    const chrome = action === "on" ? turnOnChrome(chosenChrome(chromeChoices(this.browser), this.chromePick), this.browser.sharedChrome) : this.browser.localChrome;
     const now = Date.now();
     this.busy = "browser";
+    this.browserDoing = action;
     this.confirmReset = false;
     cx.notify();
     cx.spawn(async (cx2) => {
@@ -1392,6 +1402,7 @@ var DockConfig = class extends View {
         this.editError = `${e?.message ?? e}`;
       } finally {
         this.busy = null;
+        this.browserDoing = null;
         cx2.notify();
       }
       await this.readBrowser(cx2);

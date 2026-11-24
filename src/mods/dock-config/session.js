@@ -71,16 +71,19 @@ function parseFiles(baseText, localText, host, localPath) {
   return { ok: true, draft: draftFromConfig(base.config, host ?? "", local.local) };
 }
 
-// The browser settings the session's files give: whether it is on and its chrome (merged), and this PC's own chrome
-// (local.json's, null when it sets none). Files that don't parse go by the draft (the applied regions hold
-// dock-browser exactly while it is on).
+// The browser settings the session's files give: whether it is on and its chrome (merged), this PC's own chrome
+// (local.json's, null when it sets none) and the shared one (config/dock.json with machines.<host>, without this PC's
+// file; "" for none). Files that don't parse go by the draft (the applied regions hold dock-browser exactly while it
+// is on).
 function browserSettings(session) {
   const base = session.baseText == null ? null : parseConfig(session.baseText);
   const local = parseLocal(session.opened ?? null);
-  if (!base?.ok || !local.ok) return { enabled: regionOf(session.draft, "dock-browser") !== null, chrome: "", localChrome: null };
+  if (!base?.ok || !local.ok) return { enabled: regionOf(session.draft, "dock-browser") !== null, chrome: "", localChrome: null, sharedChrome: "" };
+  const text = (v) => (typeof v === "string" ? v : "");
   const b = browserOf(mergeForHost(base.config, session.host ?? "", local.local));
+  const shared = browserOf(mergeForHost(base.config, session.host ?? ""));
   const mine = local.local?.browser?.chrome;
-  return { enabled: b.enabled === true, chrome: typeof b.chrome === "string" ? b.chrome : "", localChrome: typeof mine === "string" ? mine : null };
+  return { enabled: b.enabled === true, chrome: text(b.chrome), localChrome: typeof mine === "string" ? mine : null, sharedChrome: text(shared.chrome) };
 }
 
 export async function loadSession(io) {
@@ -194,11 +197,11 @@ async function probe(io, names, paths) {
 }
 
 // What the Browser section shows: { enabled, chrome (merged, "" for none), localChrome (local.json's, or null),
-// modInstalled (<app home>/mods/dock-browser), binInstalled (agent-browser), chromeExists (the merged chrome's path),
+// sharedChrome (config/dock.json's with machines.<host>, "" for none; Turn on's download overrides it), modInstalled (<app home>/mods/dock-browser), binInstalled (agent-browser), chromeExists (the merged chrome's path),
 // found (the first Chrome candidate that exists, or null), result (setup-result.json, or null), problem (why the
 // files couldn't be checked, or null) }. The settings are the session's texts; the files are read now.
 export async function readBrowserStatus(session, io) {
-  const { enabled, chrome, localChrome } = browserSettings(session);
+  const { enabled, chrome, localChrome, sharedChrome } = browserSettings(session);
   const platform = nodePlatform(io.platform);
   const mod = `${io.appHome}/mods/dock-browser`;
   const bin = `${io.appHome}/${binRel(platform)}`;
@@ -214,7 +217,7 @@ export async function readBrowserStatus(session, io) {
     problem = `couldn't check the browser's files: ${e?.message ?? e}`;
   }
   return {
-    enabled, chrome, localChrome, modInstalled: exists(mod), binInstalled: exists(bin), chromeExists: Boolean(chrome) && exists(chrome),
+    enabled, chrome, localChrome, sharedChrome, modInstalled: exists(mod), binInstalled: exists(bin), chromeExists: Boolean(chrome) && exists(chrome),
     found: candidates.find(exists) ?? null, result, problem,
   };
 }

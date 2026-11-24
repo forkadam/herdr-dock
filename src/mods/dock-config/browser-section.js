@@ -41,16 +41,18 @@ export function browserSectionView(dlg, t) {
   // editable: not a read-only dialog; enabled: the buttons work now (no write, setup run or update going on).
   const { copy, status, editable, enabled } = m;
   const tone = { ok: t.done ?? t.accent, bad: t.blocked, accent: t.accent, dim: t.dim }[copy.tone] ?? t.dim;
-  const act = copy.button && editable
-    ? button(t, `dc-browser-${copy.button.action}`, dlg.busy === "browser" ? "Working…" : copy.button.label,
-      { primary: copy.button.primary, enabled }, (_e, cx) => dlg.browserAction(copy.button.action, cx))
-    : null;
+  const draw = (b) => button(t, `dc-browser-${b.action}`, dlg.busy === "browser" && dlg.browserDoing === b.action ? "Working…" : b.label,
+    { primary: b.primary, enabled }, (_e, cx) => dlg.browserAction(b.action, cx));
+  const act = copy.button && editable ? draw(copy.button) : null;
+  // A failed set-up: Turn off beside Set up again.
+  const second = copy.secondary && editable ? draw(copy.secondary) : null;
   const choices = chromeChoices(status);
   const picked = chosenChrome(choices, dlg.chromePick);
   // Off: the button goes under the Chrome choice; every other state has it at the end of the first line.
   const head = h_flex().gap(10).items_center().min_h(28)
     .child(div().flex_none().text_color(tone).child(copy.head))
     .child(div().flex_1().min_w(0).text_color(t.muted).child(copy.intro))
+    .when(Boolean(second), (el) => el.child(second))
     .when(Boolean(act) && !copy.chrome, (el) => el.child(act));
   return row.child(label.mt(6)).child(v_flex().flex_1().min_w(0).gap(4)
     .child(head)

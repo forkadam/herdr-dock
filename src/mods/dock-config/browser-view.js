@@ -130,13 +130,18 @@ export function chromeChoices({ chrome, chromeExists, found }) {
 // first choice.
 export const chosenChrome = (choices, pick) => (choices.some((c) => c.value === pick) ? pick : choices[0].value);
 
+// The chrome Turn on writes for that pick: the path, or for the download (null) an empty chrome when the shared config
+// (merged without this PC's file) sets one, so the download wins in the merge, else null (no chrome key).
+export const turnOnChrome = (pick, sharedChrome) => (typeof pick === "string" ? pick : sharedChrome ? "" : null);
+
 const button = (label, action, primary) => ({ label, action, primary });
 
 // What the section says for browserSection's `section`, given the status (the merged chrome, which files are there,
 // the result it reads): { head, tone: "dim" | "ok" | "bad" | "accent", intro, note, button: { label, action, primary }
-// or null, chrome (show the Chrome choice), hosts (show the production hosts field) }.
+// or null, secondary (a second button, or null), chrome (show the Chrome choice), hosts (show the production hosts
+// field) }. A failed set-up offers Turn off beside Set up again, so a setup that keeps failing can still be left.
 export function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
-  const out = { head: "", tone: "dim", intro: "", note: "", button: null, chrome: false, hosts: false };
+  const out = { head: "", tone: "dim", intro: "", note: "", button: null, secondary: null, chrome: false, hosts: false };
   switch (section.state) {
     case "off":
       return {
@@ -152,6 +157,7 @@ export function sectionCopy(section, { chrome, modInstalled, binInstalled, resul
       return {
         ...out, head: section.message ? `Setup failed: ${section.message}` : `Setup failed — see the ${TAB}`, tone: "bad",
         button: section.action === "off" ? button("Turn off", "off", false) : button("Set up again", "setup", true),
+        secondary: section.action === "off" ? null : button("Turn off", "off", false),
       };
     case "unsupported":
       return { ...out, head: "Not available on this computer", tone: "bad", note: section.message, button: button("Turn off", "off", false) };
