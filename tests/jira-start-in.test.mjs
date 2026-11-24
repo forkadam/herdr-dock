@@ -35,6 +35,8 @@ test("suggestFolder: own, then the parent's remembered, then mapped", () => {
 test("spaceFor: a live terminal in the repo counts; the shown space wins; other machines never", () => {
   assert.equal(spaceFor("/home/u/code/app", { spaces, panes, shownSpace: null, home }).id, "s1");
   assert.equal(spaceFor("/home/u/code/app", { spaces, panes, shownSpace: "s3", home }).id, "s3");
+  // s4 is on another machine: even shown, and with the folder as its own, it is never the answer.
+  assert.equal(spaceFor("/home/u/code/app", { spaces, panes, shownSpace: "s4", home }).id, "s1");
   assert.equal(spaceFor("/home/u/code/none", { spaces, panes, shownSpace: null, home }), null);
 });
 test("pickerRows: distinct folders, home left out, mapped first", () => {
@@ -43,7 +45,7 @@ test("pickerRows: distinct folders, home left out, mapped first", () => {
   assert.deepEqual(rows.map((r) => r.folder), ["/home/u/code/zed", "/home/u/code/app", "/home/u/code", "/home/u/code/app/src", "/home/u/code/tools"]);
   assert.deepEqual(rows[0].spaces, []);
   assert.ok(!rows.some((r) => r.folder === "/home/u"));
-  assert.ok(rows.find((r) => r.folder === "/home/u/code/app").spaces.includes("app"));
+  assert.deepEqual(rows.find((r) => r.folder === "/home/u/code/app").spaces, ["app"], "not s4's name (it is another machine)");
   assert.equal(rows.find((r) => r.folder === "/home/u/code/tools").path, "~/code/tools");
 });
 test("remember: newest last, capped", () => {
