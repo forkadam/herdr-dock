@@ -6,6 +6,7 @@
 //   herdr-dock/secrets/jira-<site>.body     a curl request's body while it runs (a comment), then emptied
 import { slashPath } from "../path.js";
 import { parseSeverity } from "./severity.js";
+import { parseProjects } from "./start-in.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
 const TRANSPORTS = ["fetch", "curl"];
@@ -147,11 +148,12 @@ function parseRule(a) {
   return { rule };
 }
 
-// Settings -> { board, highPriorities, briefBugs, views, actions, checkTask, warnings }. A bad view or rule is skipped
+// Settings -> { board, highPriorities, briefBugs, views, actions, checkTask, projects, warnings }. A bad view or rule is skipped
 // with one warning (its place in the file counted from 0), so the rest of the file still works. A view's optional
 // `button` ({ label, task }: opens Claude with `task`) that lacks either is dropped with a warning; the view is kept.
 // So is a malformed `severity` block (severity.js's parseSeverity). A view's `group` is "type", "severity" or null:
-// with no `group`, a valid severity block groups by severity; `group: "severity"` needs that block.
+// with no `group`, a valid severity block groups by severity; `group: "severity"` needs that block. `projects` maps a
+// Jira project key to the folder its tickets' work starts in (start-in.js's parseProjects); a bad entry is a warning.
 export function jiraOptions(settings) {
   const s = isObj(settings) ? settings : {};
   const warnings = [];
@@ -208,6 +210,9 @@ export function jiraOptions(settings) {
     else actions.push(rule);
   }
 
+  const { projects, warnings: projectWarnings } = parseProjects(s.projects);
+  warnings.push(...projectWarnings);
+
   return {
     board,
     highPriorities,
@@ -215,6 +220,7 @@ export function jiraOptions(settings) {
     views,
     actions,
     checkTask: nonEmpty(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
+    projects,
     warnings,
   };
 }

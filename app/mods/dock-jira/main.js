@@ -1039,6 +1039,25 @@ function attentionLine(attention, { counted, rejected = null, left = 0, query = 
   return null;
 }
 
+// src/shared/jira/start-in.js
+var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var nonEmpty2 = (v) => typeof v === "string" && v.trim() !== "";
+function parseProjects(value) {
+  const projects = {};
+  const warnings = [];
+  if (value == null) return { projects, warnings };
+  if (!isObj2(value)) return { projects, warnings: ["projects: not a map of project key to folder"] };
+  for (const [key, folder] of Object.entries(value)) {
+    const k = key.trim();
+    if (!k || !nonEmpty2(folder)) {
+      warnings.push(`projects.${key}: must be a folder path`);
+      continue;
+    }
+    projects[k] = folder.trim();
+  }
+  return { projects, warnings };
+}
+
 // src/shared/jira/settings.js
 var DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
 var TRANSPORTS = ["fetch", "curl"];
@@ -1090,7 +1109,7 @@ function validateToken(text) {
   if (/\s/.test(t)) return { ok: false, error: "A token is one word, without spaces." };
   return { ok: true, token: t };
 }
-var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObj3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 var str = (v) => typeof v === "string" ? v : "";
 function parseSettings(text) {
   if (text == null || !String(text).trim()) return { ok: true, settings: { ...DEFAULT_SETTINGS, filters: [] } };
@@ -1100,7 +1119,7 @@ function parseSettings(text) {
   } catch (e) {
     return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: `not valid JSON (${e.message})` };
   }
-  if (!isObj2(raw)) return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: "not a JSON object" };
+  if (!isObj3(raw)) return { ok: false, settings: { ...DEFAULT_SETTINGS, filters: [] }, error: "not a JSON object" };
   const { token: _never, ...rest } = raw;
   return {
     ok: true,
@@ -1111,7 +1130,7 @@ function parseSettings(text) {
       transport: TRANSPORTS.includes(raw.transport) ? raw.transport : "fetch",
       caFile: str(raw.caFile).trim(),
       startTask: str(raw.startTask),
-      filters: (Array.isArray(raw.filters) ? raw.filters : []).filter((f) => isObj2(f) && str(f.name).trim() && str(f.jql).trim()).map((f) => ({ name: f.name.trim(), jql: f.jql.trim() }))
+      filters: (Array.isArray(raw.filters) ? raw.filters : []).filter((f) => isObj3(f) && str(f.name).trim() && str(f.jql).trim()).map((f) => ({ name: f.name.trim(), jql: f.jql.trim() }))
     }
   };
 }
@@ -1128,17 +1147,17 @@ var DEFAULT_HIGH_PRIORITIES = /* @__PURE__ */ Object.freeze(["Highest", "High"])
 var DEFAULT_BRIEF_BUGS = "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved";
 var DEFAULT_CHECK_TASK = "The description of {key} ({summary}) changed {when}. Read the change with your Jira tools and check it against my work on {mine} in this repo.";
 var VIEW_ID = /^[a-z][a-z0-9-]{0,23}$/;
-var nonEmpty2 = (v) => typeof v === "string" && v.trim() !== "";
+var nonEmpty3 = (v) => typeof v === "string" && v.trim() !== "";
 function boardId(v) {
   const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v;
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 function parseRule(a) {
-  if (!isObj2(a)) return { error: "not an object" };
+  if (!isObj3(a)) return { error: "not an object" };
   const rule = {};
   for (const k of ["project", "type"]) {
     if (a[k] == null) continue;
-    if (!nonEmpty2(a[k])) return { error: `${k} is not a name` };
+    if (!nonEmpty3(a[k])) return { error: `${k} is not a name` };
     rule[k] = a[k].trim();
   }
   if (a.subtask != null) {
@@ -1147,15 +1166,15 @@ function parseRule(a) {
   }
   if (a.parentType != null) {
     const list3 = typeof a.parentType === "string" ? [a.parentType] : a.parentType;
-    if (!Array.isArray(list3) || !list3.length || !list3.every(nonEmpty2)) return { error: "parentType is not a type name or a list of them" };
+    if (!Array.isArray(list3) || !list3.length || !list3.every(nonEmpty3)) return { error: "parentType is not a type name or a list of them" };
     rule.parentType = list3.map((t) => t.trim());
   }
-  for (const k of ["start", "finish"]) if (nonEmpty2(a[k])) rule[k] = a[k];
+  for (const k of ["start", "finish"]) if (nonEmpty3(a[k])) rule[k] = a[k];
   if (rule.start === void 0 && rule.finish === void 0) return { error: "needs a start or a finish" };
   return { rule };
 }
 function jiraOptions(settings) {
-  const s = isObj2(settings) ? settings : {};
+  const s = isObj3(settings) ? settings : {};
   const warnings = [];
   let board = null;
   if (s.board != null) {
@@ -1163,12 +1182,12 @@ function jiraOptions(settings) {
     if (board === null) warnings.push("board: not a board id");
   }
   const hp = s.highPriorities;
-  const highPriorities = Array.isArray(hp) && hp.length && hp.every(nonEmpty2) ? hp.map((p) => p.trim()) : [...DEFAULT_HIGH_PRIORITIES];
+  const highPriorities = Array.isArray(hp) && hp.length && hp.every(nonEmpty3) ? hp.map((p) => p.trim()) : [...DEFAULT_HIGH_PRIORITIES];
   const views = [];
   if (s.views != null && !Array.isArray(s.views)) warnings.push("views: not a list");
   for (const [i, v] of (Array.isArray(s.views) ? s.views : []).entries()) {
     const at = `views[${i}]`;
-    if (!isObj2(v)) {
+    if (!isObj3(v)) {
       warnings.push(`${at}: not an object`);
       continue;
     }
@@ -1205,7 +1224,7 @@ function jiraOptions(settings) {
     } else warnings.push(`${at}: group "${v.group}" is not "type" or "severity"`);
     let button = null;
     if (v.button != null) {
-      if (isObj2(v.button) && nonEmpty2(v.button.label) && nonEmpty2(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
+      if (isObj3(v.button) && nonEmpty3(v.button.label) && nonEmpty3(v.button.task)) button = { label: v.button.label.trim(), task: v.button.task.trim() };
       else warnings.push(`${at}: button needs a label and a task`);
     }
     views.push({ id: v.id, name, jql, group, button, severity });
@@ -1217,22 +1236,25 @@ function jiraOptions(settings) {
     if (error) warnings.push(`actions[${i}]: ${error}`);
     else actions.push(rule);
   }
+  const { projects, warnings: projectWarnings } = parseProjects(s.projects);
+  warnings.push(...projectWarnings);
   return {
     board,
     highPriorities,
-    briefBugs: nonEmpty2(s.briefBugs) ? s.briefBugs.trim() : DEFAULT_BRIEF_BUGS,
+    briefBugs: nonEmpty3(s.briefBugs) ? s.briefBugs.trim() : DEFAULT_BRIEF_BUGS,
     views,
     actions,
-    checkTask: nonEmpty2(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
+    checkTask: nonEmpty3(s.checkTask) ? s.checkTask : DEFAULT_CHECK_TASK,
+    projects,
     warnings
   };
 }
 function prioritiesText(settings) {
-  const hp = isObj2(settings) ? settings.highPriorities : null;
-  return Array.isArray(hp) ? hp.filter(nonEmpty2).map((p) => p.trim()).join(", ") : "";
+  const hp = isObj3(settings) ? settings.highPriorities : null;
+  return Array.isArray(hp) ? hp.filter(nonEmpty3).map((p) => p.trim()).join(", ") : "";
 }
 function withFormOptions(settings, { board, priorities }) {
-  const { board: _b, highPriorities: _h, ...rest } = isObj2(settings) ? settings : {};
+  const { board: _b, highPriorities: _h, ...rest } = isObj3(settings) ? settings : {};
   const names = String(priorities ?? "").split(",").map((p) => p.trim()).filter(Boolean);
   return { ...rest, ...board != null ? { board } : {}, ...names.length ? { highPriorities: names } : {} };
 }

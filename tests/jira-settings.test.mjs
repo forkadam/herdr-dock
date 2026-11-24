@@ -74,7 +74,7 @@ test("parseSettings: defaults for junk, types checked, unknown keys kept", () =>
 
 test("jiraOptions: defaults when nothing is set", () => {
   const o = jiraOptions(parseSettings("").settings);
-  assert.deepEqual(o, { board: null, highPriorities: ["Highest", "High"], briefBugs: DEFAULT_BRIEF_BUGS, views: [], actions: [], checkTask: DEFAULT_CHECK_TASK, warnings: [] });
+  assert.deepEqual(o, { board: null, highPriorities: ["Highest", "High"], briefBugs: DEFAULT_BRIEF_BUGS, views: [], actions: [], checkTask: DEFAULT_CHECK_TASK, projects: {}, warnings: [] });
 });
 
 test("jiraOptions: views, actions, board and priorities, bad entries skipped with a warning each", () => {
@@ -150,6 +150,17 @@ test("jiraOptions: briefBugs and checkTask are passed through, blank or non-text
     assert.equal(b.checkTask, DEFAULT_CHECK_TASK, JSON.stringify(bad));
     assert.deepEqual(b.warnings, [], JSON.stringify(bad));
   }
+});
+
+test("jiraOptions: projects maps a Jira project key to a folder; a bad entry is a warning and the good ones stay", () => {
+  assert.deepEqual(jiraOptions({ projects: { ABC: "~/x" } }).projects, { ABC: "~/x" });
+  assert.deepEqual(jiraOptions({}).projects, {});
+  const o = jiraOptions({ board: "x", projects: { ABC: " ~/x ", BAD: 3, EMPTY: "  " } });
+  assert.deepEqual(o.projects, { ABC: "~/x" });
+  assert.deepEqual(o.warnings, ["board: not a board id", "projects.BAD: must be a folder path", "projects.EMPTY: must be a folder path"]);
+  const w = jiraOptions({ projects: ["ABC"] });
+  assert.deepEqual(w.projects, {});
+  assert.deepEqual(w.warnings, ["projects: not a map of project key to folder"]);
 });
 
 test("jiraOptions: a view group other than \"type\" or \"severity\" becomes null with a warning and the view is kept", () => {
