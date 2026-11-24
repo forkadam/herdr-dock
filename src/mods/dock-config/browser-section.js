@@ -38,11 +38,12 @@ export function browserSectionView(dlg, t) {
   const label = div().flex_none().text_size(12.5).text_color(t.muted).child("Browser");
   const row = h_flex().id("dc-browser").gap(8).items_start().text_size(12.5);
   if (!m) return row.child(label.mt(6)).child(div().min_h(28).flex().items_center().text_color(t.dim).child("Checking…"));
-  // editable: not a read-only dialog; enabled: the buttons work now (no write, setup run or update going on).
-  const { copy, status, editable, enabled } = m;
+  // editable: not a read-only dialog; enabled: the buttons work now (no write, setup run or update going on, and in a
+  // clone no unsaved edits); tip: why they wait for those edits.
+  const { copy, status, editable, enabled, tip } = m;
   const tone = { ok: t.done ?? t.accent, bad: t.blocked, accent: t.accent, dim: t.dim }[copy.tone] ?? t.dim;
   const draw = (b) => button(t, `dc-browser-${b.action}`, dlg.busy === "browser" && dlg.browserDoing === b.action ? "Working…" : b.label,
-    { primary: b.primary, enabled }, (_e, cx) => dlg.browserAction(b.action, cx));
+    { primary: b.primary, enabled, tip }, (_e, cx) => dlg.browserAction(b.action, cx));
   const act = copy.button && editable ? draw(copy.button) : null;
   // A failed set-up: Turn off beside Set up again.
   const second = copy.secondary && editable ? draw(copy.secondary) : null;

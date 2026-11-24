@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserRun, browserSection, chosenChrome, chromeCandidates, chromeChoices, chromeName, clickedResult, parseHosts, parseProbe,
-  pollDue, probeCommand, sectionCopy, turnOnChrome, withBrowserSetting,
+  pollDue, probeCommand, sectionCopy, setupWaits, turnOnChrome, withBrowserSetting,
 } from "../src/mods/dock-config/browser-view.js";
 import { ABANDON_MS, endResult, startResult } from "../src/shared/browser/setup-result.js";
 import { parseLocal } from "../src/shared/config.js";
@@ -288,6 +288,16 @@ test("pollDue: a tick re-reads the status only while a setup runs and no read is
   assert.equal(pollDue({ state: "running", reading: false }), true);
   assert.equal(pollDue({ state: "running", reading: true }), false);
   for (const state of ["off", "on", "failed", "unsupported", "notSetUp", undefined]) assert.equal(pollDue({ state, reading: false }), false, String(state));
+});
+
+test("setupWaits: in a clone the browser buttons wait for unsaved layout edits; an app install never waits", () => {
+  const tip = "Save or cancel your layout edits first: setting up redeploys herdr-dock, which reloads this dialog";
+  assert.equal(setupWaits({ mode: "clone", dirty: true }), tip);
+  assert.equal(setupWaits({ mode: "clone", dirty: false }), null);
+  // A mode only dock-core's shared keys could say (a repo, no mode) is a clone.
+  assert.equal(setupWaits({ mode: null, dirty: true }), tip);
+  assert.equal(setupWaits({ mode: "app", dirty: true }), null);
+  assert.equal(setupWaits({ mode: "app", dirty: false }), null);
 });
 
 test("probeCommand runs in node and says which paths exist and what the named variables hold", () => {

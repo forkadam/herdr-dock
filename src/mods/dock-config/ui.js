@@ -12,14 +12,15 @@ export function iconButton(t, id, name, tip, enabled, onClick) {
     .child(icon(name).size(12));
 }
 
-// A text button; `primary` draws the theme's solid button.
-export function button(t, id, label, { primary = false, enabled = true } = {}, onClick) {
+// A text button; `primary` draws the theme's solid button; `tip` a tooltip.
+export function button(t, id, label, { primary = false, enabled = true, tip = null } = {}, onClick) {
   return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5)
     .when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground))
     .when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground))
     .when(enabled, (el) => el.cursor_pointer().on_click(onClick)
       .hover((s) => (primary ? s.opacity(0.9) : s.bg(t.hover))))
     .when(!enabled, (el) => el.opacity(0.4))
+    .when(Boolean(tip), (el) => el.tooltip(tip))
     .child(label);
 }
 

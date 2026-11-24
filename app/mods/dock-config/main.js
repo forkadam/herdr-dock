@@ -611,6 +611,8 @@ function chromeChoices({ chrome, chromeExists, found }) {
 }
 var chosenChrome = (choices, pick) => choices.some((c) => c.value === pick) ? pick : choices[0].value;
 var turnOnChrome = (pick, sharedChrome) => typeof pick === "string" ? pick : sharedChrome ? "" : null;
+var SETUP_WAITS_TIP = "Save or cancel your layout edits first: setting up redeploys herdr-dock, which reloads this dialog";
+var setupWaits = ({ mode, dirty }) => mode !== "app" && dirty ? SETUP_WAITS_TIP : null;
 var pollDue = ({ state, reading }) => state === "running" && !reading;
 var button = (label2, action, primary) => ({ label: label2, action, primary });
 function sectionCopy(section, { chrome, modInstalled, binInstalled, result }) {
@@ -900,8 +902,8 @@ var icon = (name) => svg(`mods/dock-config/${name}.svg`);
 function iconButton(t, id, name, tip, enabled, onClick) {
   return h_flex().id(id).size(22).flex_none().items_center().justify_center().rounded(6).tooltip(tip).when(enabled, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(onClick)).when(!enabled, (el) => el.text_color(t.dim).opacity(0.35)).child(icon(name).size(12));
 }
-function button2(t, id, label2, { primary = false, enabled = true } = {}, onClick) {
-  return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click(onClick).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.4)).child(label2);
+function button2(t, id, label2, { primary = false, enabled = true, tip = null } = {}, onClick) {
+  return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(7).text_size(12.5).when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground)).when(!primary, (el) => el.border_1().border_color(t.border).text_color(t.foreground)).when(enabled, (el) => el.cursor_pointer().on_click(onClick).hover((s) => primary ? s.opacity(0.9) : s.bg(t.hover))).when(!enabled, (el) => el.opacity(0.4)).when(Boolean(tip), (el) => el.tooltip(tip)).child(label2);
 }
 function toggle(t, id, on, enabled, onChange) {
   return Switch.new(id).checked(on).disabled(!enabled).on_change(onChange).flex().flex_row().items_center().flex_none().w(28).h(16).p(2).rounded_full().bg(on ? t.accent : t.border).when(enabled, (el) => el.cursor_pointer()).when(!enabled, (el) => el.opacity(0.4)).child(div().size(12).rounded_full().bg(on ? t.accent_foreground : t.muted).when(on, (el) => el.ml(12)));
@@ -931,13 +933,13 @@ function browserSectionView(dlg, t) {
   const label2 = div2().flex_none().text_size(12.5).text_color(t.muted).child("Browser");
   const row = h_flex2().id("dc-browser").gap(8).items_start().text_size(12.5);
   if (!m) return row.child(label2.mt(6)).child(div2().min_h(28).flex().items_center().text_color(t.dim).child("Checking\u2026"));
-  const { copy, status, editable, enabled } = m;
+  const { copy, status, editable, enabled, tip } = m;
   const tone = { ok: t.done ?? t.accent, bad: t.blocked, accent: t.accent, dim: t.dim }[copy.tone] ?? t.dim;
   const draw = (b) => button2(
     t,
     `dc-browser-${b.action}`,
     dlg.busy === "browser" && dlg.browserDoing === b.action ? "Working\u2026" : b.label,
-    { primary: b.primary, enabled },
+    { primary: b.primary, enabled, tip },
     (_e, cx) => dlg.browserAction(b.action, cx)
   );
   const act = copy.button && editable ? draw(copy.button) : null;
@@ -1311,7 +1313,7 @@ var DockConfig = class extends View {
     const color = { accent: t.accent, ok: t.done ?? t.accent, bad: t.blocked, dim: t.dim }[strip.tone] ?? t.dim;
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(runs);
+    const canUpdate = action?.kind !== "update" || Boolean(runs) && !this.browserRunning();
     return h_flex5().id("dc-updates").gap(8).items_center().min_h(28).child(div5().flex_none().text_size(12.5).text_color(t.muted).child("Updates")).child(div5().flex_1().min_w(0).text_size(12.5).text_color(color).truncate().child(strip.tone === "accent" ? `\u25CF ${strip.text}` : strip.text)).when(Boolean(action), (el) => el.child(button2(
       t,
       `dc-update-${action.kind}`,
@@ -1325,14 +1327,17 @@ var DockConfig = class extends View {
       run("dock-core.update.check");
       return;
     }
-    if (!runs) return;
+    if (!runs || this.browserRunning()) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);
     }
   }
-  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled }, or null
-  // until the status is read.
+  browserRunning() {
+    return this.browserModel()?.section.state === "running";
+  }
+  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled, tip (why the
+  // buttons wait for unsaved edits, or null) }, or null until the status is read.
   browserModel() {
     const s = this.session;
     const st = this.browser;
@@ -1341,8 +1346,10 @@ var DockConfig = class extends View {
     const updating = !checking() && shared(UPDATE_KEY)?.status === "updating";
     const section = browserSection({ ...st, result, updateRunning: updating, now: Date.now() });
     const editable = !s.readOnly;
-    const enabled = editable && !this.busy && !section.busy && Boolean(this.browserRunsWith());
-    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled };
+    const how = this.browserRunsWith();
+    const tip = editable && how ? setupWaits({ mode: how.mode, dirty: isDirty(s) }) : null;
+    const enabled = editable && !this.busy && !section.busy && Boolean(how) && !tip;
+    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled, tip };
   }
   // Where the setup runs, as the Updates strip's Update does: the clone's repo, or the app install's home. null: unknown.
   browserRunsWith() {
@@ -1392,7 +1399,7 @@ var DockConfig = class extends View {
         const r = await setBrowser(this.session, makeIo(), { action, chrome, ...how, now });
         this.session = r.session;
         this.editError = null;
-        if (r.ran && !r.recorded) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
+        if (r.ran) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
         this.showSizes();
         this.showHosts();
       } catch (e) {

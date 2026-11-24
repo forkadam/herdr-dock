@@ -18,7 +18,9 @@ import { slashPath } from "../../shared/path.js";
 import { UPDATE_KEY } from "../../shared/update.js";
 import { isDirty, loadSession, readBrowserStatus, resetSession, saveSession, setBrowser } from "./session.js";
 import { browserSectionView } from "./browser-section.js";
-import { browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, pollDue, sectionCopy, turnOnChrome } from "./browser-view.js";
+import {
+  browserSection, chosenChrome, chromeChoices, clickedResult, parseHosts, pollDue, sectionCopy, setupWaits, turnOnChrome,
+} from "./browser-view.js";
 import { byMod } from "./by-mod.js";
 import { byRegion } from "./by-region.js";
 import { button } from "./ui.js";
@@ -55,7 +57,7 @@ export default class DockConfig extends View {
     this.showAll = false;
     this.addOpen = null; // the region whose "+ Add mod" list is open
     this.browser = null; // the Browser section's status (readBrowserStatus), null until read
-    this.clicked = null; // { at, action }: a click whose start the result file didn't get (clickedResult)
+    this.clicked = null; // { at, action }: the last click that ran a setup, until the result file shows it (clickedResult)
     this.reading = false; // a status read is under way
     this.browserDoing = null; // the browser action being written ("on" | "off" | "setup")
     this.readAgain = false; // ...and another was asked for meanwhile
@@ -214,7 +216,8 @@ export default class DockConfig extends View {
     // Clone mode runs scripts/update.mjs in the repo; app mode runs the shipped update-app.mjs (no repo).
     const runs = updateRuns(state, { repo: shared(REPO_KEY), home: slashPath(appHome()) });
     const action = strip.action;
-    const canUpdate = action?.kind !== "update" || Boolean(runs);
+    // Update waits for a browser setup run (both deploy in a clone): two deploys never overlap.
+    const canUpdate = action?.kind !== "update" || (Boolean(runs) && !this.browserRunning());
     return h_flex().id("dc-updates").gap(8).items_center().min_h(28)
       .child(div().flex_none().text_size(12.5).text_color(t.muted).child("Updates"))
       .child(div().flex_1().min_w(0).text_size(12.5).text_color(color).truncate()
@@ -228,15 +231,19 @@ export default class DockConfig extends View {
       run("dock-core.update.check");
       return;
     }
-    if (!runs) return;
+    if (!runs || this.browserRunning()) return;
     for (const r of runs) {
       if (r.args) run(r.command, r.args);
       else run(r.command);
     }
   }
 
-  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled }, or null
-  // until the status is read.
+  browserRunning() {
+    return this.browserModel()?.section.state === "running";
+  }
+
+  // The Browser section's model: { section (browserSection), copy (sectionCopy), status, editable, enabled, tip (why the
+  // buttons wait for unsaved edits, or null) }, or null until the status is read.
   browserModel() {
     const s = this.session;
     const st = this.browser;
@@ -245,8 +252,10 @@ export default class DockConfig extends View {
     const updating = !checking() && shared(UPDATE_KEY)?.status === "updating";
     const section = browserSection({ ...st, result, updateRunning: updating, now: Date.now() });
     const editable = !s.readOnly;
-    const enabled = editable && !this.busy && !section.busy && Boolean(this.browserRunsWith());
-    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled };
+    const how = this.browserRunsWith();
+    const tip = editable && how ? setupWaits({ mode: how.mode, dirty: isDirty(s) }) : null;
+    const enabled = editable && !this.busy && !section.busy && Boolean(how) && !tip;
+    return { section, copy: sectionCopy(section, { ...st, result }), status: st, editable, enabled, tip };
   }
 
   // Where the setup runs, as the Updates strip's Update does: the clone's repo, or the app install's home. null: unknown.
@@ -302,7 +311,8 @@ export default class DockConfig extends View {
         const r = await setBrowser(this.session, makeIo(), { action, chrome, ...how, now });
         this.session = r.session;
         this.editError = null;
-        if (r.ran && !r.recorded) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
+        // Running from the click on, even before the status is re-read: a second click can't start a second run.
+        if (r.ran) this.clicked = { at: now, action: action === "off" ? "off" : "on" };
         // As after a Save: a refused write rebased the draft onto the files.
         this.showSizes();
         this.showHosts();

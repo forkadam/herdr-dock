@@ -94,9 +94,9 @@ export function parseHosts(text) {
   return { ok: false, error: bad ? `"${bad}" isn't a host like example.com or *.example.com` : problem };
 }
 
-// The result the section reads. A click whose start couldn't be written to the result file counts as a run started at
-// the click (clicked: { at, action }) until the file shows a run that started or ended at or after it; like any run,
-// it is abandoned 15 minutes on.
+// The result the section reads. A click that started a setup (clicked: { at, action }) counts as a run started at the
+// click until the file shows a run that started or ended at or after it (its start may not be read yet, or couldn't be
+// written); like any run, it is abandoned 15 minutes on.
 export function clickedResult(result, clicked) {
   if (!clicked) return result;
   const t = result?.state === "running" ? result.startedAt : result?.at;
@@ -133,6 +133,11 @@ export const chosenChrome = (choices, pick) => (choices.some((c) => c.value === 
 // The chrome Turn on writes for that pick: the path, or for the download (null) an empty chrome when the shared config
 // (merged without this PC's file) sets one, so the download wins in the merge, else null (no chrome key).
 export const turnOnChrome = (pick, sharedChrome) => (typeof pick === "string" ? pick : sharedChrome ? "" : null);
+
+// Why Turn on / Turn off / Set up wait, or null. In a clone the setup is `npm run deploy`, which swaps mods/dock-config
+// and so reloads this dialog: its unsaved edits would be lost. An app install's setup script leaves mods/ alone.
+export const SETUP_WAITS_TIP = "Save or cancel your layout edits first: setting up redeploys herdr-dock, which reloads this dialog";
+export const setupWaits = ({ mode, dirty }) => (mode !== "app" && dirty ? SETUP_WAITS_TIP : null);
 
 // Whether the dialog's poll tick re-reads the status: only while a setup runs (the section's state) and no read is
 // under way.
