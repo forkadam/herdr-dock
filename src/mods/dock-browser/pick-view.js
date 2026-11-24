@@ -3,6 +3,8 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
 import { INTENTS, NOTES_MAX, PRIORITIES } from "../../shared/browser/feedback.js";
+import { noteHeight } from "../../shared/browser/list-height.js";
+import { fitHeight } from "../../shared/fit-height.js";
 import { button } from "./controls.js";
 
 function choice(t, id, values, current, onPick) {
@@ -20,9 +22,13 @@ function noteField(t, input) {
     .child(Input.new(input).w_full().h(20).text_size(12).text_color(t.foreground));
 }
 
+const BAR_PAD = 12; // the bar's padding each side
+const NOTES_MAX_H = 320; // the notes' list height at most (it scrolls past that)
+
 const label = (it) => `${it.tag || "element"}${it.text ? ` "${it.text.slice(0, 40)}"` : ""}`;
 
-// state: { picking: { kind, items } | null, inputs, busy, flash, elsewhere: "pick" | "notes" | null }.
+// state: { picking: { kind, items } | null, inputs, busy, flash, elsewhere: "pick" | "notes" | null, width } (width: the
+// panel's, 0 before it is laid out).
 // on: { send, copy, leave, remove(i), field(i, name, value) }.
 export function pickBar(t, state, on) {
   const busy = !!state.busy;
@@ -46,8 +52,11 @@ export function pickBar(t, state, on) {
       ? `${items.length} of ${NOTES_MAX}. Click more elements, write a note on each, then Send them together.`
       : `Click elements in the page (up to ${NOTES_MAX}); each gets a numbered badge and a note here.`));
     if (items.length) {
-      bar.child(v_flex().id("browser-notes").max_h(320).overflow_y_scrollbar().gap(8).children(items.map((it, i) =>
-        v_flex().gap(3)
+      // The notes' list gets a definite height (as tall as it draws, NOTES_MAX_H at most) and scrolls in it: a list sized
+      // only by a max-height doesn't scroll in Herdr (src/shared/fit-height.js). The notes are alike, 8 apart.
+      const height = fitHeight({ rows: items.length, rowH: noteHeight(Math.max(0, (state.width ?? 0) - BAR_PAD * 2)), gap: 8, max: NOTES_MAX_H });
+      const list = v_flex().id("browser-notes").flex_1().min_h(0).overflow_y_scrollbar().gap(8).children(items.map((it, i) =>
+        v_flex().flex_none().gap(3)
           .child(h_flex().gap(6).items_center()
             .child(div().flex_none().min_w(18).h(18).px(4).rounded(9).bg(t.working).text_color(t.background).text_size(10.5)
               .font_semibold().flex().items_center().justify_center().child(String(i + 1)))
@@ -59,7 +68,8 @@ export function pickBar(t, state, on) {
           .child(noteField(t, state.inputs[it.slot]))
           .child(h_flex().flex_wrap().gap(6).items_center()
             .child(choice(t, `browser-note-intent-${i}`, INTENTS, it.intent, (v, cx) => on.field(i, "intent", v, cx)))
-            .child(choice(t, `browser-note-priority-${i}`, PRIORITIES, it.priority, (v, cx) => on.field(i, "priority", v, cx)))))));
+            .child(choice(t, `browser-note-priority-${i}`, PRIORITIES, it.priority, (v, cx) => on.field(i, "priority", v, cx))))));
+      bar.child(v_flex().flex_none().h(height).min_h(0).child(list));
     }
   }
   const row = h_flex().flex_wrap().gap(4).items_center()

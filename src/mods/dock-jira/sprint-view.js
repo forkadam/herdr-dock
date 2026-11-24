@@ -6,7 +6,12 @@
 // toggleLane(key, cx).
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
+import { fitHeight, textHeight } from "../../shared/fit-height.js";
 import { laneCells, litColumns, menuSprint, sprintLabel, sprintRows, sprintSeries } from "../../shared/jira/sprint.js";
+
+const MENU_W = 280;
+const MENU_MAX_H = 360; // the sprint menu's height at most (it scrolls past that)
+const NO_SPRINTS = "No sprints on this board.";
 
 // A lane's key: its parent story's, "" for Other issues.
 const laneKey = (lane) => lane.parent?.key ?? "";
@@ -14,28 +19,36 @@ const laneKey = (lane) => lane.parent?.key ?? "";
 // The sprint menu: the shown sprint's label; open, the current sprint's series (sprintSeries) to pick from, newest
 // first. On a board with no active sprint, the series of the one that ended last (menuSprint). Its closed sprints are
 // read when it opens (openSprintMenu): until then it lists the active and future ones, with a dim line saying the
-// older ones are loading, or couldn't be.
+// older ones are loading, or couldn't be. The list has a definite height (as tall as it draws, MENU_MAX_H at most) and
+// scrolls in it: a list sized only by a max-height doesn't scroll in Herdr (src/shared/fit-height.js).
 export function sprintMenu(page, t) {
   const sp = page.sprint;
   const sprints = [...sp.all, ...(sp.closed ?? [])];
   const items = sprintSeries(menuSprint(sp.current, sprints), sprints, sp.mine);
   const older = sp.closedAt != null ? null : sp.closedProblem ? "Couldn't load older sprints" : "Loading older sprints…";
-  const item = (s) => h_flex().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+  const item = (s) => h_flex().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer()
     .bg(s.id === sp.shown?.id ? t.selected : t.popover).hover((st) => st.bg(t.hover))
     .on_click((_e, cx) => page.showSprint(s.id, cx))
     .child(div().flex_1().min_w(0).truncate().child(s.name))
     .child(div().flex_none().text_size(11).text_color(t.dim).child(s.id === sp.current?.id ? "current" : s.state));
+  // Rows 30 with 1 between; the box's padding 4 and border 1 all round; then the older line (px 8, py 6, 12px, 1 below
+  // the rows) or the empty line (p 8), as wide as the box less those.
+  const textW = MENU_W - 2 - 8 - 16;
+  const extra = older ? (items.length ? 1 : 0) + textHeight(older, { width: textW, size: 12 }) + 12
+    : !items.length ? textHeight(NO_SPRINTS, { width: textW, size: 12.5 }) + 16 : 0;
+  const height = fitHeight({ rows: items.length, rowH: 30, gap: 1, pad: 10, extra, max: MENU_MAX_H });
   return Popover.new("jira-sprint-menu").open(page.sprintOpen)
     .on_open_change((open, cx) => page.openSprintMenu(open, cx))
     .trigger(h_flex().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border)
       .cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5)
       .child(div().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints"))
       .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim)))
-    .content(v_flex().id("jira-sprint-list").w(280).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
+    .content(v_flex().flex_none().w(MENU_W).h(height).min_h(0).rounded(8).bg(t.popover)
       .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground)
-      .children(items.map(item))
-      .when(Boolean(older), (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(older)))
-      .when(!items.length && !older, (el) => el.child(div().p(8).text_color(t.dim).child("No sprints on this board."))));
+      .child(v_flex().id("jira-sprint-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1)
+        .children(items.map(item))
+        .when(Boolean(older), (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(older)))
+        .when(!items.length && !older, (el) => el.child(div().p(8).text_color(t.dim).child(NO_SPRINTS)))));
 }
 
 export function sprintBoard(page, t) {

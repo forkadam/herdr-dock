@@ -658,6 +658,151 @@ var bigWindow = (terminal) => ({
 });
 var browserShowName = (terminal) => `browser.show.${b64urlEncode(String(terminal))}`;
 
+// src/shared/fit-height.js
+function fitHeight({ rows = 0, rowH = 0, gap = 0, pad = 0, extra = 0, max = Infinity } = {}) {
+  const n = Math.max(0, rows);
+  return Math.min(max, n * rowH + Math.max(0, n - 1) * gap + pad + extra);
+}
+var stackHeight = (heights, gap = 0) => heights.reduce((n, h) => n + h, 0) + Math.max(0, heights.length - 1) * gap;
+var GLYPH = 0.55;
+var LINE = 1.618;
+var lineHeight = (size) => Math.ceil(size * LINE);
+var units = (text) => {
+  let n = 0;
+  for (const ch of String(text ?? "")) n += ch.codePointAt(0) >= 11904 ? 2 : 1;
+  return n;
+};
+var textWidth = (text, size) => units(text) * size * GLYPH;
+function textLines(text, width, size) {
+  const cap = Math.max(1, Math.floor(width / (size * GLYPH)));
+  let lines = 0;
+  for (const paragraph of String(text ?? "").split("\n")) {
+    let n = 1, used = 0;
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const w = units(word);
+      if (used === 0) used = w;
+      else if (used + 1 + w <= cap) used += 1 + w;
+      else {
+        n++;
+        used = w;
+      }
+      while (used > cap) {
+        n++;
+        used -= cap;
+      }
+    }
+    lines += n;
+  }
+  return lines;
+}
+var textHeight = (text, { width, size }) => textLines(text, width, size) * lineHeight(size);
+function flowLines(widths, avail, gap = 0) {
+  let lines = 0, used = 0;
+  for (const w of widths) {
+    if (lines === 0) {
+      lines = 1;
+      used = w;
+    } else if (used + gap + w <= avail) used += gap + w;
+    else {
+      lines++;
+      used = w;
+    }
+  }
+  return lines;
+}
+
+// src/shared/browser/feedback.js
+var INTENTS = ["fix", "change", "question", "approve"];
+var PRIORITIES = ["low", "normal", "high"];
+var NOTES_MAX = 20;
+var TEXT_MAX = 200;
+var PICTURE_DAYS = 1;
+var R = "[redacted]";
+var PAIR = /([\w-]{0,40}(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]{0,40})(\s{0,8}[=:]\s{0,8})(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
+var JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+var BEARER = /\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]+)/gi;
+var AWS_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
+var HEX = /\b[0-9a-fA-F]{32,}\b/g;
+var RUN40 = /[A-Za-z0-9/+=]{40,}/g;
+var B642 = /[A-Za-z0-9+_-]{32,}={0,2}/g;
+var classes = (m) => [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(m)).length;
+var mixed = (m) => /[a-z]/.test(m) && /[A-Z]/.test(m) && /[0-9]/.test(m);
+function switches(m) {
+  const kind = (c) => /[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : /[0-9]/.test(c) ? 2 : 3;
+  let n = 0;
+  for (let i = 1; i < m.length; i++) if (kind(m[i]) !== kind(m[i - 1])) n++;
+  return n / Math.max(1, m.length - 1);
+}
+var looksRandom = (m, min) => mixed(m) && switches(m) >= min && m.split(/[-_]/).some((p) => p.length >= 16);
+var authValue = (k, v) => /^bearer$/i.test(k) ? v.length >= 8 && classes(v) >= 2 : v.length >= 16 && classes(v) >= 2;
+var REDACT_MAX = 4e3;
+function redact(s) {
+  let out = String(s ?? "");
+  if (!out) return "";
+  if (out.length > REDACT_MAX) out = `${out.slice(0, REDACT_MAX)}\u2026`;
+  out = out.replace(BEARER, (m, k, sp, v) => authValue(k, v) ? `${k}${sp}${R}` : m);
+  out = out.replace(PAIR, (m, k, sep, v) => v === R ? m : `${k}${sep}${R}`);
+  out = out.replace(JWT, R);
+  out = out.replace(AWS_ID, R);
+  out = out.replace(HEX, R);
+  out = out.replace(B642, (m) => looksRandom(m, 0.45) ? R : m);
+  out = out.replace(RUN40, (m) => mixed(m) && switches(m) >= 0.35 ? R : m);
+  return out;
+}
+var oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+function code(s) {
+  const runs = String(s).match(/`+/g) ?? [];
+  const n = Math.max(0, ...runs.map((r) => r.length)) + 1;
+  const pad = s.startsWith("`") || s.endsWith("`") ? " " : "";
+  return "`".repeat(n) + pad + s + pad + "`".repeat(n);
+}
+function designFeedback({ url, items }) {
+  const lines = ["## Design Feedback", "", `Page: ${oneLine(redact(url)) || "(unknown)"}`];
+  (items ?? []).forEach((it, i) => {
+    lines.push("", `### ${i + 1}. ${code(oneLine(it.selector) || "(element)")}`);
+    const src = it.source;
+    if (src?.file) lines.push(`Source: ${oneLine(src.file)}${Number.isFinite(src.line) ? `:${src.line}` : ""}`);
+    const text = oneLine(redact(oneLine(it.text))).slice(0, TEXT_MAX);
+    if (text) lines.push(`Text: "${text}"`);
+    lines.push(`Note: ${oneLine(redact(it.note)) || "(no note)"}`);
+    if (it.intent) lines.push(`Intent: ${it.intent}`);
+    if (it.priority) lines.push(`Priority: ${it.priority}`);
+    if (it.picture) lines.push(`Picture: ${it.picture}`);
+  });
+  return lines.join("\n");
+}
+function addPicks(items, picks, kind, max = NOTES_MAX) {
+  const list = Array.isArray(picks) ? picks : [];
+  if (kind === "pick") return { added: list.slice(-1), dropped: 0 };
+  const room = Math.max(0, max - (items?.length ?? 0));
+  return { added: list.slice(0, room), dropped: Math.max(0, list.length - room) };
+}
+var pictureName = (t, now, n) => `${t}-${Math.floor(now).toString(36)}-${n}.png`;
+function stalePicks(names, now) {
+  const out = [];
+  for (const name of names ?? []) {
+    const m = /-([0-9a-z]+)-\d+\.png$/.exec(String(name));
+    if (!m) continue;
+    const at = parseInt(m[1], 36);
+    if (Number.isFinite(at) && at > 1e12 && now - at > PICTURE_DAYS * 864e5) out.push(name);
+  }
+  return out;
+}
+
+// src/shared/browser/list-height.js
+var CHIP_SIZE = 10.5;
+var chip = (word) => Math.ceil(textWidth(word, CHIP_SIZE)) + 14;
+var group = (words) => words.reduce((n, word) => n + chip(word), 0) + 2 * (words.length - 1);
+function noteHeight(width) {
+  const chipLines = flowLines([group(INTENTS), group(PRIORITIES)], width, 6);
+  return Math.max(18, lineHeight(11.5)) + lineHeight(CHIP_SIZE) + 26 + (chipLines * 18 + (chipLines - 1) * 6) + 3 * 3;
+}
+var ERRORS_MAX_H = 140;
+function errorsHeight(texts, width) {
+  const lines = texts.map((text) => textHeight(text, { width: width - 14, size: 11 }));
+  return fitHeight({ pad: 14, extra: stackHeight(lines, 2), max: ERRORS_MAX_H });
+}
+
 // src/mods/dock-browser/stream.js
 import { WebSocket } from "websocket";
 import { Buffer } from "buffer";
@@ -939,84 +1084,6 @@ async function announceHandoffs(handoffMinutes) {
 
 // src/mods/dock-browser/person.js
 import { openOverlay } from "herdr";
-
-// src/shared/browser/feedback.js
-var INTENTS = ["fix", "change", "question", "approve"];
-var PRIORITIES = ["low", "normal", "high"];
-var NOTES_MAX = 20;
-var TEXT_MAX = 200;
-var PICTURE_DAYS = 1;
-var R = "[redacted]";
-var PAIR = /([\w-]{0,40}(?:secret|token|password|passwd|pwd|api[-_]?key|private[-_]?key|access[-_]?key|auth(?!or))[\w-]{0,40})(\s{0,8}[=:]\s{0,8})(?!(?:bearer|basic|token)\s)("[^"]*"|'[^']*'|[^\s&"',;]+)/gi;
-var JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
-var BEARER = /\b(bearer|basic|token)(\s+)([A-Za-z0-9._~+/=-]+)/gi;
-var AWS_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
-var HEX = /\b[0-9a-fA-F]{32,}\b/g;
-var RUN40 = /[A-Za-z0-9/+=]{40,}/g;
-var B642 = /[A-Za-z0-9+_-]{32,}={0,2}/g;
-var classes = (m) => [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(m)).length;
-var mixed = (m) => /[a-z]/.test(m) && /[A-Z]/.test(m) && /[0-9]/.test(m);
-function switches(m) {
-  const kind = (c) => /[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : /[0-9]/.test(c) ? 2 : 3;
-  let n = 0;
-  for (let i = 1; i < m.length; i++) if (kind(m[i]) !== kind(m[i - 1])) n++;
-  return n / Math.max(1, m.length - 1);
-}
-var looksRandom = (m, min) => mixed(m) && switches(m) >= min && m.split(/[-_]/).some((p) => p.length >= 16);
-var authValue = (k, v) => /^bearer$/i.test(k) ? v.length >= 8 && classes(v) >= 2 : v.length >= 16 && classes(v) >= 2;
-var REDACT_MAX = 4e3;
-function redact(s) {
-  let out = String(s ?? "");
-  if (!out) return "";
-  if (out.length > REDACT_MAX) out = `${out.slice(0, REDACT_MAX)}\u2026`;
-  out = out.replace(BEARER, (m, k, sp, v) => authValue(k, v) ? `${k}${sp}${R}` : m);
-  out = out.replace(PAIR, (m, k, sep, v) => v === R ? m : `${k}${sep}${R}`);
-  out = out.replace(JWT, R);
-  out = out.replace(AWS_ID, R);
-  out = out.replace(HEX, R);
-  out = out.replace(B642, (m) => looksRandom(m, 0.45) ? R : m);
-  out = out.replace(RUN40, (m) => mixed(m) && switches(m) >= 0.35 ? R : m);
-  return out;
-}
-var oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
-function code(s) {
-  const runs = String(s).match(/`+/g) ?? [];
-  const n = Math.max(0, ...runs.map((r) => r.length)) + 1;
-  const pad = s.startsWith("`") || s.endsWith("`") ? " " : "";
-  return "`".repeat(n) + pad + s + pad + "`".repeat(n);
-}
-function designFeedback({ url, items }) {
-  const lines = ["## Design Feedback", "", `Page: ${oneLine(redact(url)) || "(unknown)"}`];
-  (items ?? []).forEach((it, i) => {
-    lines.push("", `### ${i + 1}. ${code(oneLine(it.selector) || "(element)")}`);
-    const src = it.source;
-    if (src?.file) lines.push(`Source: ${oneLine(src.file)}${Number.isFinite(src.line) ? `:${src.line}` : ""}`);
-    const text = oneLine(redact(oneLine(it.text))).slice(0, TEXT_MAX);
-    if (text) lines.push(`Text: "${text}"`);
-    lines.push(`Note: ${oneLine(redact(it.note)) || "(no note)"}`);
-    if (it.intent) lines.push(`Intent: ${it.intent}`);
-    if (it.priority) lines.push(`Priority: ${it.priority}`);
-    if (it.picture) lines.push(`Picture: ${it.picture}`);
-  });
-  return lines.join("\n");
-}
-function addPicks(items, picks, kind, max = NOTES_MAX) {
-  const list = Array.isArray(picks) ? picks : [];
-  if (kind === "pick") return { added: list.slice(-1), dropped: 0 };
-  const room = Math.max(0, max - (items?.length ?? 0));
-  return { added: list.slice(0, room), dropped: Math.max(0, list.length - room) };
-}
-var pictureName = (t, now, n) => `${t}-${Math.floor(now).toString(36)}-${n}.png`;
-function stalePicks(names, now) {
-  const out = [];
-  for (const name of names ?? []) {
-    const m = /-([0-9a-z]+)-\d+\.png$/.exec(String(name));
-    if (!m) continue;
-    const at = parseInt(m[1], 36);
-    if (Number.isFinite(at) && at > 1e12 && now - at > PICTURE_DAYS * 864e5) out.push(name);
-  }
-  return out;
-}
 
 // src/shared/browser/pick-script.js
 var SECRET_WORDS = [
@@ -1694,6 +1761,8 @@ function choice(t, id, values, current, onPick) {
 function noteField(t, input) {
   return div2().flex_1().min_w(0).h(26).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).bg(t.background).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(input).w_full().h(20).text_size(12).text_color(t.foreground));
 }
+var BAR_PAD = 12;
+var NOTES_MAX_H = 320;
 var label = (it) => `${it.tag || "element"}${it.text ? ` "${it.text.slice(0, 40)}"` : ""}`;
 function pickBar(t, state, on) {
   const busy = !!state.busy;
@@ -1712,10 +1781,12 @@ function pickBar(t, state, on) {
   } else {
     bar.child(div2().text_size(11.5).text_color(t.dim).child(items.length ? `${items.length} of ${NOTES_MAX}. Click more elements, write a note on each, then Send them together.` : `Click elements in the page (up to ${NOTES_MAX}); each gets a numbered badge and a note here.`));
     if (items.length) {
-      bar.child(v_flex2().id("browser-notes").max_h(320).overflow_y_scrollbar().gap(8).children(items.map((it, i) => v_flex2().gap(3).child(h_flex2().gap(6).items_center().child(div2().flex_none().min_w(18).h(18).px(4).rounded(9).bg(t.working).text_color(t.background).text_size(10.5).font_semibold().flex().items_center().justify_center().child(String(i + 1))).child(div2().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.foreground).child(label(it))).child(div2().id(`browser-note-remove-${i}`).flex_none().px(5).h(18).flex().items_center().rounded(4).text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Remove this element").on_click((_e, cx) => {
+      const height = fitHeight({ rows: items.length, rowH: noteHeight(Math.max(0, (state.width ?? 0) - BAR_PAD * 2)), gap: 8, max: NOTES_MAX_H });
+      const list = v_flex2().id("browser-notes").flex_1().min_h(0).overflow_y_scrollbar().gap(8).children(items.map((it, i) => v_flex2().flex_none().gap(3).child(h_flex2().gap(6).items_center().child(div2().flex_none().min_w(18).h(18).px(4).rounded(9).bg(t.working).text_color(t.background).text_size(10.5).font_semibold().flex().items_center().justify_center().child(String(i + 1))).child(div2().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.foreground).child(label(it))).child(div2().id(`browser-note-remove-${i}`).flex_none().px(5).h(18).flex().items_center().rounded(4).text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Remove this element").on_click((_e, cx) => {
         cx.stop_propagation();
         on.remove(i, cx);
-      }).child("\u2715"))).child(div2().truncate().text_size(10.5).text_color(t.dim).child(it.selector)).child(noteField(t, state.inputs[it.slot])).child(h_flex2().flex_wrap().gap(6).items_center().child(choice(t, `browser-note-intent-${i}`, INTENTS, it.intent, (v, cx) => on.field(i, "intent", v, cx))).child(choice(t, `browser-note-priority-${i}`, PRIORITIES, it.priority, (v, cx) => on.field(i, "priority", v, cx)))))));
+      }).child("\u2715"))).child(div2().truncate().text_size(10.5).text_color(t.dim).child(it.selector)).child(noteField(t, state.inputs[it.slot])).child(h_flex2().flex_wrap().gap(6).items_center().child(choice(t, `browser-note-intent-${i}`, INTENTS, it.intent, (v, cx) => on.field(i, "intent", v, cx))).child(choice(t, `browser-note-priority-${i}`, PRIORITIES, it.priority, (v, cx) => on.field(i, "priority", v, cx))))));
+      bar.child(v_flex2().flex_none().h(height).min_h(0).child(list));
     }
   }
   const row = h_flex2().flex_wrap().gap(4).items_center().child(button(t, "browser-pick-send", "Send", on.send, { busy: busy || !items.length, primary: true, tip: "Send to the agent as its next prompt, then hand the page back" }));
@@ -2057,7 +2128,10 @@ var Browser = class extends View {
     return v_flex3().flex_none().px(PAD).pt(10).pb(8).gap(4).border_b(1).border_color(t.border).child(h_flex3().gap(6).items_center().child(div3().flex_1().min_w(0).truncate().text_size(13).font_semibold().child(title || "Browser")).when(!!prod, (el) => el.child(this.chip(t, "Production", t.blocked))).child(this.chip(t, rec.profile === "signed-in" ? "signed-in" : "clean")).when(errors > 0, (el) => el.child(div3().id("browser-errors").flex_none().px(6).h(18).flex().items_center().rounded(4).cursor_pointer().bg(t.blocked).text_size(10.5).text_color(t.background).tooltip(this.showErrors ? "Hide the errors" : "The page's last console errors").on_click((_e, cx2) => {
       this.showErrors = !this.showErrors;
       cx2.notify();
-    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div3().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex3().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div3().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Switch to this tab (you take the page)").on_click((_e, cx2) => this.switchTab(String(tab.tabId), cx2))).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => el.child(v_flex3().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar().gap(2).p(6).rounded(6).border_1().border_color(t.border).children((st.errorTexts ?? []).slice().reverse().map((e, i) => div3().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
+    }).child(`${errors} error${errors === 1 ? "" : "s"}`)))).child(div3().truncate().text_size(11.5).text_color(t.dim).child(url)).when(tabs.length > 1, (el) => el.child(h_flex3().gap(4).pt(2).overflow_hidden().children(tabs.map((tab, i) => div3().id(`browser-tab-${i}`).flex_shrink_1().min_w(0).max_w(160).truncate().px(7).h(20).rounded(4).text_size(11).when(!!tab.active, (e) => e.bg(t.selected ?? t.hover).text_color(t.foreground)).when(!tab.active && !!tab.tabId, (e) => e.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Switch to this tab (you take the page)").on_click((_e, cx2) => this.switchTab(String(tab.tabId), cx2))).child(String(tab.title || tab.url || "Tab")))))).when(this.showErrors && errors > 0, (el) => {
+      const texts = (st.errorTexts ?? []).slice().reverse().map((e) => String(e).slice(0, 400));
+      return el.child(v_flex3().flex_none().mt(4).h(errorsHeight(texts, this.width - PAD * 2)).min_h(0).rounded(6).border_1().border_color(t.border).child(v_flex3().id("browser-error-list").flex_1().min_h(0).overflow_y_scrollbar().gap(2).p(6).children(texts.map((e, i) => div3().id(`browser-error-${i}`).flex_none().text_size(11).text_color(t.blocked).child(e)))));
+    });
   }
   picture(t, mode) {
     const s = this.stream;
@@ -2148,7 +2222,7 @@ var Browser = class extends View {
       close: () => closeOverlay(props()?.overlay)
     })).when(!!pickKind(mode), (el) => el.child(pickBar(
       t,
-      { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode) },
+      { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode), width: this.width },
       {
         send: (cx2) => this.sendFeedback(cx2),
         copy: (cx2) => this.copyNotes(cx2),

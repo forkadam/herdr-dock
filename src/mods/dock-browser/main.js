@@ -22,6 +22,7 @@ import { bigFramesRel, binRel, controlFileRel, framesRel, sessionFileRel, sessio
 import { goneSessions, isStale, liveTerminals, parseControl, parseSession } from "../../shared/browser/registry.js";
 import { afterLoss, toPage, drawnHeight, isPaste, keyEvents, mouseEvents, pasteEvents, PASTE_LIMIT, pageHeading, streamPort, wheelEvent } from "../../shared/browser/frame.js";
 import { fitWidth, inControl, pickKind } from "../../shared/browser/panel.js";
+import { errorsHeight } from "../../shared/browser/list-height.js";
 import { Stream, clearFolder } from "./stream.js";
 import { controlBar, errorLine, handoffBar } from "./controls.js";
 import { announceHandoffs, closeWindow } from "./actions.js";
@@ -341,10 +342,14 @@ export default class Browser extends View {
             .tooltip("Switch to this tab (you take the page)")
             .on_click((_e, cx) => this.switchTab(String(tab.tabId), cx)))
           .child(String(tab.title || tab.url || "Tab"))))))
-      .when(this.showErrors && errors > 0, (el) => el.child(v_flex().id("browser-error-list").mt(4).max_h(140).overflow_y_scrollbar()
-        .gap(2).p(6).rounded(6).border_1().border_color(t.border)
-        .children((st.errorTexts ?? []).slice().reverse().map((e, i) =>
-          div().id(`browser-error-${i}`).text_size(11).text_color(t.blocked).child(String(e).slice(0, 400))))));
+      .when(this.showErrors && errors > 0, (el) => {
+        // The list gets a definite height (as tall as it draws, ERRORS_MAX_H at most) and scrolls in it: a list sized only
+        // by a max-height doesn't scroll in Herdr (src/shared/fit-height.js).
+        const texts = (st.errorTexts ?? []).slice().reverse().map((e) => String(e).slice(0, 400));
+        return el.child(v_flex().flex_none().mt(4).h(errorsHeight(texts, this.width - PAD * 2)).min_h(0).rounded(6).border_1().border_color(t.border)
+          .child(v_flex().id("browser-error-list").flex_1().min_h(0).overflow_y_scrollbar().gap(2).p(6)
+            .children(texts.map((e, i) => div().id(`browser-error-${i}`).flex_none().text_size(11).text_color(t.blocked).child(e)))));
+      });
   }
 
   picture(t, mode) {
@@ -435,7 +440,7 @@ export default class Browser extends View {
         enlarge: () => this.enlarge(), close: () => closeOverlay(props()?.overlay),
       }))
       .when(!!pickKind(mode), (el) => el.child(pickBar(t,
-        { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode) }, {
+        { picking: this.myPick(), inputs: this.noteInputs, busy: this.busy, flash: this.flash, elsewhere: pickKind(mode), width: this.width }, {
           send: (cx) => this.sendFeedback(cx), copy: (cx) => this.copyNotes(cx), leave: (cx) => this.leavePick(cx),
           remove: (i, cx) => this.removeNote(i, cx), field: (i, name, value, cx) => this.setNoteField(i, name, value, cx),
         })))

@@ -6,8 +6,12 @@
 // closePicker(cx). Arrows move, Enter picks; Escape or a press outside the box closes it and starts nothing.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { fitHeight, textHeight } from "../../shared/fit-height.js";
 
 const SCRIM = "#00000059";
+const BOX_W = 540;
+const ROWS_MAX_H = 300; // the folders' list height at most (it scrolls past that)
+const NO_SPACE = "No space on this computer is working in a folder yet.";
 const ICONS = { folder: "mods/workspace-chrome/folder.svg", here: "mods/workspace-chrome/terminal.svg", other: "mods/workspace-chrome/folder-plus.svg" };
 
 export function startPicker(page, t) {
@@ -24,7 +28,12 @@ export function startPicker(page, t) {
     .when(Boolean(spaces), (el) => el.child(div().flex_none().max_w(150).truncate().text_size(11).text_color(t.muted).child(spaces)));
   const rows = n
     ? p.rows.map((r, i) => entry(i, ICONS.folder, r.label, r.path, r.spaces.join(", ")))
-    : [div().px(10).py(8).text_size(12).text_color(t.dim).child("No space on this computer is working in a folder yet.")];
+    : [div().px(10).py(8).text_size(12).text_color(t.dim).child(NO_SPACE)];
+  // The folders' list gets a definite height (as tall as it draws, ROWS_MAX_H at most) and scrolls in it: a list sized
+  // only by a max-height doesn't scroll in Herdr (src/shared/fit-height.js). Rows are 34 with 1 between; the empty line
+  // is px 10, py 8 (12px) in the box less its padding 6 each side.
+  const rowsHeight = fitHeight({ rows: n, rowH: 34, gap: 1, max: ROWS_MAX_H,
+    extra: n ? 0 : textHeight(NO_SPACE, { width: BOX_W - 12 - 20, size: 12 }) + 16 });
   const line = () => div().h(1).mx(6).my(3).flex_none().bg(t.border);
   const tick = p.remember;
   const remember = h_flex().id("jira-pick-remember").gap(8).items_center().cursor_pointer()
@@ -37,12 +46,13 @@ export function startPicker(page, t) {
   const box = v_flex().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx))
     // A press inside the box is the box's: it never reaches the scrim (which closes) or the page under it.
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    .w(540).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground)
+    .w(BOX_W).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground)
     .child(h_flex().h(34).px(10).gap(8).flex_none().items_center()
       .child(div().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in…`))
       .child(div().flex_none().text_size(11).text_color(t.dim).child("Esc")))
     .when(Boolean(p.reason), (el) => el.child(div().px(10).pb(4).flex_none().truncate().text_size(11.5).text_color(t.dim).child(p.reason ?? "")))
-    .child(v_flex().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows))
+    .child(v_flex().flex_none().h(rowsHeight).min_h(0)
+      .child(v_flex().id("jira-start-picker-rows").flex_1().min_h(0).overflow_y_scrollbar().gap(1).children(rows)))
     .child(line())
     .child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is"))
     .child(entry(n + 1, ICONS.other, "Other folder…", p.choosing ? "Choosing in the folder dialog…" : ""))

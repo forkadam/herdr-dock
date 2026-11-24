@@ -996,8 +996,50 @@ function byMod(dlg, t) {
 // src/mods/dock-config/by-region.js
 import { div as div4 } from "gpui-kit";
 import { h_flex as h_flex4, v_flex as v_flex3, NumberInput, Popover } from "gpui-base";
+
+// src/shared/fit-height.js
+function fitHeight({ rows = 0, rowH = 0, gap = 0, pad = 0, extra = 0, max = Infinity } = {}) {
+  const n = Math.max(0, rows);
+  return Math.min(max, n * rowH + Math.max(0, n - 1) * gap + pad + extra);
+}
+var GLYPH = 0.55;
+var LINE = 1.618;
+var lineHeight = (size) => Math.ceil(size * LINE);
+var units = (text) => {
+  let n = 0;
+  for (const ch of String(text ?? "")) n += ch.codePointAt(0) >= 11904 ? 2 : 1;
+  return n;
+};
+function textLines(text, width, size) {
+  const cap = Math.max(1, Math.floor(width / (size * GLYPH)));
+  let lines = 0;
+  for (const paragraph of String(text ?? "").split("\n")) {
+    let n = 1, used = 0;
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const w = units(word);
+      if (used === 0) used = w;
+      else if (used + 1 + w <= cap) used += 1 + w;
+      else {
+        n++;
+        used = w;
+      }
+      while (used > cap) {
+        n++;
+        used -= cap;
+      }
+    }
+    lines += n;
+  }
+  return lines;
+}
+var textHeight = (text, { width, size }) => textLines(text, width, size) * lineHeight(size);
+
+// src/mods/dock-config/by-region.js
 var LEFT_MODES3 = [["expanded", "expanded"], ["icons", "icons"], ["hidden", "hidden"]];
 var LABEL_W = 64;
+var ADD_W = 280;
+var ADD_MAX_H = 300;
+var ADD_NONE = "Every mod that fits here is already in it";
 var label = (t, text) => div4().flex_none().text_size(12).text_color(t.dim).child(text);
 function sizeInput(dlg, t, region) {
   const step = (h) => h_flex4().w(18).h(11).items_center().justify_center().text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground)).child(icon(h).size(10));
@@ -1052,11 +1094,19 @@ function addMod(dlg, t, region) {
   if (!dlg.editable()) return wrap(trigger(false));
   const s = dlg.session;
   const candidates = s.inventory.filter((i) => i.reason === null && i.region !== region && allowedRegions(i.id).includes(region));
-  const rows = candidates.map((i) => h_flex4().id(`dc-add-${region}-${i.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
+  const rows = candidates.map((i) => h_flex4().id(`dc-add-${region}-${i.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
     dlg.addOpen = null;
     dlg.act(cx, { type: "place", mod: i.id, region });
   }).child(div4().flex_1().min_w(0).truncate().child(i.title)).child(div4().flex_none().text_size(11.5).text_color(t.dim).child(i.region ? `in ${i.region}` : i.id)));
-  const content = v_flex3().id(`dc-add-${region}-list`).w(280).max_h(300).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows.length ? rows : [div4().p(8).text_color(t.dim).child("Every mod that fits here is already in it")]);
+  const height = fitHeight({
+    rows: rows.length,
+    rowH: 28,
+    gap: 1,
+    pad: 10,
+    max: ADD_MAX_H,
+    extra: rows.length ? 0 : textHeight(ADD_NONE, { width: ADD_W - 2 - 8 - 16, size: 12.5 }) + 16
+  });
+  const content = v_flex3().flex_none().w(ADD_W).h(height).min_h(0).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).child(v_flex3().id(`dc-add-${region}-list`).flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(rows.length ? rows : [div4().p(8).text_color(t.dim).child(ADD_NONE)]));
   return wrap(Popover.new(`dc-add-${region}`).open(dlg.addOpen === region).on_open_change((open, cx) => {
     dlg.addOpen = open ? region : null;
     cx.notify();

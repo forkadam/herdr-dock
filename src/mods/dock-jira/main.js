@@ -7,6 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, Popover, ScrollHandle } from "gpui-base";
 import { appHome, checking, exec, focused, nextCommand, panes, pickFolder, props, readTextFile, run, setShared, shared, spaces, theme, window, writeTextFile } from "herdr";
 import { pageShown, showTerminal } from "../_page.js";
+import { fitHeight, textHeight } from "../../shared/fit-height.js";
 import { createClient } from "../../shared/jira/client.js";
 import {
   briefBadge, bugsSearch, changeDiff, changedItem, changedSearches, checkWork, historyPlan, isUnread, keySearches, newInSprintItem, pruneBugs,
@@ -50,6 +51,13 @@ const START_IN_KEY = "dock.jira.startIn";
 const SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 const TICK_MS = 30000;
 const DETAIL_W = 420;
+// The menus and the board search's list: each is a box with a definite height (as tall as it draws, the cap at most)
+// holding the list that scrolls in it, because a list sized only by a max-height doesn't scroll in Herdr
+// (src/shared/fit-height.js).
+const FILTER_MENU = { w: 300, maxH: 360 };
+const STATUS_MENU = { w: 260, maxH: 320 };
+const BOARD_HITS_MAX_H = 200;
+const BOARD_HITS_W = 560; // the settings form's width at most: the width a note there wraps at
 // Scroll handles made when the page starts: ScrollHandle.new() can't run while the page draws, and a tab's list can
 // first be drawn before its settings are read. Enough for a few tabs' lists, boards and board columns.
 const SCROLL_POOL = 64;
@@ -1490,17 +1498,23 @@ export default class Jira extends View {
     const c = this.boardChoice;
     const hits = this.boardHits;
     const note = (text, color = t.dim) => div().px(8).py(6).text_size(11.5).text_color(color).child(text);
-    const hit = (b) => h_flex().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+    const hit = (b) => h_flex().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer()
       .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx))
       .child(div().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
-    const found = hits === "loading" ? [note("Searching…")]
-      : hits?.problem ? [note(`${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), t.blocked)]
-        : Array.isArray(hits) ? (hits.length ? hits.map(hit) : [note("No scrum board has that in its name.")]) : [];
+    // A line instead of the boards (searching, a problem, none), else the boards.
+    const said = hits === "loading" ? { text: "Searching…" }
+      : hits?.problem ? { text: `${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), color: t.blocked }
+        : Array.isArray(hits) && !hits.length ? { text: "No scrum board has that in its name." } : null;
+    const found = said ? [note(said.text, said.color)] : Array.isArray(hits) ? hits.map(hit) : [];
+    // Boards are 28 with 1 between; the box's padding 4 and border 1 all round; a line is px 8, py 6 (11.5px, wrapping).
+    const height = fitHeight({ rows: said ? 0 : found.length, rowH: 28, gap: 1, pad: 10, max: BOARD_HITS_MAX_H,
+      extra: said ? textHeight(said.text, { width: BOARD_HITS_W - 2 - 8 - 16, size: 11.5 }) + 12 : 0 });
     return v_flex().gap(5)
       .child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null))
-      .when(found.length > 0, (el) => el.child(v_flex().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8)
-        .border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found)))
+      .when(found.length > 0, (el) => el.child(v_flex().flex_none().h(height).min_h(0).rounded(8)
+        .border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground)
+        .child(v_flex().id("jira-board-hits").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(found))))
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it."))
         .when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => { this.boardChoice = null; cx.notify(); }))));
@@ -1550,19 +1564,21 @@ export default class Jira extends View {
     const filters = this.filters();
     const view = this.layout();
     const host = (() => { try { return new URL(this.jira.settings.baseUrl).host; } catch { return ""; } })();
-    const item = (x) => h_flex().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer()
+    const item = (x) => h_flex().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer()
       .bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => { this.filterOpen = false; setShared(FILTER_KEY, x.id); list.moved = new Map(); this.selected = null; this.detail = null; cx.spawn(async (cx) => this.refresh(cx)); })
       .child(div().flex_1().min_w(0).truncate().child(x.name))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
-    // The filter menu, on the tab that has one (All).
+    // The filter menu, on the tab that has one (All): rows 28 with 1 between, the padding 4 and the border 1 all round.
+    const filterHeight = fitHeight({ rows: filters.length, rowH: 28, gap: 1, pad: 10, max: FILTER_MENU.maxH });
     const picker = tab.filters && Popover.new("jira-filter").open(this.filterOpen)
       .on_open_change((open, cx) => { this.filterOpen = open; cx.notify(); })
       .trigger(h_flex().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border)
         .cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5)
         .child(div().max_w(220).truncate().child(f.name)).child(svg("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim)))
-      .content(v_flex().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
-        .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
+      .content(v_flex().flex_none().w(FILTER_MENU.w).h(filterHeight).min_h(0).rounded(8).bg(t.popover)
+        .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground)
+        .child(v_flex().id("jira-filter-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(filters.map(item))));
     const seg = (value, label) => h_flex().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer()
       .on_click(() => setShared(LAYOUT_KEY(tab.id), value))
       .when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground))
@@ -1867,21 +1883,25 @@ export default class Jira extends View {
       .hover((st) => st.opacity(0.85)).tooltip("Change status")
       .child(d.status ?? "").child(svg("mods/workspace-chrome/chevron-down.svg").size(11));
     const list = this.transitions;
-    const rows = list === "loading" || list === null
-      ? [div().p(8).text_color(t.dim).child("Asking Jira…")]
-      : list.problem
-        ? [div().p(8).text_color(t.blocked).child(`${list.problem.message} ${list.problem.hint}`)]
-        : !list.length
-          ? [div().p(8).text_color(t.dim).child("No moves from this status.")]
-          : list.map((tr) => h_flex().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer()
-            .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx))
-            .child(div().flex_1().min_w(0).truncate().child(tr.name))
-            .when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`→ ${tr.to.name}`))));
+    // A line instead of the moves (loading, a problem, none), else the moves.
+    const said = list === "loading" || list === null ? { text: "Asking Jira…", color: t.dim }
+      : list.problem ? { text: `${list.problem.message} ${list.problem.hint}`, color: t.blocked }
+        : !list.length ? { text: "No moves from this status.", color: t.dim } : null;
+    const rows = said
+      ? [div().p(8).text_color(said.color).child(said.text)]
+      : list.map((tr) => h_flex().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer()
+        .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx))
+        .child(div().flex_1().min_w(0).truncate().child(tr.name))
+        .when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(`→ ${tr.to.name}`))));
+    // Moves are 30 with 1 between; the box's padding 4 and border 1 all round; a line is p 8 (12.5px, wrapping).
+    const height = fitHeight({ rows: said ? 0 : list.length, rowH: 30, gap: 1, pad: 10, max: STATUS_MENU.maxH,
+      extra: said ? textHeight(said.text, { width: STATUS_MENU.w - 2 - 8 - 16, size: 12.5 }) + 16 : 0 });
     return Popover.new("jira-status-menu").open(this.transOpen)
       .on_open_change((open, cx) => this.openTransitions(open, cx))
       .trigger(pill)
-      .content(v_flex().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover)
-        .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+      .content(v_flex().flex_none().w(STATUS_MENU.w).h(height).min_h(0).rounded(8).bg(t.popover)
+        .border_1().border_color(t.border).text_size(12.5).text_color(t.foreground)
+        .child(v_flex().id("jira-tr-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(rows)));
   }
 
   // A move from the status menu waiting for its one required value (a Resolution): Jira's choices as buttons.

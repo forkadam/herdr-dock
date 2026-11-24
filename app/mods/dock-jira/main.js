@@ -15,6 +15,43 @@ function showTerminal() {
 }
 var pageShown = (myMod) => shared(PAGE_KEY) === myMod;
 
+// src/shared/fit-height.js
+function fitHeight({ rows = 0, rowH = 0, gap = 0, pad = 0, extra = 0, max = Infinity } = {}) {
+  const n = Math.max(0, rows);
+  return Math.min(max, n * rowH + Math.max(0, n - 1) * gap + pad + extra);
+}
+var GLYPH = 0.55;
+var LINE = 1.618;
+var lineHeight = (size) => Math.ceil(size * LINE);
+var units = (text) => {
+  let n = 0;
+  for (const ch of String(text ?? "")) n += ch.codePointAt(0) >= 11904 ? 2 : 1;
+  return n;
+};
+function textLines(text, width, size) {
+  const cap = Math.max(1, Math.floor(width / (size * GLYPH)));
+  let lines = 0;
+  for (const paragraph of String(text ?? "").split("\n")) {
+    let n = 1, used = 0;
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const w = units(word);
+      if (used === 0) used = w;
+      else if (used + 1 + w <= cap) used += 1 + w;
+      else {
+        n++;
+        used = w;
+      }
+      while (used > cap) {
+        n++;
+        used -= cap;
+      }
+    }
+    lines += n;
+  }
+  return lines;
+}
+var textHeight = (text, { width, size }) => textLines(text, width, size) * lineHeight(size);
+
 // src/shared/jira/jql.js
 var BUILTIN_FILTERS = [
   { id: "mine", name: "Assigned to me", jql: "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC" },
@@ -1813,14 +1850,20 @@ ${check?.args.task ?? ""}` }
 // src/mods/dock-jira/sprint-view.js
 import { div as div2, svg as svg2 } from "gpui-kit";
 import { h_flex as h_flex2, v_flex as v_flex2, Popover } from "gpui-base";
+var MENU_W = 280;
+var MENU_MAX_H = 360;
+var NO_SPRINTS = "No sprints on this board.";
 var laneKey = (lane) => lane.parent?.key ?? "";
 function sprintMenu(page, t) {
   const sp = page.sprint;
   const sprints = [...sp.all, ...sp.closed ?? []];
   const items = sprintSeries(menuSprint(sp.current, sprints), sprints, sp.mine);
   const older = sp.closedAt != null ? null : sp.closedProblem ? "Couldn't load older sprints" : "Loading older sprints\u2026";
-  const item = (s) => h_flex2().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().bg(s.id === sp.shown?.id ? t.selected : t.popover).hover((st) => st.bg(t.hover)).on_click((_e, cx) => page.showSprint(s.id, cx)).child(div2().flex_1().min_w(0).truncate().child(s.name)).child(div2().flex_none().text_size(11).text_color(t.dim).child(s.id === sp.current?.id ? "current" : s.state));
-  return Popover.new("jira-sprint-menu").open(page.sprintOpen).on_open_change((open, cx) => page.openSprintMenu(open, cx)).trigger(h_flex2().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div2().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints")).child(svg2("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex2().id("jira-sprint-list").w(280).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(items.map(item)).when(Boolean(older), (el) => el.child(div2().px(8).py(6).text_size(12).text_color(t.dim).child(older))).when(!items.length && !older, (el) => el.child(div2().p(8).text_color(t.dim).child("No sprints on this board."))));
+  const item = (s) => h_flex2().id(`jira-sprint-item-${s.id}`).h(30).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer().bg(s.id === sp.shown?.id ? t.selected : t.popover).hover((st) => st.bg(t.hover)).on_click((_e, cx) => page.showSprint(s.id, cx)).child(div2().flex_1().min_w(0).truncate().child(s.name)).child(div2().flex_none().text_size(11).text_color(t.dim).child(s.id === sp.current?.id ? "current" : s.state));
+  const textW = MENU_W - 2 - 8 - 16;
+  const extra = older ? (items.length ? 1 : 0) + textHeight(older, { width: textW, size: 12 }) + 12 : !items.length ? textHeight(NO_SPRINTS, { width: textW, size: 12.5 }) + 16 : 0;
+  const height = fitHeight({ rows: items.length, rowH: 30, gap: 1, pad: 10, extra, max: MENU_MAX_H });
+  return Popover.new("jira-sprint-menu").open(page.sprintOpen).on_open_change((open, cx) => page.openSprintMenu(open, cx)).trigger(h_flex2().id("jira-sprint-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div2().truncate().child(sp.shown ? sprintLabel(sp.shown, Date.now()) : "Sprints")).child(svg2("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex2().flex_none().w(MENU_W).h(height).min_h(0).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).child(v_flex2().id("jira-sprint-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(items.map(item)).when(Boolean(older), (el) => el.child(div2().px(8).py(6).text_size(12).text_color(t.dim).child(older))).when(!items.length && !older, (el) => el.child(div2().p(8).text_color(t.dim).child(NO_SPRINTS)))));
 }
 function sprintBoard(page, t) {
   const sp = page.sprint;
@@ -1865,17 +1908,27 @@ function sprintBoard(page, t) {
 import { div as div3, svg as svg3 } from "gpui-kit";
 import { h_flex as h_flex3, v_flex as v_flex3 } from "gpui-base";
 var SCRIM = "#00000059";
+var BOX_W = 540;
+var ROWS_MAX_H = 300;
+var NO_SPACE = "No space on this computer is working in a folder yet.";
 var ICONS = { folder: "mods/workspace-chrome/folder.svg", here: "mods/workspace-chrome/terminal.svg", other: "mods/workspace-chrome/folder-plus.svg" };
 function startPicker(page, t) {
   const p = page.picker;
   const n = p.rows.length;
   const verb = p.action === "finish" ? "Finish" : "Start";
   const entry = (i, icon, label, path, spaces2) => h_flex3().id(`jira-pick-${i}`).h(34).px(10).gap(10).flex_none().items_center().rounded(6).cursor_pointer().bg(i === p.selected ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => page.pickEntry(i, cx)).child(svg3(icon).size(14).flex_none().text_color(t.dim)).child(div3().flex_none().max_w(180).truncate().text_size(12.8).text_color(t.foreground).child(label)).child(div3().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(path ?? "")).when(Boolean(spaces2), (el) => el.child(div3().flex_none().max_w(150).truncate().text_size(11).text_color(t.muted).child(spaces2)));
-  const rows = n ? p.rows.map((r, i) => entry(i, ICONS.folder, r.label, r.path, r.spaces.join(", "))) : [div3().px(10).py(8).text_size(12).text_color(t.dim).child("No space on this computer is working in a folder yet.")];
+  const rows = n ? p.rows.map((r, i) => entry(i, ICONS.folder, r.label, r.path, r.spaces.join(", "))) : [div3().px(10).py(8).text_size(12).text_color(t.dim).child(NO_SPACE)];
+  const rowsHeight = fitHeight({
+    rows: n,
+    rowH: 34,
+    gap: 1,
+    max: ROWS_MAX_H,
+    extra: n ? 0 : textHeight(NO_SPACE, { width: BOX_W - 12 - 20, size: 12 }) + 16
+  });
   const line = () => div3().h(1).mx(6).my(3).flex_none().bg(t.border);
   const tick = p.remember;
   const remember2 = h_flex3().id("jira-pick-remember").gap(8).items_center().cursor_pointer().tooltip(`${p.issue.key}'s next Start and Finish open in the folder picked, without asking`).on_click((_e, cx) => page.toggleRemember(cx)).child(div3().size(14).flex_none().flex().items_center().justify_center().rounded(3).border_1().border_color(tick ? t.accent : t.border).bg(tick ? t.accent : t.background).when(tick, (el) => el.child(svg3("mods/workspace-chrome/check.svg").size(11).text_color(t.accent_foreground ?? t.background)))).child(div3().text_size(12).text_color(t.foreground).child("Remember for this ticket"));
-  const box = v_flex3().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx)).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).w(540).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground).child(h_flex3().h(34).px(10).gap(8).flex_none().items_center().child(div3().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in\u2026`)).child(div3().flex_none().text_size(11).text_color(t.dim).child("Esc"))).when(Boolean(p.reason), (el) => el.child(div3().px(10).pb(4).flex_none().truncate().text_size(11.5).text_color(t.dim).child(p.reason ?? ""))).child(v_flex3().id("jira-start-picker-rows").max_h(300).overflow_y_scrollbar().gap(1).children(rows)).child(line()).child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is")).child(entry(n + 1, ICONS.other, "Other folder\u2026", p.choosing ? "Choosing in the folder dialog\u2026" : "")).child(line()).child(h_flex3().h(32).px(10).gap(8).flex_none().items_center().child(remember2).child(div3().flex_1()).child(div3().flex_none().text_size(11).text_color(t.dim).child("\u2191 \u2193 to move \xB7 Enter to pick")));
+  const box = v_flex3().id("jira-start-picker").track_focus(page.pickerFocus).on_key_down((e, cx) => page.pickerKeyDown(e, cx)).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).w(BOX_W).max_w_full().p(6).gap(1).rounded(10).bg(t.popover).border_1().border_color(t.border).text_color(t.foreground).child(h_flex3().h(34).px(10).gap(8).flex_none().items_center().child(div3().flex_1().min_w(0).truncate().text_size(13.5).font_semibold().child(`${verb} ${p.issue.key} in\u2026`)).child(div3().flex_none().text_size(11).text_color(t.dim).child("Esc"))).when(Boolean(p.reason), (el) => el.child(div3().px(10).pb(4).flex_none().truncate().text_size(11.5).text_color(t.dim).child(p.reason ?? ""))).child(v_flex3().flex_none().h(rowsHeight).min_h(0).child(v_flex3().id("jira-start-picker-rows").flex_1().min_h(0).overflow_y_scrollbar().gap(1).children(rows))).child(line()).child(entry(n, ICONS.here, "Here", p.here?.path ?? "where the focused terminal is")).child(entry(n + 1, ICONS.other, "Other folder\u2026", p.choosing ? "Choosing in the folder dialog\u2026" : "")).child(line()).child(h_flex3().h(32).px(10).gap(8).flex_none().items_center().child(remember2).child(div3().flex_1()).child(div3().flex_none().text_size(11).text_color(t.dim).child("\u2191 \u2193 to move \xB7 Enter to pick")));
   return v_flex3().id("jira-start-picker-scrim").absolute().inset_0().items_center().pt(64).px(16).bg(SCRIM).on_mouse_down("left", (_e, cx) => {
     cx.stop_propagation();
     page.closePicker(cx);
@@ -1909,6 +1962,10 @@ var START_IN_KEY = "dock.jira.startIn";
 var SUBTASKS_JQL = "assignee = currentUser() AND resolution = Unresolved";
 var TICK_MS = 3e4;
 var DETAIL_W = 420;
+var FILTER_MENU = { w: 300, maxH: 360 };
+var STATUS_MENU = { w: 260, maxH: 320 };
+var BOARD_HITS_MAX_H = 200;
+var BOARD_HITS_W = 560;
 var SCROLL_POOL = 64;
 var WARN2 = "#d29922";
 var PAGE_PROBLEMS = ["auth", "forbidden", "offline", "tls", "timeout", "server", "nocurl", "unknown"];
@@ -3424,9 +3481,18 @@ var Jira = class extends View {
     const c = this.boardChoice;
     const hits = this.boardHits;
     const note = (text, color = t.dim) => div5().px(8).py(6).text_size(11.5).text_color(color).child(text);
-    const hit = (b) => h_flex5().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx)).child(div5().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`)).child(div5().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
-    const found = hits === "loading" ? [note("Searching\u2026")] : hits?.problem ? [note(`${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), t.blocked)] : Array.isArray(hits) ? hits.length ? hits.map(hit) : [note("No scrum board has that in its name.")] : [];
-    return v_flex4().gap(5).child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null)).when(found.length > 0, (el) => el.child(v_flex4().id("jira-board-hits").max_h(200).overflow_y_scrollbar().p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).children(found))).child(h_flex5().gap(8).items_center().child(div5().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it.")).when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => {
+    const hit = (b) => h_flex5().id(`jira-board-hit-${b.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.pickBoard(b, cx)).child(div5().flex_1().min_w(0).truncate().child(b.name ?? `Board ${b.id}`)).child(div5().flex_none().text_size(11).text_color(t.dim).child(`#${b.id}`));
+    const said = hits === "loading" ? { text: "Searching\u2026" } : hits?.problem ? { text: `${hits.problem.message} ${hits.problem.hint ?? ""}`.trim(), color: t.blocked } : Array.isArray(hits) && !hits.length ? { text: "No scrum board has that in its name." } : null;
+    const found = said ? [note(said.text, said.color)] : Array.isArray(hits) ? hits.map(hit) : [];
+    const height = fitHeight({
+      rows: said ? 0 : found.length,
+      rowH: 28,
+      gap: 1,
+      pad: 10,
+      max: BOARD_HITS_MAX_H,
+      extra: said ? textHeight(said.text, { width: BOARD_HITS_W - 2 - 8 - 16, size: 11.5 }) + 12 : 0
+    });
+    return v_flex4().gap(5).child(this.field(t, c ? `Scrum board: ${c.name ?? `#${c.id}`}` : "Scrum board: none", this.boardInput, null)).when(found.length > 0, (el) => el.child(v_flex4().flex_none().h(height).min_h(0).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground).child(v_flex4().id("jira-board-hits").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(found)))).child(h_flex5().gap(8).items_center().child(div5().flex_1().text_size(11).text_color(t.dim).child("With a board, the Today tab shows its current sprint in its own columns under the brief. Type part of its name, then pick it.")).when(Boolean(c), (el) => el.child(this.button(t, "jira-board-none", "No board", (cx) => {
       this.boardChoice = null;
       cx.notify();
     }))));
@@ -3464,7 +3530,7 @@ var Jira = class extends View {
         return "";
       }
     })();
-    const item = (x) => h_flex5().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).items_center().rounded(6).cursor_pointer().bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+    const item = (x) => h_flex5().id(`jira-filter-${x.id}`).h(28).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer().bg(x.id === f.id ? t.selected : t.popover).hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
       this.filterOpen = false;
       setShared2(FILTER_KEY, x.id);
       list3.moved = /* @__PURE__ */ new Map();
@@ -3472,10 +3538,11 @@ var Jira = class extends View {
       this.detail = null;
       cx.spawn(async (cx2) => this.refresh(cx2));
     }).child(div5().flex_1().min_w(0).truncate().child(x.name)).child(div5().flex_none().text_size(11).text_color(t.dim).child(x.source === "favourite" ? "Jira" : x.source === "own" ? "mine" : ""));
+    const filterHeight = fitHeight({ rows: filters.length, rowH: 28, gap: 1, pad: 10, max: FILTER_MENU.maxH });
     const picker = tab.filters && Popover2.new("jira-filter").open(this.filterOpen).on_open_change((open, cx) => {
       this.filterOpen = open;
       cx.notify();
-    }).trigger(h_flex5().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div5().max_w(220).truncate().child(f.name)).child(svg4("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex4().id("jira-filter-list").w(300).max_h(360).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(filters.map(item)));
+    }).trigger(h_flex5().id("jira-filter-trigger").h(28).px(10).gap(6).items_center().rounded(7).border_1().border_color(t.border).cursor_pointer().hover((s) => s.bg(t.hover)).text_size(12.5).child(div5().max_w(220).truncate().child(f.name)).child(svg4("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim))).content(v_flex4().flex_none().w(FILTER_MENU.w).h(filterHeight).min_h(0).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).child(v_flex4().id("jira-filter-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(filters.map(item))));
     const seg = (value, label) => h_flex5().id(`jira-view-${value}`).h(24).px(9).items_center().rounded(5).text_size(12).cursor_pointer().on_click(() => setShared2(LAYOUT_KEY(tab.id), value)).when(view === value, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).child(label);
     const icon = (id, path, tip, onClick) => div5().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(7).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => onClick(cx)).child(svg4(path).size(14));
     return h_flex5().flex_none().h(52).px(16).gap(10).items_center().border_b(1).border_color(t.border).child(div5().text_size(16).font_semibold().child("Jira")).child(div5().text_size(12).text_color(t.dim).max_w(180).truncate().child(host)).when(Boolean(picker), (el) => el.child(picker)).when(!today, (el) => el.child(h_flex5().id("jira-search").w(240).h(28).px(8).items_center().rounded(7).border_1().border_color(t.border).bg(t.background).child(Input.new(this.searchInput).flex_1().h_full().text_size(12.5).text_color(t.foreground)))).when(!today && Boolean(tab.button), (el) => el.child(this.button(t, "jira-tab-button", tab.button.label, (cx) => this.tabButton(tab.button, cx), { accent: true, tip: tabButtonWork(tab.button).args.task }))).child(div5().flex_1()).child(div5().text_size(11.5).text_color(t.dim).child(list3.loading ? "loading\u2026" : list3.fetchedAt ? [countText(shownCount, total), `updated ${ago(list3.fetchedAt, Date.now())}`].filter(Boolean).join(" \xB7 ") : "")).when(!today, (el) => el.child(h_flex5().p(2).gap(2).rounded(7).border_1().border_color(t.border).child(seg("list", "List")).child(seg("board", "Board")))).child(icon("jira-refresh", "mods/dock-jira/refresh.svg", "Refresh", (cx) => cx.spawn(async (cx2) => this.reload(cx2)))).child(icon("jira-gear", "mods/workspace-chrome/settings.svg", "Jira settings", (cx) => this.openSettings(cx)));
@@ -3658,8 +3725,17 @@ ${finish.args.task}` }))).child(this.button(t, "jira-open", "Open in browser", (
   statusMenu(t, d) {
     const pill = h_flex5().id("jira-status").h(24).px(8).gap(5).items_center().rounded(6).text_size(11.5).cursor_pointer().bg(d.category === "done" ? t.done : d.category === "indeterminate" ? t.accent : t.border).text_color(d.category === "new" ? t.foreground : t.accent_foreground ?? t.background).hover((st) => st.opacity(0.85)).tooltip("Change status").child(d.status ?? "").child(svg4("mods/workspace-chrome/chevron-down.svg").size(11));
     const list3 = this.transitions;
-    const rows = list3 === "loading" || list3 === null ? [div5().p(8).text_color(t.dim).child("Asking Jira\u2026")] : list3.problem ? [div5().p(8).text_color(t.blocked).child(`${list3.problem.message} ${list3.problem.hint}`)] : !list3.length ? [div5().p(8).text_color(t.dim).child("No moves from this status.")] : list3.map((tr) => h_flex5().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx)).child(div5().flex_1().min_w(0).truncate().child(tr.name)).when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div5().flex_none().text_size(11).text_color(t.dim).child(`\u2192 ${tr.to.name}`))));
-    return Popover2.new("jira-status-menu").open(this.transOpen).on_open_change((open, cx) => this.openTransitions(open, cx)).trigger(pill).content(v_flex4().id("jira-tr-list").w(260).max_h(320).overflow_y_scrollbar().p(4).gap(1).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).children(rows));
+    const said = list3 === "loading" || list3 === null ? { text: "Asking Jira\u2026", color: t.dim } : list3.problem ? { text: `${list3.problem.message} ${list3.problem.hint}`, color: t.blocked } : !list3.length ? { text: "No moves from this status.", color: t.dim } : null;
+    const rows = said ? [div5().p(8).text_color(said.color).child(said.text)] : list3.map((tr) => h_flex5().id(`jira-tr-${tr.id}`).h(30).px(8).gap(8).flex_none().items_center().rounded(6).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.doTransition(tr, cx)).child(div5().flex_1().min_w(0).truncate().child(tr.name)).when(Boolean(tr.to?.name) && tr.to.name !== tr.name, (el) => el.child(div5().flex_none().text_size(11).text_color(t.dim).child(`\u2192 ${tr.to.name}`))));
+    const height = fitHeight({
+      rows: said ? 0 : list3.length,
+      rowH: 30,
+      gap: 1,
+      pad: 10,
+      max: STATUS_MENU.maxH,
+      extra: said ? textHeight(said.text, { width: STATUS_MENU.w - 2 - 8 - 16, size: 12.5 }) + 16 : 0
+    });
+    return Popover2.new("jira-status-menu").open(this.transOpen).on_open_change((open, cx) => this.openTransitions(open, cx)).trigger(pill).content(v_flex4().flex_none().w(STATUS_MENU.w).h(height).min_h(0).rounded(8).bg(t.popover).border_1().border_color(t.border).text_size(12.5).text_color(t.foreground).child(v_flex4().id("jira-tr-list").flex_1().min_h(0).overflow_y_scrollbar().p(4).gap(1).children(rows)));
   }
   // A move from the status menu waiting for its one required value (a Resolution): Jira's choices as buttons.
   stepBox(t) {
