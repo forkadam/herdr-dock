@@ -2,7 +2,7 @@
 // sections a tab's rows are split into, and the count on a tab.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ALL_JQL, pickTab, sectionsFor, stepTab, tabCountText, tabList, todayCount } from "../src/shared/jira/views.js";
+import { ALL_JQL, attentionTip, countTone, pickTab, sectionsFor, stepTab, tabCountText, tabList, todayCount } from "../src/shared/jira/views.js";
 import { BUILTIN_FILTERS } from "../src/shared/jira/jql.js";
 
 const views = [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }, { id: "all", name: "Everything", jql: "assignee = currentUser()", group: null }];
@@ -146,4 +146,22 @@ test("tabFilters: the All tab's own search first, then the page's filters", () =
   // A view that replaces All: its search, under its name.
   const replaced = tabList(views, { today: false }).find((t) => t.id === "all");
   assert.deepEqual(tabFilters(replaced, list)[0], { id: "all", name: "Everything", jql: "assignee = currentUser()", source: "builtin" });
+});
+
+test("countTone / attentionTip", () => {
+  assert.equal(countTone({ total: 3, attention: 1 }), "attention");
+  assert.equal(countTone({ problem: { message: "x" }, attention: 2 }), "problem");
+  assert.equal(countTone({ total: 3, attention: 0 }), "plain");
+  assert.equal(attentionTip({ attention: 2 }), "2 need attention now");
+  assert.equal(attentionTip({ total: 2 }), null);
+});
+
+test("countTone / attentionTip: no count at all, and a count that never heard of attention", () => {
+  assert.equal(countTone(undefined), "plain");
+  assert.equal(countTone(null), "plain");
+  assert.equal(countTone({}), "plain");
+  assert.equal(countTone({ total: 4 }), "plain");
+  assert.equal(attentionTip(undefined), null);
+  assert.equal(attentionTip({ attention: 0 }), null);
+  assert.equal(attentionTip({ attention: 1 }), "1 need attention now");
 });

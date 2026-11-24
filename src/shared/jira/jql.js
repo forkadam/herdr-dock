@@ -10,7 +10,7 @@ export const BUILTIN_FILTERS = [
 // What a search asks for: just what a list row or a board card shows (`parent` only comes back on a sub-task).
 export const ROW_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated", "parent"];
 
-const quote = (text) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+export const quote = (text) => `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 // The filter's JQL narrowed to issues mentioning `text` (Jira's full-text `text ~`), before any ORDER BY. A query
 // with OR is put in parentheses first, so the text applies to all of it.

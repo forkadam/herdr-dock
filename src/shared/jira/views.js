@@ -65,6 +65,13 @@ export function tabCountText({ total, problem } = {}) {
   return total > 99 ? "99+" : String(total);
 }
 
+// How a tab's count is drawn: "problem" while its search failed, "attention" when some of its tickets are at an
+// attention level (`attention`, the number of them), else "plain". `count` is { total, problem, attention }.
+export const countTone = (count) => (count?.problem ? "problem" : count?.attention > 0 ? "attention" : "plain");
+
+// The tip on a tab's count when tickets need attention, else null.
+export const attentionTip = (count) => (count?.attention > 0 ? `${count.attention} need attention now` : null);
+
 // Today's count (for tabCountText): the brief's unread items (`badge`, briefBadge's; null: none), with the first of
 // `problems` (its board's, then its brief's) while one stands, so its tab reads "!" as a tab whose search failed does.
 export function todayCount(badge, problems) {
