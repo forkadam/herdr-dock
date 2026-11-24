@@ -19,9 +19,12 @@ import {
   boardProjects, dragColumns, keepMoved, stepFields, stepNeeds, dragStarted, dropPlan, dropTargets, pageState, refusedDropText, workflowStatuses, pickFilter, pollDue, previewTask, REFRESH_CAP, refreshSize, startTemplate, startWork, tabButtonWork, todayFailure, withComment,
 } from "../../shared/jira/page.js";
 import { DEFAULT_HIGH_PRIORITIES, jiraOptions, normalizeBaseUrl, prioritiesText, settingsReload, siteName, withFormOptions } from "../../shared/jira/settings.js";
+import { attentionNotLoaded, chipOf, chipWidth, severityFields, severityRow, tint } from "../../shared/jira/severity.js";
 import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
-import { countsDue, pickTab, sectionsFor, stepTab, tabFilters, tabLayout, tabList, todayCount } from "../../shared/jira/views.js";
+import {
+  countsDue, keepAttention, listSections, pickTab, stepTab, tabAttentionJql, tabFilters, tabLayout, tabList, todayCount, withAttention,
+} from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
 import { briefView, changeView } from "./brief-view.js";
@@ -86,7 +89,9 @@ export default class Jira extends View {
     this.options = jiraOptions({});
     this.tabId = null;
     this.states = new Map();
-    this.counts = new Map(); // tab id -> { total?, problem?, loading? }
+    // tab id -> { total?, problem?, loading?, attention? }; `attention`: how many of a severity tab's tickets need
+    // attention now (countAttention), kept across its other counts until its own search answers again.
+    this.counts = new Map();
     // Today's sprint board (refreshToday; the tab's selection, loading and fetchedAt are in state("today")), its
     // sprint menu, the lanes folded by hand (parent key; "" is Other issues; while Herdr runs), and the column a card
     // was last dropped on there (its choice box or note shows in that column, in the card's lane).
@@ -200,15 +205,16 @@ export default class Jira extends View {
     }
   }
 
-  // Issue keys in the order they're drawn (by section and group in the list, by column on the board; on Today by
-  // lane, then column, leaving out folded lanes).
+  // Issue keys in the order they're drawn (by section and group in the list, the attention box's first, by column on
+  // the board; on Today by lane, then column, leaving out folded lanes).
   visibleOrder() {
     if (this.tab().kind === "today") {
       const cols = this.sprint.columns;
       return sprintRows(this.sprint.rows).filter((l) => !this.collapsed.has(l.parent?.key ?? "")).flatMap((l) => laneCells(l, cols).flat()).map((r) => r.key);
     }
     const rows = this.shownRows();
-    const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : sectionsFor(rows, this.tab().group).flatMap((s) => s.parts);
+    const list = () => { const { attention, sections } = listSections(rows, this.tab()); return [...(attention ?? []), ...sections].flatMap((s) => s.parts); };
+    const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : list();
     return parts.flatMap((p) => p.rows.map((r) => r.key));
   }
 
@@ -248,6 +254,9 @@ export default class Jira extends View {
 
   // What a tab searches (before its search text): All's is the filter picked in its menu.
   source(tab) { return tab.filters ? this.filter() : tab; }
+  // What a tab searches for its tickets that need attention now (tabAttentionJql over its source, never its search
+  // text); null: nothing (no severity, or no level asks for attention).
+  attentionSearch(tab) { return tabAttentionJql(tab, this.source(tab).jql); }
 
   // Shows a tab as it was left: its search, rows, selection and open issue. Asks Jira again when it was never loaded
   // or its rows are older than a poll of the shown page.
@@ -370,8 +379,10 @@ export default class Jira extends View {
   }
 
   // The shown tab's list (its search, and its search text) and its count. The tab's newest search wins; the answer
-  // goes to the tab it was asked for, even if another is shown by then. Today is its brief and sprint board
-  // (refreshToday; `fresh`: its board's columns and sprints, and your sub-tasks' parents, read again too).
+  // goes to the tab it was asked for, even if another is shown by then. A tab with severity asks for its field too
+  // (each row's `severity`), and once its rows are drawn, how many of its tickets need attention now (countAttention).
+  // Today is its brief and sprint board (refreshToday; `fresh`: its board's columns and sprints, and your sub-tasks'
+  // parents, read again too).
   async refresh(cx, { more = false, fresh = false } = {}) {
     if (!this.connected || !this.jira) return;
     const tab = this.tab();
@@ -380,31 +391,57 @@ export default class Jira extends View {
     const seq = s.seq.next();
     const f = this.source(tab);
     const jql = withSearch(f.jql, s.query);
+    const attends = this.attentionSearch(tab) != null;
     s.loading = true;
     this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: true });
     cx.notify();
     // A plain refresh asks for as many as are listed, so Load more's rows survive a poll or an action.
-    const r = await this.client(cx).search(jql, { startAt: more ? s.rows.length : 0, maxResults: more ? PAGE_SIZE : refreshSize(s.rows.length) });
+    const r = await this.client(cx).search(jql, {
+      startAt: more ? s.rows.length : 0, maxResults: more ? PAGE_SIZE : refreshSize(s.rows.length), fields: severityFields(tab.severity),
+    });
     if (!s.seq.accept(seq)) return;
     s.loading = false;
     this.lastPollAt = Date.now();
     this.pollFailed = !r.ok;
     if (!r.ok) {
       if (this.pageProblem(r.problem)) this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: false });
-      else { s.listProblem = r.problem; this.counts.set(tab.id, { problem: r.problem }); }
+      else { s.listProblem = r.problem; this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { problem: r.problem }, attends)); }
       cx.notify();
       return;
     }
     const base = this.jira.settings.baseUrl;
-    const rows = (r.data?.issues ?? []).map((i) => issueRow(i, base));
+    const rows = (r.data?.issues ?? []).map((i) => severityRow(i, base, tab.severity));
     s.rows = more ? [...s.rows, ...rows] : rows;
     s.total = r.data?.total;
     s.fetchedAt = Date.now();
     s.listProblem = null;
-    this.counts.set(tab.id, { total: s.total });
+    this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { total: s.total }, attends));
     this.problem = null;
     cx.notify();
+    if (await this.countAttention(cx, tab)) return;
     await this.loadProjectStatuses(cx);
+  }
+
+  // How many of a tab's tickets need attention now (its count's `attention`, which reddens its count): one count-only
+  // search (attentionSearch), after the tab's own (refresh, refreshCounts), whatever is typed in its search box. Its
+  // answer is kept only while the tab still asks the same. A failed one leaves `attention` as it was, with no "!" for
+  // it alone, except a rejected or forbidden token, which takes the page (countFailure): true then.
+  async countAttention(cx, tab) {
+    const jql = this.attentionSearch(tab);
+    if (!jql || !this.connected || this.problem) return false;
+    const r = await this.client(cx).search(jql, { maxResults: 0 });
+    if (!r.ok) {
+      if (countFailure(r.problem.kind) !== "page") return false;
+      this.pageProblem(r.problem);
+      cx.notify();
+      return true;
+    }
+    const now = this.tabs().find((x) => x.id === tab.id);
+    if (!now || this.attentionSearch(now) !== jql) return false;
+    const count = withAttention(this.counts.get(tab.id), r.data?.total);
+    if (count) this.counts.set(tab.id, count);
+    cx.notify();
+    return false;
   }
 
   // A failed search that means Jira can't be reached at all takes the whole page (true); any other (a view's bad
@@ -767,9 +804,10 @@ export default class Jira extends View {
     cx.notify();
   }
 
-  // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time.
-  // A failed one marks only its own tab ("!"), except a rejected or forbidden token, which takes the page
-  // (countFailure). Whether Jira can be reached at all is the shown tab's search to say.
+  // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time,
+  // and after one that worked, for a tab with severity, its tickets that need attention now (countAttention). A failed
+  // one marks only its own tab ("!"), except a rejected or forbidden token, which takes the page (countFailure).
+  // Whether Jira can be reached at all is the shown tab's search to say.
   async refreshCounts(cx) {
     if (!this.connected || this.problem || !this.jira) return;
     const due = countsDue(this.tabs(), this.tab().id, this.countsAt, Date.now());
@@ -779,10 +817,12 @@ export default class Jira extends View {
       if (!this.connected || this.problem) return;
       const r = await this.client(cx).search(withSearch(this.source(tab).jql, this.state(tab.id).query), { maxResults: 0 });
       if (tab.id === this.tab().id) continue; // shown meanwhile: its own search counts it
-      if (r.ok) this.counts.set(tab.id, { total: r.data?.total });
+      const attends = this.attentionSearch(tab) != null;
+      if (r.ok) this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { total: r.data?.total }, attends));
       else if (countFailure(r.problem.kind) === "page") { this.pageProblem(r.problem); cx.notify(); return; }
-      else this.counts.set(tab.id, { problem: r.problem });
+      else this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { problem: r.problem }, attends));
       cx.notify();
+      if (r.ok && (await this.countAttention(cx, tab))) return;
     }
   }
 
@@ -1379,14 +1419,25 @@ export default class Jira extends View {
     return div().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
   }
 
-  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows).
-  row(t, r, i, keyW) {
+  // A row's or a card's severity chip, in a tab with `severity`: its level's label on the level's colour (chipOf);
+  // null for an unrated row.
+  chip(t, r, severity) {
+    const c = chipOf(r.severity, severity, t);
+    return c && div().flex_none().h(16).px(5).flex().items_center().rounded(4).bg(c.bg).text_size(10.5).font_semibold().text_color(c.ink).child(c.label);
+  }
+
+  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows). `chips`: in a tab with
+  // severity, { severity, width }: the row's chip before its key, in a column of that width for the whole list (empty
+  // for an unrated row), so the keys line up.
+  row(t, r, i, keyW, chips = null) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
+    const chip = chips && this.chip(t, r, chips.severity);
     return h_flex().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer()
       .bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.select(r.key, cx))
       .child(this.typeMark(t, r))
+      .when(Boolean(chips), (el) => el.child(h_flex().w(chips.width).flex_none().overflow_hidden().items_center().children(chip ? [chip] : [])))
       .child(div().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key))
       .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary))
       .child(div().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN : t.dim).child(r.priority ?? ""))
@@ -1399,25 +1450,29 @@ export default class Jira extends View {
         .child(svg("mods/dock-jira/play.svg").size(11)));
   }
 
-  more(t) {
+  // `id`: the button's (the list's own, or the attention box's).
+  more(t, id = "jira-more") {
     const s = this.shown();
     if (!Number.isFinite(s.total) || s.rows.length >= s.total) return null;
-    return h_flex().px(16).py(10).child(this.button(t, "jira-more", `Load more (${s.total - s.rows.length} left)`,
+    return h_flex().px(16).py(10).child(this.button(t, id, `Load more (${s.total - s.rows.length} left)`,
       (cx) => cx.spawn(async (cx) => this.refresh(cx, { more: true })), { enabled: !s.loading }));
   }
 
-  // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type.
+  // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type, one grouped
+  // by "severity" by level, under the box of those that need attention now (attentionBox). In a tab with severity
+  // each row carries its level's chip.
   listView(t) {
     const tab = this.tab();
     const rows = this.shownRows();
-    const sections = sectionsFor(rows, tab.group);
+    const { attention, sections } = listSections(rows, tab);
     const keyW = keyColumnWidth(rows.map((r) => r.key));
+    const chips = tab.severity ? { severity: tab.severity, width: chipWidth(tab.severity) } : null;
     const more = this.more(t);
     const group = (g) => [
       h_flex().h(30).px(16).pt(8).gap(6).flex_none().items_center()
         .child(div().text_size(11.5).font_medium().text_color(t.muted).child(g.title))
         .child(div().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
-      ...g.rows.map((r, i) => this.row(t, r, i, keyW)),
+      ...g.rows.map((r, i) => this.row(t, r, i, keyW, chips)),
     ];
     const section = (sec) => [
       ...(sec.title ? [h_flex().h(38).px(16).pt(14).gap(6).flex_none().items_center()
@@ -1428,13 +1483,46 @@ export default class Jira extends View {
     const scroll = this.scroll(`${tab.id}/list`);
     return v_flex().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16)
       .when(Boolean(scroll), (el) => el.track_scroll(scroll))
+      .when(Boolean(attention), (el) => el.child(this.attentionBox(t, tab, attention, group)))
       .children(sections.flatMap(section))
       .when(Boolean(more), (el) => el.child(more));
   }
 
-  card(t, r) {
+  // Above a severity tab's sections: its open tickets at an attention level (`attention`, severitySections'), by level,
+  // in a box with a red title and a red-tinted border, each level split To do / In progress (`group` draws a part, as
+  // the list does). When the tab's attention count is more than the box holds and rows are left to load, the box ends
+  // with how many aren't loaded and Load more (attentionNotLoaded). With nothing in it, one quiet line says so.
+  attentionBox(t, tab, attention, group) {
+    const s = this.state(tab.id);
+    const missing = attentionNotLoaded(attention, this.counts.get(tab.id)?.attention, { left: s.total - s.rows.length, query: s.query });
+    if (!attention.length && !missing) {
+      return div().px(16).pt(12).pb(2).flex_none().text_size(12).text_color(t.dim).child("Nothing needs attention now");
+    }
+    const size = (sec) => sec.parts.reduce((n, g) => n + g.rows.length, 0);
+    const level = (sec) => [
+      h_flex().h(30).px(16).pt(8).gap(6).flex_none().items_center()
+        .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child(sec.title))
+        .child(div().text_size(11.5).text_color(t.dim).child(String(size(sec)))),
+      ...sec.parts.flatMap(group),
+    ];
+    const shown = attention.reduce((n, sec) => n + size(sec), 0);
+    const more = missing ? this.more(t, "jira-more-attention") : null;
+    return v_flex().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden()
+      .border_1().border_color(tint(t.blocked, 0.55))
+      .child(h_flex().h(36).px(16).pt(6).gap(6).flex_none().items_center()
+        .child(div().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now"))
+        .when(shown > 0, (el) => el.child(div().text_size(12).text_color(t.dim).child(String(shown)))))
+      .children(attention.flatMap(level))
+      .when(missing > 0, (el) => el.child(h_flex().flex_none().pl(16).items_center()
+        .child(div().text_size(12).text_color(t.muted).child(`${missing} more not loaded`))
+        .when(Boolean(more), (x) => x.child(more))));
+  }
+
+  // `severity`: the shown tab's, for the card's chip (null on Today's sprint board: no chips there).
+  card(t, r, severity = null) {
     const on = this.selected === r.key;
     const dragged = this.drag?.row.key === r.key;
+    const chip = severity && this.chip(t, r, severity);
     return v_flex().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer()
       .bg(on ? t.selected : (t.surface ?? t.chrome)).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover))
       .when(dragged, (el) => el.opacity(0.35))
@@ -1443,6 +1531,7 @@ export default class Jira extends View {
       .child(div().text_size(12.8).text_color(t.foreground).child(r.summary))
       .child(h_flex().gap(6).items_center()
         .child(this.typeMark(t, r))
+        .when(Boolean(chip), (el) => el.child(chip))
         .child(div().text_size(11.5).text_color(t.dim).child(r.key))
         .when(Boolean(r.priority), (el) => el.child(div().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN : t.dim).child(r.priority)))
         .child(div().flex_1())
@@ -1455,6 +1544,7 @@ export default class Jira extends View {
     const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
     const tabId = this.tab().id;
+    const severity = this.tab().severity;
     const board = this.scroll(`${tabId}/board`);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
@@ -1478,7 +1568,7 @@ export default class Jira extends View {
           .when(Boolean(cards), (el) => el.track_scroll(cards))
           .when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t)))
           .when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t)))
-          .children(c.rows.map((r) => this.card(t, r))));
+          .children(c.rows.map((r) => this.card(t, r, severity))));
     };
     return v_flex().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0)
       .on_mouse_move((e, cx) => this.pointerMoved(e, cx))

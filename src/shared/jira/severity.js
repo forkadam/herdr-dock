@@ -1,8 +1,9 @@
 // A view's severity (pure; no host imports): the Jira field that rates a ticket and the levels it maps to, read from
 // the view's `severity` block in the settings file, and what the page does with it: a ticket's level and colour, the
-// search for the tickets that need attention now, and the sections a tab's rows fall into.
-import { quote } from "./jql.js";
-import { groupByCategory } from "./model.js";
+// search for the tickets that need attention now, the sections a tab's rows fall into, and how a row's chip and the
+// attention box are drawn.
+import { ROW_FIELDS, quote } from "./jql.js";
+import { groupByCategory, issueRow } from "./model.js";
 
 // The colours a level can take by name; a level can also give a hex colour, #rrggbb.
 export const COLOR_NAMES = Object.freeze(["red", "orange", "yellow", "green", "blue", "purple", "gray"]);
@@ -105,4 +106,76 @@ export function severitySections(rows, severity) {
   }
   if (unrated.length) sections.push(section(severity.unrated, null, unrated));
   return { attention, sections };
+}
+
+// ---- what the page draws with it ----
+
+// The fields a tab's search asks for: the rows' own and the severity field (once, should the rows ask for it already);
+// undefined without severity, which leaves the search its own (ROW_FIELDS).
+export const severityFields = (severity) => (severity ? [...new Set([...ROW_FIELDS, severity.field])] : undefined);
+
+// An issue from a tab's search -> its row: issueRow's, with `severity` (the field's raw value, severityValue) in a tab
+// with severity; issueRow's as it is in any other.
+export const severityRow = (issue, base, severity) =>
+  (severity ? { ...issueRow(issue, base), severity: severityValue(issue, severity.field) } : issueRow(issue, base));
+
+// A hex colour (#rgb, #rrggbb, #rrggbbaa) -> [r, g, b, a] (0-255, a 0-1), else null.
+function parseHex(color) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(typeof color === "string" ? color.trim() : "");
+  if (!m) return null;
+  const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join("") : m[1];
+  const at = (i) => parseInt(h.slice(i, i + 2), 16);
+  return [at(0), at(2), at(4), h.length === 8 ? at(6) / 255 : 1];
+}
+const hex2 = (n) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, "0");
+
+// A colour with `alpha` (0-1) as #rrggbbaa, an alpha it already has scaled by it; anything not a hex colour as it is.
+export function tint(color, alpha) {
+  const c = parseHex(color);
+  if (!c) return color;
+  const [r, g, b, a] = c;
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}${hex2(a * alpha * 255)}`;
+}
+
+// The inks a chip's label is written in, and which reads on `color` (a hex colour; its alpha ignored): the one with the
+// higher contrast (WCAG's), else null for what is not a hex colour.
+const DARK_INK = "#111111";
+const LIGHT_INK = "#ffffff";
+const luminance = ([r, g, b]) => {
+  const lin = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+};
+export function inkOn(color) {
+  const c = parseHex(color);
+  if (!c) return null;
+  const l = luminance(c);
+  const dark = luminance(parseHex(DARK_INK));
+  return (l + 0.05) / (dark + 0.05) >= 1.05 / (l + 0.05) ? DARK_INK : LIGHT_INK;
+}
+
+// A row's chip in a tab with `severity`: its level's label on its level's colour (colorOf; a theme colour from `t`, the
+// theme, else t.accent; a hex as it is) and the ink that reads on it (t.foreground when there's no colour to read);
+// null when the row has no level (unrated) or the tab no severity.
+export function chipOf(value, severity, t) {
+  const level = severity ? levelOf(value, severity) : null;
+  if (!level) return null;
+  const c = colorOf(level.color);
+  const bg = c.theme ? t[c.theme] ?? t.accent : c.hex;
+  return { label: level.label, bg, ink: inkOn(bg) ?? t.foreground };
+}
+
+// The width of a list's chip column (px): one for the whole tab, from its longest label, so the keys line up.
+export function chipWidth(severity) {
+  const longest = severity.levels.reduce((n, l) => Math.max(n, l.label.length), 0);
+  return Math.min(96, Math.max(24, Math.ceil(longest * 6.5) + 12));
+}
+
+// How many tickets needing attention the box can't show for not being loaded: the tab's attention count (`counted`,
+// its count's `attention`) less the rows in the box (`attention`, severitySections'), while the tab has rows left to
+// load (`left`, so Load more can bring them) and no search text (`query`: the count is the whole queue's, not the
+// search's); else 0.
+export function attentionNotLoaded(attention, counted, { left = 0, query = "" } = {}) {
+  if (!Number.isFinite(counted) || !(left > 0) || String(query ?? "").trim()) return 0;
+  const loaded = attention.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.rows.length, 0), 0);
+  return Math.max(0, counted - loaded);
 }

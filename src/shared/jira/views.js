@@ -3,6 +3,7 @@
 import { BUILTIN_FILTERS } from "./jql.js";
 import { groupByCategory } from "./model.js";
 import { HIDDEN_EVERY_MS } from "./page.js";
+import { attentionJql, severitySections } from "./severity.js";
 
 // What the All tab searches: everything assigned to me, resolved or not.
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
@@ -57,6 +58,15 @@ export function sectionsFor(rows, group) {
   return [...types].map(([title, list]) => ({ title, parts: groupByCategory(list) }));
 }
 
+// A tab's list: { attention, sections }. A tab grouped by severity (group "severity" with a severity block):
+// severitySections' (`attention`, the sections of the box above the rest), the box left out (null) when no level asks
+// for attention. Any other: no box (null) and sectionsFor's.
+export function listSections(rows, tab) {
+  if (tab.group !== "severity" || !tab.severity) return { attention: null, sections: sectionsFor(rows, tab.group) };
+  const { attention, sections } = severitySections(rows, tab.severity);
+  return { attention: tab.severity.levels.some((l) => l.attention) ? attention : null, sections };
+}
+
 // The count on a tab: "" until it is known, "!" when its search failed, else the number, "99+" past 99. A tab
 // reloading keeps the count it had.
 export function tabCountText({ total, problem } = {}) {
@@ -71,6 +81,22 @@ export const countTone = (count) => (count?.problem ? "problem" : count?.attenti
 
 // The tip on a tab's count when tickets need attention, else null.
 export const attentionTip = (count) => (count?.attention > 0 ? `${count.attention} need attention now` : null);
+
+// The tip on a tab: why its search failed, else attentionTip's, else null.
+export const countTip = (count) => (count?.problem ? `${count.problem.message} ${count.problem.hint ?? ""}`.trim() : attentionTip(count));
+
+// The search for a tab's tickets that need attention now: attentionJql over `jql` (what the tab searches, before its
+// search text: the count ignores that); null for a tab without severity, or none of whose levels asks for attention.
+export const tabAttentionJql = (tab, jql) => (tab.severity ? attentionJql(jql, tab.severity) : null);
+
+// A tab's new count (`count`: its total, or its problem) keeping the attention number of the one before (`before`)
+// until the tab's own attention search answers again; none kept for a tab with no attention search (`attends` false).
+export const keepAttention = (before, count, attends) =>
+  (attends && Number.isFinite(before?.attention) ? { ...count, attention: before.attention } : count);
+
+// A tab's count with the attention search's answer (`n`, its total) on it; no count (the tab's count started over) or
+// no number leaves it as it is.
+export const withAttention = (count, n) => (count && Number.isFinite(n) ? { ...count, attention: n } : count);
 
 // Today's count (for tabCountText): the brief's unread items (`badge`, briefBadge's; null: none), with the first of
 // `problems` (its board's, then its brief's) while one stands, so its tab reads "!" as a tab whose search failed does.

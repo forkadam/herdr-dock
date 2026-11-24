@@ -2,7 +2,12 @@
 // and defaulted from the settings file.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COLOR_NAMES, attentionJql, colorOf, levelOf, parseSeverity, severitySections, severityValue } from "../src/shared/jira/severity.js";
+import {
+  COLOR_NAMES, attentionJql, attentionNotLoaded, chipOf, chipWidth, colorOf, inkOn, levelOf, parseSeverity, severityFields, severityRow, severitySections,
+  severityValue, tint,
+} from "../src/shared/jira/severity.js";
+import { ROW_FIELDS } from "../src/shared/jira/jql.js";
+import { issueRow } from "../src/shared/jira/model.js";
 
 const block = { field: "customfield_10001", levels: [
   { values: ["Highest", "High"], label: "S1", color: "red", attention: true },
@@ -173,4 +178,88 @@ test("colorOf: names map to the theme or a fixed hex; a hex is kept as given", (
   assert.deepEqual(colorOf("blue"), { hex: "#3b82f6" });
   assert.deepEqual(colorOf("purple"), { hex: "#8b5cf6" });
   for (const name of COLOR_NAMES) assert.ok(colorOf(name).theme || colorOf(name).hex, name);
+});
+
+// ---- what the page draws with it ----
+
+test("severityFields: the rows' fields and the severity field, once; no severity: the search's own (undefined)", () => {
+  assert.equal(severityFields(null), undefined);
+  assert.deepEqual(severityFields(sev), [...ROW_FIELDS, "customfield_10001"]);
+  const byPriority = parseSeverity({ ...block, field: "priority" }, "v").severity;
+  assert.deepEqual(severityFields(byPriority), ROW_FIELDS);
+});
+
+test("severityRow: issueRow's row with the field's raw value; without severity, issueRow's as it is", () => {
+  const base = "https://jira.example.com";
+  const issue = { key: "A-1", fields: { summary: "s", status: { name: "Open", statusCategory: { key: "new" } }, customfield_10001: { value: "High" } } };
+  assert.deepEqual(severityRow(issue, base, sev), { ...issueRow(issue, base), severity: "High" });
+  assert.equal(severityRow({ key: "A-2", fields: {} }, base, sev).severity, null);
+  const plain = severityRow(issue, base, null);
+  assert.deepEqual(plain, issueRow(issue, base));
+  assert.equal("severity" in plain, false);
+});
+
+const theme = { blocked: "#e5534b", done: "#57ab5a", dim: "#768390", accent: "#539bf5", foreground: "#adbac7", background: "#22272e" };
+
+test("chipOf: a rated row's label in its level's colour, with the ink that reads on it; none when unrated", () => {
+  assert.deepEqual(chipOf("High", sev, theme), { label: "S1", bg: "#e5534b", ink: inkOn("#e5534b") });
+  assert.equal(chipOf("Medium", sev, theme).bg, "#abcdef");
+  assert.equal(chipOf("Low", sev, theme).bg, "#768390");
+  assert.equal(chipOf(null, sev, theme), null);
+  assert.equal(chipOf("Unknown", sev, theme), null);
+  assert.equal(chipOf("High", null, theme), null);
+  // A theme without that colour: its accent.
+  assert.equal(chipOf("High", sev, { ...theme, blocked: undefined }).bg, "#539bf5");
+  // A named colour that is not the theme's: its fixed hex.
+  const orange = parseSeverity({ field: "f", levels: [{ values: ["v"], label: "a", color: "orange" }] }, "v").severity;
+  assert.equal(chipOf("v", orange, theme).bg, "#f97316");
+  // No colour to read (a theme with neither): the theme's foreground for the text.
+  assert.equal(chipOf("High", sev, { foreground: "#adbac7" }).ink, "#adbac7");
+});
+
+test("inkOn: dark ink on a light colour, light ink on a dark one; null for what is not a hex colour", () => {
+  assert.equal(inkOn("#eab308"), "#111111");
+  assert.equal(inkOn("#ffffff"), "#111111");
+  assert.equal(inkOn("#fff"), "#111111");
+  assert.equal(inkOn("#1f2328"), "#ffffff");
+  assert.equal(inkOn("#7c3aed"), "#ffffff");
+  assert.equal(inkOn("#000000cc"), "#ffffff");
+  assert.equal(inkOn("red"), null);
+  assert.equal(inkOn(undefined), null);
+});
+
+test("tint: a colour with an alpha (#rrggbbaa); #rgb spelled out; an alpha already there scaled; anything else as it is", () => {
+  assert.equal(tint("#e5534b", 0.5), "#e5534b80");
+  assert.equal(tint("#ABC", 1), "#aabbccff");
+  assert.equal(tint("#e5534b80", 0.5), "#e5534b40");
+  assert.equal(tint("#e5534b", 0), "#e5534b00");
+  assert.equal(tint("red", 0.5), "red");
+  assert.equal(tint(undefined, 0.5), undefined);
+});
+
+test("chipWidth: one width for a tab's chips, from its longest label, within bounds", () => {
+  assert.equal(chipWidth(sev), 25); // "S1"
+  const long = parseSeverity({ field: "f", levels: [{ values: ["v"], label: "Critical", color: "red" }, { values: ["w"], label: "S2", color: "red" }] }, "v").severity;
+  assert.equal(chipWidth(long), 64);
+  const one = parseSeverity({ field: "f", levels: [{ values: ["v"], label: "A", color: "red" }] }, "v").severity;
+  assert.equal(chipWidth(one), 24);
+  const huge = parseSeverity({ field: "f", levels: [{ values: ["v"], label: "x".repeat(80), color: "red" }] }, "v").severity;
+  assert.equal(chipWidth(huge), 96);
+});
+
+test("attentionNotLoaded: the attention count less the attention rows loaded, while rows are left to load and nothing is searched", () => {
+  const { attention } = severitySections([row("A-1", "High"), row("A-2", "Highest", "indeterminate"), row("A-3", "High", "done"), row("A-4", "Low")], sev);
+  assert.equal(attentionNotLoaded(attention, 5, { left: 10, query: "" }), 3);
+  assert.equal(attentionNotLoaded(attention, 5, { left: 10 }), 3);
+  assert.equal(attentionNotLoaded([], 4, { left: 10 }), 4);
+  // Every one counted is loaded; or fewer counted than loaded (one moved since): never below 0.
+  assert.equal(attentionNotLoaded(attention, 2, { left: 10 }), 0);
+  assert.equal(attentionNotLoaded(attention, 1, { left: 10 }), 0);
+  // Every row loaded: nothing is left to load, so nothing is "not loaded".
+  assert.equal(attentionNotLoaded(attention, 5, { left: 0 }), 0);
+  assert.equal(attentionNotLoaded(attention, 5), 0);
+  // A search typed: the count is the whole queue's, not the search's.
+  assert.equal(attentionNotLoaded(attention, 5, { left: 10, query: "login" }), 0);
+  // Not counted yet.
+  assert.equal(attentionNotLoaded(attention, undefined, { left: 10 }), 0);
 });

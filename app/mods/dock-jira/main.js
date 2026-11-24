@@ -932,6 +932,96 @@ function parseSeverity(value, at) {
   if (value.unrated != null && !nonEmpty(value.unrated)) return bad("unrated is not a name");
   return { severity: { field: value.field.trim(), levels, unrated: nonEmpty(value.unrated) ? value.unrated.trim() : DEFAULT_UNRATED }, warning: null };
 }
+function readValue(v) {
+  if (typeof v === "string") return v;
+  const text = isObj(v) ? v.value ?? v.name : null;
+  return typeof text === "string" ? text : null;
+}
+function severityValue(issue, field) {
+  const raw = issue?.fields?.[field];
+  return readValue(Array.isArray(raw) ? raw[0] : raw);
+}
+var levelOf = (value, severity) => severity.levels.find((l) => l.values.includes(value)) ?? null;
+var NAMED_HEX = { orange: "#f97316", yellow: "#eab308", blue: "#3b82f6", purple: "#8b5cf6" };
+var THEME_COLOR = { red: "blocked", green: "done", gray: "dim" };
+var colorOf = (color) => THEME_COLOR[color] ? { theme: THEME_COLOR[color] } : { hex: NAMED_HEX[color] ?? color };
+function fieldRef(field) {
+  const custom = /^customfield_(\d+)$/.exec(field);
+  if (custom) return `cf[${custom[1]}]`;
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(field) ? field : quote(field);
+}
+function attentionJql(jql, severity) {
+  const values = severity.levels.filter((l) => l.attention).flatMap((l) => l.values);
+  if (!values.length) return null;
+  const m = /^(.*?)\s*\b(order\s+by\s+.+)$/is.exec(String(jql ?? "").trim());
+  const where = (m ? m[1] : String(jql ?? "")).trim();
+  return `${where ? `(${where}) AND ` : ""}${fieldRef(severity.field)} in (${values.map(quote).join(", ")}) AND statusCategory != Done`;
+}
+function severitySections(rows, severity) {
+  const by = new Map(severity.levels.map((l) => [l, []]));
+  const unrated = [];
+  for (const row of rows) (by.get(levelOf(row.severity, severity)) ?? unrated).push(row);
+  const section = (title, level, list3) => ({ title, level, parts: groupByCategory(list3) });
+  const titleOf = (l) => `${l.label} \xB7 ${l.values.join("/")}`;
+  const attention = [];
+  const sections = [];
+  for (const [level, list3] of by) {
+    const open = list3.filter((r) => r.category !== "done");
+    if (level.attention && open.length) attention.push(section(titleOf(level), level, open));
+    const rest = level.attention ? list3.filter((r) => r.category === "done") : list3;
+    if (rest.length) sections.push(section(titleOf(level), level, rest));
+  }
+  if (unrated.length) sections.push(section(severity.unrated, null, unrated));
+  return { attention, sections };
+}
+var severityFields = (severity) => severity ? [.../* @__PURE__ */ new Set([...ROW_FIELDS, severity.field])] : void 0;
+var severityRow = (issue, base, severity) => severity ? { ...issueRow(issue, base), severity: severityValue(issue, severity.field) } : issueRow(issue, base);
+function parseHex(color) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(typeof color === "string" ? color.trim() : "");
+  if (!m) return null;
+  const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join("") : m[1];
+  const at = (i) => parseInt(h.slice(i, i + 2), 16);
+  return [at(0), at(2), at(4), h.length === 8 ? at(6) / 255 : 1];
+}
+var hex2 = (n) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, "0");
+function tint(color, alpha) {
+  const c = parseHex(color);
+  if (!c) return color;
+  const [r, g, b, a] = c;
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}${hex2(a * alpha * 255)}`;
+}
+var DARK_INK = "#111111";
+var LIGHT_INK = "#ffffff";
+var luminance = ([r, g, b]) => {
+  const lin = (v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+};
+function inkOn(color) {
+  const c = parseHex(color);
+  if (!c) return null;
+  const l = luminance(c);
+  const dark = luminance(parseHex(DARK_INK));
+  return (l + 0.05) / (dark + 0.05) >= 1.05 / (l + 0.05) ? DARK_INK : LIGHT_INK;
+}
+function chipOf(value, severity, t) {
+  const level = severity ? levelOf(value, severity) : null;
+  if (!level) return null;
+  const c = colorOf(level.color);
+  const bg = c.theme ? t[c.theme] ?? t.accent : c.hex;
+  return { label: level.label, bg, ink: inkOn(bg) ?? t.foreground };
+}
+function chipWidth(severity) {
+  const longest = severity.levels.reduce((n, l) => Math.max(n, l.label.length), 0);
+  return Math.min(96, Math.max(24, Math.ceil(longest * 6.5) + 12));
+}
+function attentionNotLoaded(attention, counted, { left = 0, query = "" } = {}) {
+  if (!Number.isFinite(counted) || !(left > 0) || String(query ?? "").trim()) return 0;
+  const loaded = attention.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.rows.length, 0), 0);
+  return Math.max(0, counted - loaded);
+}
 
 // src/shared/jira/settings.js
 var DEFAULT_SETTINGS = Object.freeze({ v: 1, baseUrl: "", transport: "fetch", caFile: "", startTask: "", filters: [] });
@@ -1390,11 +1480,22 @@ function sectionsFor(rows, group) {
   }
   return [...types].map(([title, list3]) => ({ title, parts: groupByCategory(list3) }));
 }
+function listSections(rows, tab) {
+  if (tab.group !== "severity" || !tab.severity) return { attention: null, sections: sectionsFor(rows, tab.group) };
+  const { attention, sections } = severitySections(rows, tab.severity);
+  return { attention: tab.severity.levels.some((l) => l.attention) ? attention : null, sections };
+}
 function tabCountText({ total, problem } = {}) {
   if (problem) return "!";
   if (!Number.isFinite(total)) return "";
   return total > 99 ? "99+" : String(total);
 }
+var countTone = (count) => count?.problem ? "problem" : count?.attention > 0 ? "attention" : "plain";
+var attentionTip = (count) => count?.attention > 0 ? `${count.attention} need attention now` : null;
+var countTip = (count) => count?.problem ? `${count.problem.message} ${count.problem.hint ?? ""}`.trim() : attentionTip(count);
+var tabAttentionJql = (tab, jql) => tab.severity ? attentionJql(jql, tab.severity) : null;
+var keepAttention = (before, count, attends) => attends && Number.isFinite(before?.attention) ? { ...count, attention: before.attention } : count;
+var withAttention = (count, n) => count && Number.isFinite(n) ? { ...count, attention: n } : count;
 function todayCount(badge, problems) {
   const problem = (Array.isArray(problems) ? problems : []).find(Boolean);
   return problem ? { total: badge?.count, problem } : { total: badge?.count };
@@ -1573,7 +1674,8 @@ function tabBar(page, t) {
     const on = x.id === shown;
     const c = page.counts.get(x.id);
     const count = tabCountText(c);
-    return h_flex3().id(`jira-tab-${x.id}`).h(28).px(10).gap(6).flex_none().items_center().rounded(7).text_size(12.5).cursor_pointer().when(on, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).when(Boolean(c?.problem), (el) => el.tooltip(`${c.problem.message} ${c.problem.hint ?? ""}`.trim())).on_click((_e, cx) => page.showTab(x.id, cx)).child(div3().child(x.name)).when(count !== "", (el) => el.child(div3().text_size(11).text_color(c?.problem ? t.blocked : t.dim).child(count)));
+    const tip = countTip(c);
+    return h_flex3().id(`jira-tab-${x.id}`).h(28).px(10).gap(6).flex_none().items_center().rounded(7).text_size(12.5).cursor_pointer().when(on, (el) => el.bg(t.raised ?? t.selected).text_color(t.foreground)).when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover))).when(Boolean(tip), (el) => el.tooltip(tip)).on_click((_e, cx) => page.showTab(x.id, cx)).child(div3().child(x.name)).when(count !== "", (el) => el.child(div3().text_size(11).text_color(countTone(c) === "plain" ? t.dim : t.blocked).child(count)));
   };
   return div3().id("jira-tabs").flex().flex_row().flex_none().h(40).px(12).gap(4).items_center().overflow_x_scrollbar().border_b(1).border_color(t.border).children(page.tabs().map(tab));
 }
@@ -1761,15 +1863,19 @@ var Jira = class extends View {
       this.select(order[j], cx);
     }
   }
-  // Issue keys in the order they're drawn (by section and group in the list, by column on the board; on Today by
-  // lane, then column, leaving out folded lanes).
+  // Issue keys in the order they're drawn (by section and group in the list, the attention box's first, by column on
+  // the board; on Today by lane, then column, leaving out folded lanes).
   visibleOrder() {
     if (this.tab().kind === "today") {
       const cols = this.sprint.columns;
       return sprintRows(this.sprint.rows).filter((l) => !this.collapsed.has(l.parent?.key ?? "")).flatMap((l) => laneCells(l, cols).flat()).map((r) => r.key);
     }
     const rows = this.shownRows();
-    const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : sectionsFor(rows, this.tab().group).flatMap((s) => s.parts);
+    const list3 = () => {
+      const { attention, sections } = listSections(rows, this.tab());
+      return [...attention ?? [], ...sections].flatMap((s) => s.parts);
+    };
+    const parts = this.layout() === "board" ? boardColumns(rows, this.statusOrder, this.boardStatuses()) : list3();
     return parts.flatMap((p) => p.rows.map((r) => r.key));
   }
   // ---- tabs ----
@@ -1816,6 +1922,11 @@ var Jira = class extends View {
   // What a tab searches (before its search text): All's is the filter picked in its menu.
   source(tab) {
     return tab.filters ? this.filter() : tab;
+  }
+  // What a tab searches for its tickets that need attention now (tabAttentionJql over its source, never its search
+  // text); null: nothing (no severity, or no level asks for attention).
+  attentionSearch(tab) {
+    return tabAttentionJql(tab, this.source(tab).jql);
   }
   // Shows a tab as it was left: its search, rows, selection and open issue. Asks Jira again when it was never loaded
   // or its rows are older than a poll of the shown page.
@@ -1936,8 +2047,10 @@ var Jira = class extends View {
     if (this.selected) await this.loadDetail(cx, this.selected);
   }
   // The shown tab's list (its search, and its search text) and its count. The tab's newest search wins; the answer
-  // goes to the tab it was asked for, even if another is shown by then. Today is its brief and sprint board
-  // (refreshToday; `fresh`: its board's columns and sprints, and your sub-tasks' parents, read again too).
+  // goes to the tab it was asked for, even if another is shown by then. A tab with severity asks for its field too
+  // (each row's `severity`), and once its rows are drawn, how many of its tickets need attention now (countAttention).
+  // Today is its brief and sprint board (refreshToday; `fresh`: its board's columns and sprints, and your sub-tasks'
+  // parents, read again too).
   async refresh(cx, { more = false, fresh = false } = {}) {
     if (!this.connected || !this.jira) return;
     const tab = this.tab();
@@ -1949,10 +2062,15 @@ var Jira = class extends View {
     const seq = s.seq.next();
     const f = this.source(tab);
     const jql = withSearch(f.jql, s.query);
+    const attends = this.attentionSearch(tab) != null;
     s.loading = true;
     this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: true });
     cx.notify();
-    const r = await this.client(cx).search(jql, { startAt: more ? s.rows.length : 0, maxResults: more ? PAGE_SIZE : refreshSize(s.rows.length) });
+    const r = await this.client(cx).search(jql, {
+      startAt: more ? s.rows.length : 0,
+      maxResults: more ? PAGE_SIZE : refreshSize(s.rows.length),
+      fields: severityFields(tab.severity)
+    });
     if (!s.seq.accept(seq)) return;
     s.loading = false;
     this.lastPollAt = Date.now();
@@ -1961,21 +2079,43 @@ var Jira = class extends View {
       if (this.pageProblem(r.problem)) this.counts.set(tab.id, { ...this.counts.get(tab.id), loading: false });
       else {
         s.listProblem = r.problem;
-        this.counts.set(tab.id, { problem: r.problem });
+        this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { problem: r.problem }, attends));
       }
       cx.notify();
       return;
     }
     const base = this.jira.settings.baseUrl;
-    const rows = (r.data?.issues ?? []).map((i) => issueRow(i, base));
+    const rows = (r.data?.issues ?? []).map((i) => severityRow(i, base, tab.severity));
     s.rows = more ? [...s.rows, ...rows] : rows;
     s.total = r.data?.total;
     s.fetchedAt = Date.now();
     s.listProblem = null;
-    this.counts.set(tab.id, { total: s.total });
+    this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { total: s.total }, attends));
     this.problem = null;
     cx.notify();
+    if (await this.countAttention(cx, tab)) return;
     await this.loadProjectStatuses(cx);
+  }
+  // How many of a tab's tickets need attention now (its count's `attention`, which reddens its count): one count-only
+  // search (attentionSearch), after the tab's own (refresh, refreshCounts), whatever is typed in its search box. Its
+  // answer is kept only while the tab still asks the same. A failed one leaves `attention` as it was, with no "!" for
+  // it alone, except a rejected or forbidden token, which takes the page (countFailure): true then.
+  async countAttention(cx, tab) {
+    const jql = this.attentionSearch(tab);
+    if (!jql || !this.connected || this.problem) return false;
+    const r = await this.client(cx).search(jql, { maxResults: 0 });
+    if (!r.ok) {
+      if (countFailure(r.problem.kind) !== "page") return false;
+      this.pageProblem(r.problem);
+      cx.notify();
+      return true;
+    }
+    const now = this.tabs().find((x) => x.id === tab.id);
+    if (!now || this.attentionSearch(now) !== jql) return false;
+    const count = withAttention(this.counts.get(tab.id), r.data?.total);
+    if (count) this.counts.set(tab.id, count);
+    cx.notify();
+    return false;
   }
   // A failed search that means Jira can't be reached at all takes the whole page (true); any other (a view's bad
   // JQL) is the tab's own (false).
@@ -2354,9 +2494,10 @@ var Jira = class extends View {
     else this.collapsed.add(key);
     cx.notify();
   }
-  // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time.
-  // A failed one marks only its own tab ("!"), except a rejected or forbidden token, which takes the page
-  // (countFailure). Whether Jira can be reached at all is the shown tab's search to say.
+  // The counts on the tabs not shown: one count-only search each, every HIDDEN_EVERY_MS (countsDue), one at a time,
+  // and after one that worked, for a tab with severity, its tickets that need attention now (countAttention). A failed
+  // one marks only its own tab ("!"), except a rejected or forbidden token, which takes the page (countFailure).
+  // Whether Jira can be reached at all is the shown tab's search to say.
   async refreshCounts(cx) {
     if (!this.connected || this.problem || !this.jira) return;
     const due = countsDue(this.tabs(), this.tab().id, this.countsAt, Date.now());
@@ -2366,13 +2507,15 @@ var Jira = class extends View {
       if (!this.connected || this.problem) return;
       const r = await this.client(cx).search(withSearch(this.source(tab).jql, this.state(tab.id).query), { maxResults: 0 });
       if (tab.id === this.tab().id) continue;
-      if (r.ok) this.counts.set(tab.id, { total: r.data?.total });
+      const attends = this.attentionSearch(tab) != null;
+      if (r.ok) this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { total: r.data?.total }, attends));
       else if (countFailure(r.problem.kind) === "page") {
         this.pageProblem(r.problem);
         cx.notify();
         return;
-      } else this.counts.set(tab.id, { problem: r.problem });
+      } else this.counts.set(tab.id, keepAttention(this.counts.get(tab.id), { problem: r.problem }, attends));
       cx.notify();
+      if (r.ok && await this.countAttention(cx, tab)) return;
     }
   }
   // The workflow statuses of the board's project, asked once per project, only when the board is one project (its
@@ -2955,53 +3098,87 @@ var Jira = class extends View {
   typeMark(t, r) {
     return div4().flex_none().size(8).rounded(2).bg(TYPE_COLOR(t, r.type)).tooltip(r.type ?? "issue");
   }
-  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows).
-  row(t, r, i, keyW) {
+  // A row's or a card's severity chip, in a tab with `severity`: its level's label on the level's colour (chipOf);
+  // null for an unrated row.
+  chip(t, r, severity) {
+    const c = chipOf(r.severity, severity, t);
+    return c && div4().flex_none().h(16).px(5).flex().items_center().rounded(4).bg(c.bg).text_size(10.5).font_semibold().text_color(c.ink).child(c.label);
+  }
+  // `keyW`: the key column's width, one for the whole list (keyColumnWidth over the shown rows). `chips`: in a tab with
+  // severity, { severity, width }: the row's chip before its key, in a column of that width for the whole list (empty
+  // for an unrated row), so the keys line up.
+  row(t, r, i, keyW, chips = null) {
     const on = this.selected === r.key;
     const hot = r.priority === "Highest" || r.priority === "High";
-    return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).child(div4().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
+    const chip = chips && this.chip(t, r, chips.severity);
+    return h_flex4().id(`jira-row-${r.key}`).h(34).px(16).gap(10).flex_none().items_center().cursor_pointer().bg(on ? t.selected : t.background).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.select(r.key, cx)).child(this.typeMark(t, r)).when(Boolean(chips), (el) => el.child(h_flex4().w(chips.width).flex_none().overflow_hidden().items_center().children(chip ? [chip] : []))).child(div4().w(keyW).flex_none().truncate().text_size(12).text_color(t.dim).child(r.key)).child(div4().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(r.summary)).child(div4().w(70).flex_none().truncate().text_size(11.5).text_color(hot ? WARN2 : t.dim).child(r.priority ?? "")).child(div4().w(110).flex_none().truncate().text_size(11.5).text_color(r.assignee ? t.muted : t.dim).child(r.assignee ?? "Unassigned")).child(div4().w(34).flex_none().text_size(11.5).text_color(t.dim).child(ago(r.updatedMs, Date.now()))).child(div4().id(`jira-start-${r.key}`).size(24).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.raised ?? t.hover).text_color(t.foreground)).tooltip(`Start work on ${r.key}: a Claude tab with
 ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.startTask))}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => {
       cx.stop_propagation();
       this.startWork(r, cx);
     }).child(svg3("mods/dock-jira/play.svg").size(11)));
   }
-  more(t) {
+  // `id`: the button's (the list's own, or the attention box's).
+  more(t, id = "jira-more") {
     const s = this.shown();
     if (!Number.isFinite(s.total) || s.rows.length >= s.total) return null;
     return h_flex4().px(16).py(10).child(this.button(
       t,
-      "jira-more",
+      id,
       `Load more (${s.total - s.rows.length} left)`,
       (cx) => cx.spawn(async (cx2) => this.refresh(cx2, { more: true })),
       { enabled: !s.loading }
     ));
   }
-  // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type.
+  // The tab's rows by To do / In progress / Done; a view grouped by "type" first splits them by issue type, one grouped
+  // by "severity" by level, under the box of those that need attention now (attentionBox). In a tab with severity
+  // each row carries its level's chip.
   listView(t) {
     const tab = this.tab();
     const rows = this.shownRows();
-    const sections = sectionsFor(rows, tab.group);
+    const { attention, sections } = listSections(rows, tab);
     const keyW = keyColumnWidth(rows.map((r) => r.key));
+    const chips = tab.severity ? { severity: tab.severity, width: chipWidth(tab.severity) } : null;
     const more = this.more(t);
     const group = (g) => [
       h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(11.5).font_medium().text_color(t.muted).child(g.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(g.rows.length))),
-      ...g.rows.map((r, i) => this.row(t, r, i, keyW))
+      ...g.rows.map((r, i) => this.row(t, r, i, keyW, chips))
     ];
     const section = (sec) => [
       ...sec.title ? [h_flex4().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],
       ...sec.parts.flatMap(group)
     ];
     const scroll = this.scroll(`${tab.id}/list`);
-    return v_flex3().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
+    return v_flex3().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(attention), (el) => el.child(this.attentionBox(t, tab, attention, group))).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
   }
-  card(t, r) {
+  // Above a severity tab's sections: its open tickets at an attention level (`attention`, severitySections'), by level,
+  // in a box with a red title and a red-tinted border, each level split To do / In progress (`group` draws a part, as
+  // the list does). When the tab's attention count is more than the box holds and rows are left to load, the box ends
+  // with how many aren't loaded and Load more (attentionNotLoaded). With nothing in it, one quiet line says so.
+  attentionBox(t, tab, attention, group) {
+    const s = this.state(tab.id);
+    const missing = attentionNotLoaded(attention, this.counts.get(tab.id)?.attention, { left: s.total - s.rows.length, query: s.query });
+    if (!attention.length && !missing) {
+      return div4().px(16).pt(12).pb(2).flex_none().text_size(12).text_color(t.dim).child("Nothing needs attention now");
+    }
+    const size = (sec) => sec.parts.reduce((n, g) => n + g.rows.length, 0);
+    const level = (sec) => [
+      h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(12.5).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(size(sec)))),
+      ...sec.parts.flatMap(group)
+    ];
+    const shown = attention.reduce((n, sec) => n + size(sec), 0);
+    const more = missing ? this.more(t, "jira-more-attention") : null;
+    return v_flex3().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden().border_1().border_color(tint(t.blocked, 0.55)).child(h_flex4().h(36).px(16).pt(6).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now")).when(shown > 0, (el) => el.child(div4().text_size(12).text_color(t.dim).child(String(shown))))).children(attention.flatMap(level)).when(missing > 0, (el) => el.child(h_flex4().flex_none().pl(16).items_center().child(div4().text_size(12).text_color(t.muted).child(`${missing} more not loaded`)).when(Boolean(more), (x) => x.child(more))));
+  }
+  // `severity`: the shown tab's, for the card's chip (null on Today's sprint board: no chips there).
+  card(t, r, severity = null) {
     const on = this.selected === r.key;
     const dragged = this.drag?.row.key === r.key;
+    const chip = severity && this.chip(t, r, severity);
     return v_flex3().id(`jira-card-${r.key}`).p(10).gap(6).flex_none().rounded(8).cursor_pointer().bg(on ? t.selected : t.surface ?? t.chrome).border_1().border_color(on ? t.accent : t.border).hover((s) => s.bg(t.hover)).when(dragged, (el) => el.opacity(0.35)).on_mouse_down("left", (e) => {
       this.press = { row: r, from: e.position };
     }).on_click((_e, cx) => {
       if (!this.drag) this.select(r.key, cx);
-    }).child(div4().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex4().gap(6).items_center().child(this.typeMark(t, r)).child(div4().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div4().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN2 : t.dim).child(r.priority))).child(div4().flex_1()).child(div4().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
+    }).child(div4().text_size(12.8).text_color(t.foreground).child(r.summary)).child(h_flex4().gap(6).items_center().child(this.typeMark(t, r)).when(Boolean(chip), (el) => el.child(chip)).child(div4().text_size(11.5).text_color(t.dim).child(r.key)).when(Boolean(r.priority), (el) => el.child(div4().text_size(11).text_color(r.priority === "Highest" || r.priority === "High" ? WARN2 : t.dim).child(r.priority))).child(div4().flex_1()).child(div4().text_size(11).text_color(t.dim).max_w(110).truncate().child(r.assignee ?? "Unassigned")));
   }
   boardView(t) {
     const d = this.drag;
@@ -3009,6 +3186,7 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
     const cols = d ? dragColumns(base, d.targets, Array.isArray(d.transitions) ? d.transitions : [], this.statusOrder) : base;
     const more = this.more(t);
     const tabId = this.tab().id;
+    const severity = this.tab().severity;
     const board = this.scroll(`${tabId}/board`);
     const column = (c, i) => {
       const own = d && c.status === d.row.status;
@@ -3022,7 +3200,7 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
           this.drag.over = target ? c.status : null;
           cx.notify();
         }
-      }).child(h_flex4().h(36).px(12).gap(6).flex_none().items_center().child(div4().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div4().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex3().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(Boolean(cards), (el) => el.track_scroll(cards)).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r))));
+      }).child(h_flex4().h(36).px(12).gap(6).flex_none().items_center().child(div4().text_size(12).font_medium().text_color(target ? t.foreground : t.muted).child(c.status)).child(div4().text_size(11.5).text_color(t.dim).child(c.temporary ? "move here" : String(c.rows.length)))).child(v_flex3().id(`jira-col-${i}-cards`).flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(8).gap(6).when(Boolean(cards), (el) => el.track_scroll(cards)).when(this.dropChoice?.status === c.status && !d, (el) => el.child(this.choiceBox(t))).when(this.dropNote?.status === c.status && !d, (el) => el.child(this.noteBox(t))).children(c.rows.map((r) => this.card(t, r, severity))));
     };
     return v_flex3().id("jira-board-wrap").relative().flex_1().min_w(0).min_h(0).on_mouse_move((e, cx) => this.pointerMoved(e, cx)).on_mouse_up("left", (_e, cx) => this.released(cx)).child(div4().id(`jira-board-${tabId}`).flex().flex_row().flex_1().min_h(0).overflow_x_scrollbar().p(12).gap(12).when(Boolean(board), (el) => el.track_scroll(board)).children(cols.map(column))).when(Boolean(more), (el) => el.child(more)).when(Boolean(d), (el) => el.child(this.dragBar(t))).when(Boolean(d?.at), (el) => el.child(div4().absolute().left(d.at.x + 14).top(d.at.y + 14).w(240).p(10).rounded(8).bg(t.surface ?? t.chrome).border_1().border_color(t.accent).opacity(0.92).text_size(12.5).text_color(t.foreground).child(div4().text_size(11).text_color(t.dim).child(d.row.key)).child(div4().truncate().child(d.row.summary))));
   }

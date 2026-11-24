@@ -265,9 +265,10 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     future sprints (and how many of yours each active sprint holds) once an hour, or when you press refresh. The
     closed sprints are read apart: when the sprint menu first opens after each of those reads, or right away when no
     sprint is active. Requests still go one at a time, so a refresh waits for a read of them that is running.
-- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"?, "button"? }`. The id is
-  lower-case letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue type
-  first, then by To do / In progress / Done. A view with the id `mine` or `all` replaces that tab's name and search.
+- **Your own tabs**: `views` in `jira-work.json`, each `{ "id", "name", "jql", "group"?, "button"?, "severity"? }`. The
+  id is lower-case letters, digits and dashes, starting with a letter; `"group": "type"` lists the tab's issues by issue
+  type first, then by To do / In progress / Done (`"group": "severity"`: by severity, below). A view with the id `mine`
+  or `all` replaces that tab's name and search.
   `"button": { "label", "task" }` puts one button in that tab's header, right of the search box (never on Today):
   clicking it opens a Claude tab named after the label whose first message is the `task` (a typed `\n` is a line
   break, as in the Start-work message), then shows the terminal. It makes no Jira request. Hover it to see the
@@ -281,6 +282,38 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
     { "id": "bugs", "name": "Bugs",
       "jql": "issuetype = Bug AND assignee = currentUser() AND resolution = Unresolved ORDER BY priority DESC" }
   ]
+  ```
+
+  `"severity"` rates a tab's tickets by one of their Jira fields: `field` is the field's id (a custom field's
+  `customfield_NNNNN`, or a built-in one such as `priority`), `levels` its values worst first, each
+  `{ "values", "label", "color", "attention"? }`, and `unrated` names the rest (default "No severity"). A ticket's
+  level is the first whose `values` holds the field's value. In that tab each row and board card shows its level's
+  `label` as a small chip before the key, in the level's `color` (`red`, `orange`, `yellow`, `green`, `blue`,
+  `purple`, `gray`, or `#rrggbb`); a ticket whose field is empty, or holds a value no level lists, has no chip. A view
+  with `severity` and no `group` is grouped by severity (`"group": "severity"` says so): one section per level in the
+  order given, titled `<label> · <values>`, then the unrated tickets, each split To do / In progress / Done; empty
+  levels aren't shown. A level with `"attention": true` needs attention now: its open tickets (not in Jira's Done
+  category) are listed first, in a box titled **Needs attention now** with a red border, split To do / In progress
+  (its done ones stay in the level's section below). With none open, one quiet line says "Nothing needs attention
+  now". When the tab lists only its first rows and some of those tickets are past them (with nothing typed in the
+  search box), the box ends with "N more not loaded" and Load more. While any are open, the tab's count is red, whatever is typed in its search box; hover it for
+  how many. That number takes one more count-only search with each of the tab's counts, and a failed one leaves the
+  count as it was. `"group": "type"` keeps the type sections and adds the chips and the red count, without the box. A
+  malformed block (no field, no levels, a level without values or a label, an unknown colour) is skipped with a line
+  in Settings and the tab works without it. For example:
+
+  ```json
+  { "id": "triage", "name": "Triage",
+    "jql": "project = SEC AND resolution = Unresolved ORDER BY updated DESC",
+    "severity": {
+      "field": "customfield_10001",
+      "levels": [
+        { "values": ["High"], "label": "S1", "color": "red", "attention": true },
+        { "values": ["Medium"], "label": "S2", "color": "orange" },
+        { "values": ["Low"], "label": "S3", "color": "gray" }
+      ],
+      "unrated": "Not rated yet"
+    } }
   ```
 
   The page reads the file again when it changes (within 30 seconds, no restart), and Settings shows where it is and

@@ -2,7 +2,11 @@
 // sections a tab's rows are split into, and the count on a tab.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ALL_JQL, attentionTip, countTone, pickTab, sectionsFor, stepTab, tabCountText, tabList, todayCount } from "../src/shared/jira/views.js";
+import {
+  ALL_JQL, attentionTip, countTip, countTone, keepAttention, listSections, pickTab, sectionsFor, stepTab, tabAttentionJql, tabCountText, tabList, todayCount,
+  withAttention,
+} from "../src/shared/jira/views.js";
+import { attentionJql, parseSeverity, severitySections } from "../src/shared/jira/severity.js";
 import { BUILTIN_FILTERS } from "../src/shared/jira/jql.js";
 
 const views = [{ id: "sec", name: "Security", jql: "project = SEC", group: "type" }, { id: "all", name: "Everything", jql: "assignee = currentUser()", group: null }];
@@ -164,4 +168,59 @@ test("countTone / attentionTip: no count at all, and a count that never heard of
   assert.equal(attentionTip(undefined), null);
   assert.equal(attentionTip({ attention: 0 }), null);
   assert.equal(attentionTip({ attention: 1 }), "1 need attention now");
+});
+
+const severity = parseSeverity({ field: "customfield_10001", levels: [
+  { values: ["Highest", "High"], label: "S1", color: "red", attention: true },
+  { values: ["Medium"], label: "S2", color: "orange" },
+  { values: ["Low"], label: "S3", color: "gray" } ] }, "v").severity;
+
+test("tabAttentionJql: a tab with severity asks for its source's open tickets at an attention level; any other, nothing", () => {
+  const jql = "project = X ORDER BY updated DESC";
+  assert.equal(tabAttentionJql({ id: "sec", severity }, jql), attentionJql(jql, severity));
+  assert.equal(tabAttentionJql({ id: "mine", severity: null }, jql), null);
+  const calm = { ...severity, levels: severity.levels.map((l) => ({ ...l, attention: false })) };
+  assert.equal(tabAttentionJql({ id: "sec", severity: calm }, jql), null);
+});
+
+test("keepAttention: a tab's new count keeps the attention number it had until its own attention search answers", () => {
+  const problem = { kind: "badjql", message: "x" };
+  assert.deepEqual(keepAttention({ total: 3, attention: 2 }, { total: 4 }, true), { total: 4, attention: 2 });
+  assert.deepEqual(keepAttention({ total: 3, attention: 2 }, { problem }, true), { problem, attention: 2 });
+  assert.deepEqual(keepAttention({ total: 3, attention: 0 }, { total: 4 }, true), { total: 4, attention: 0 });
+  assert.deepEqual(keepAttention({ total: 3 }, { total: 4 }, true), { total: 4 });
+  assert.deepEqual(keepAttention(undefined, { total: 4 }, true), { total: 4 });
+  // A tab with no attention search (now): none kept.
+  assert.deepEqual(keepAttention({ total: 3, attention: 2 }, { total: 4 }, false), { total: 4 });
+});
+
+test("withAttention: the attention search's answer on the tab's count; no count, or no number, changes nothing", () => {
+  assert.deepEqual(withAttention({ total: 4, loading: true }, 2), { total: 4, loading: true, attention: 2 });
+  assert.deepEqual(withAttention({ total: 4, attention: 2 }, 0), { total: 4, attention: 0 });
+  assert.deepEqual(withAttention({ total: 4, attention: 2 }, undefined), { total: 4, attention: 2 });
+  assert.equal(withAttention(undefined, 2), undefined);
+});
+
+test("countTip: a failed search says why; else the attention tip; else none", () => {
+  assert.equal(countTip({ problem: { message: "Bad JQL.", hint: "Fix it." }, attention: 2 }), "Bad JQL. Fix it.");
+  assert.equal(countTip({ problem: { message: "Bad JQL." } }), "Bad JQL.");
+  assert.equal(countTip({ total: 3, attention: 2 }), "2 need attention now");
+  assert.equal(countTip({ total: 3, attention: 0 }), null);
+  assert.equal(countTip({ total: 3 }), null);
+  assert.equal(countTip(undefined), null);
+});
+
+test("listSections: a tab grouped by severity gets the box and the severity sections; any other, no box and sectionsFor's", () => {
+  const rows = [
+    { key: "A-1", type: "Bug", severity: "High", category: "new" }, { key: "A-2", type: "Task", severity: "Low", category: "indeterminate" },
+    { key: "A-3", type: "Bug", severity: null, category: "done" },
+  ];
+  assert.deepEqual(listSections(rows, { group: "severity", severity }), severitySections(rows, severity));
+  assert.deepEqual(listSections(rows, { group: "type", severity }), { attention: null, sections: sectionsFor(rows, "type") });
+  assert.deepEqual(listSections(rows, { group: null, severity: null }), { attention: null, sections: sectionsFor(rows, null) });
+  // No level asks for attention: no box, the sections all the same.
+  const calm = { ...severity, levels: severity.levels.map((l) => ({ ...l, attention: false })) };
+  assert.deepEqual(listSections(rows, { group: "severity", severity: calm }), { attention: null, sections: severitySections(rows, calm).sections });
+  // "severity" without a block (the settings never give one): one section over every row, as before.
+  assert.deepEqual(listSections(rows, { group: "severity", severity: null }), { attention: null, sections: sectionsFor(rows, null) });
 });
