@@ -941,7 +941,12 @@ function severityValue(issue, field) {
   const raw = issue?.fields?.[field];
   return readValue(Array.isArray(raw) ? raw[0] : raw);
 }
-var levelOf = (value, severity) => severity.levels.find((l) => l.values.includes(value)) ?? null;
+var sameText = (v) => typeof v === "string" ? v.trim().toLowerCase() : null;
+function levelOf(value, severity) {
+  const v = sameText(value);
+  if (!v) return null;
+  return severity.levels.find((l) => l.values.some((x) => sameText(x) === v)) ?? null;
+}
 var NAMED_HEX = { orange: "#f97316", yellow: "#eab308", blue: "#3b82f6", purple: "#8b5cf6" };
 var THEME_COLOR = { red: "blocked", green: "done", gray: "dim" };
 var colorOf = (color) => THEME_COLOR[color] ? { theme: THEME_COLOR[color] } : { hex: NAMED_HEX[color] ?? color };
@@ -1496,6 +1501,15 @@ var countTip = (count) => count?.problem ? `${count.problem.message} ${count.pro
 var tabAttentionJql = (tab, jql) => tab.severity ? attentionJql(jql, tab.severity) : null;
 var keepAttention = (before, count, attends) => attends && Number.isFinite(before?.attention) ? { ...count, attention: before.attention } : count;
 var withAttention = (count, n) => count && Number.isFinite(n) ? { ...count, attention: n } : count;
+function dropAttention(count) {
+  if (!count || !("attention" in count)) return count;
+  const { attention: _dropped, ...rest } = count;
+  return rest;
+}
+function tabReload(before, after) {
+  if (!before || before.jql !== after.jql) return "restart";
+  return JSON.stringify(before.severity ?? null) === JSON.stringify(after.severity ?? null) ? "keep" : "research";
+}
 function todayCount(badge, problems) {
   const problem = (Array.isArray(problems) ? problems : []).find(Boolean);
   return problem ? { total: badge?.count, problem } : { total: badge?.count };
@@ -2554,8 +2568,9 @@ var Jira = class extends View {
   }
   // Reads the settings file again (cheap) and, when its text changed, acts on it (settingsReload). Text that doesn't
   // parse keeps the settings and tabs in use, with the problem in the form. Another address starts over, as Save does
-  // for one. Otherwise it loads and rebuilds the tabs: a tab whose search changed starts over, every tab is counted
-  // again, and the shown one (maybe another now: its view may have gone) is loaded if it never was.
+  // for one. Otherwise it loads and rebuilds the tabs: a tab whose search changed starts over, one whose severity alone
+  // changed is searched again (tabReload, researchTab), every tab is counted again, and the shown one (maybe another
+  // now: its view may have gone) is loaded if it never was or is to be searched again.
   async reloadSettings(cx) {
     const path = this.jira?.paths.settingsPath;
     if (!path) return;
@@ -2578,14 +2593,17 @@ var Jira = class extends View {
       if (this.jira.settings.baseUrl && this.jira.token) await this.connect(cx);
       return;
     }
-    const searches = new Map(this.tabs().map((x) => [x.id, x.jql]));
+    const was = new Map(this.tabs().map((x) => [x.id, x]));
     const before = this.selected;
     const query = this.shown().query;
     await this.load();
-    for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) {
-      this.states.delete(x.id);
-      this.counts.delete(x.id);
-      this.scrollTop(x.id);
+    for (const x of this.tabs()) {
+      const plan2 = tabReload(was.get(x.id), x);
+      if (plan2 === "restart") {
+        this.states.delete(x.id);
+        this.counts.delete(x.id);
+        this.scrollTop(x.id);
+      } else if (plan2 === "research") this.researchTab(x.id);
     }
     this.countsAt = void 0;
     if (this.selected !== before) this.followSelection(cx);
@@ -2593,6 +2611,21 @@ var Jira = class extends View {
     cx.notify();
     const s = this.shown();
     if (!s.fetchedAt && !s.loading) await this.refresh(cx);
+  }
+  // A tab whose severity changed in the settings (its search didn't): its rows are searched again, its search text,
+  // open issue and the rows it asks for kept. A search of it still running is dropped (its rows would lack the field)
+  // and it reads "Loading…" until the new rows come, rather than rows without their levels: the shown tab at once
+  // (reloadSettings), another when next shown (showTab: never fetched). Its count keeps its number, not its attention
+  // number, which its next count asks again (the shown tab's refresh; another's next round, due at once).
+  researchTab(id) {
+    const s = this.states.get(id);
+    if (s) {
+      s.seq.next();
+      s.loading = false;
+      s.fetchedAt = null;
+    }
+    const count = dropAttention(this.counts.get(id));
+    if (count) this.counts.set(id, count);
   }
   // Opens an issue in the detail (from the brief, the board, a list or a key). Opening it reads its New-in-sprint and
   // bug items (readOnOpen); a Changed item waits for Mark read.

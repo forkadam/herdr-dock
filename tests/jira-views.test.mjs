@@ -3,8 +3,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ALL_JQL, attentionTip, countTip, countTone, keepAttention, listSections, pickTab, sectionsFor, stepTab, tabAttentionJql, tabCountText, tabList, todayCount,
-  withAttention,
+  ALL_JQL, attentionTip, countTip, countTone, dropAttention, keepAttention, listSections, pickTab, sectionsFor, stepTab, tabAttentionJql, tabCountText, tabList,
+  tabReload, todayCount, withAttention,
 } from "../src/shared/jira/views.js";
 import { attentionJql, parseSeverity, severitySections } from "../src/shared/jira/severity.js";
 import { BUILTIN_FILTERS } from "../src/shared/jira/jql.js";
@@ -223,4 +223,31 @@ test("listSections: a tab grouped by severity gets the box and the severity sect
   assert.deepEqual(listSections(rows, { group: "severity", severity: calm }), { attention: null, sections: severitySections(rows, calm).sections });
   // "severity" without a block (the settings never give one): one section over every row, as before.
   assert.deepEqual(listSections(rows, { group: "severity", severity: null }), { attention: null, sections: sectionsFor(rows, null) });
+});
+
+test("tabReload: a changed search starts a tab over; a changed severity alone searches it again; else it is kept", () => {
+  const tab = { id: "sec", jql: "project = SEC", severity: null };
+  // New, or another search: starts over (as before severity).
+  assert.equal(tabReload(undefined, tab), "restart");
+  assert.equal(tabReload(tab, { ...tab, jql: "project = X" }), "restart");
+  assert.equal(tabReload(tab, { ...tab, jql: "project = X", severity }), "restart");
+  // Nothing changed, or the same block parsed again (another object): kept.
+  assert.equal(tabReload(tab, { ...tab }), "keep");
+  assert.equal(tabReload({ ...tab, severity }, { ...tab, severity: JSON.parse(JSON.stringify(severity)) }), "keep");
+  // The same search with a block added, removed or changed: searched again.
+  assert.equal(tabReload(tab, { ...tab, severity }), "research");
+  assert.equal(tabReload({ ...tab, severity }, tab), "research");
+  assert.equal(tabReload({ ...tab, severity }, { ...tab, severity: { ...severity, field: "priority" } }), "research");
+  const calmer = { ...severity, levels: severity.levels.map((l) => ({ ...l, attention: false })) };
+  assert.equal(tabReload({ ...tab, severity }, { ...tab, severity: calmer }), "research");
+  const relabelled = { ...severity, levels: severity.levels.map((l, i) => (i ? l : { ...l, label: "Top" })) };
+  assert.equal(tabReload({ ...tab, severity }, { ...tab, severity: relabelled }), "research");
+});
+
+test("dropAttention: a tab's count without its attention number, the rest kept; no count stays none", () => {
+  const problem = { kind: "badjql", message: "x" };
+  assert.deepEqual(dropAttention({ total: 4, attention: 2 }), { total: 4 });
+  assert.deepEqual(dropAttention({ problem, attention: 2, loading: true }), { problem, loading: true });
+  assert.deepEqual(dropAttention({ total: 4 }), { total: 4 });
+  assert.equal(dropAttention(undefined), undefined);
 });

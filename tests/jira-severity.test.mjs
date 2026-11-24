@@ -170,6 +170,22 @@ test("levelOf: the first level holding the value; null for no value", () => {
   assert.equal(levelOf("X", dup).label, "first");
 });
 
+test("levelOf: a value matches whatever its case and the spaces around it, as Jira's `in` does; the first match still wins", () => {
+  assert.equal(levelOf("high", sev).label, "S1");
+  assert.equal(levelOf("  HIGH ", sev).label, "S1");
+  assert.equal(levelOf("medium", sev).label, "S2");
+  assert.equal(levelOf("", sev), null);
+  assert.equal(levelOf("   ", sev), null);
+  const spaced = parseSeverity({ field: "f", levels: [{ values: ["Major"], label: "A", color: "red" }] }, "v").severity;
+  assert.equal(levelOf("major", { ...spaced, levels: [{ ...spaced.levels[0], values: [" Major "] }] }).label, "A");
+  const dup = parseSeverity({ field: "f", levels: [{ values: ["X"], label: "first", color: "red" }, { values: ["x"], label: "second", color: "gray" }] }, "v").severity;
+  assert.equal(levelOf("x", dup).label, "first");
+  // The box and the sections agree with the count: a value in another case is rated, not unrated.
+  const { attention, sections } = severitySections([row("A-1", "high"), row("A-2", "LOW")], sev);
+  assert.deepEqual(attention.map(keys), [["S1 · Highest/High", ["A-1"]]]);
+  assert.deepEqual(sections.map(keys), [["S3 · Low", ["A-2"]]]);
+});
+
 test("colorOf: names map to the theme or a fixed hex; a hex is kept as given", () => {
   assert.deepEqual(colorOf("green"), { theme: "done" });
   assert.deepEqual(colorOf("gray"), { theme: "dim" });

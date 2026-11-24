@@ -98,6 +98,22 @@ export const keepAttention = (before, count, attends) =>
 // no number leaves it as it is.
 export const withAttention = (count, n) => (count && Number.isFinite(n) ? { ...count, attention: n } : count);
 
+// A tab's count without its attention number (its severity changed: asked again), the rest kept; no count stays none.
+export function dropAttention(count) {
+  if (!count || !("attention" in count)) return count;
+  const { attention: _dropped, ...rest } = count;
+  return rest;
+}
+
+// After the settings file changed, what becomes of a tab, from what it was (`before`, undefined for a new one) and is
+// (`after`): "restart" when its search changed (its list and count start over), "research" when only its severity
+// did, added, removed or edited (its rows are searched again, its search text and open issue kept, and its attention
+// number asked again), else "keep".
+export function tabReload(before, after) {
+  if (!before || before.jql !== after.jql) return "restart";
+  return JSON.stringify(before.severity ?? null) === JSON.stringify(after.severity ?? null) ? "keep" : "research";
+}
+
 // Today's count (for tabCountText): the brief's unread items (`badge`, briefBadge's; null: none), with the first of
 // `problems` (its board's, then its brief's) while one stands, so its tab reads "!" as a tab whose search failed does.
 export function todayCount(badge, problems) {

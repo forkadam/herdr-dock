@@ -23,7 +23,8 @@ import { attentionNotLoaded, chipOf, chipWidth, severityFields, severityRow, tin
 import { closedNeeded, columnDrop, laneCells, pickSprint, shownSprint, sprintCacheDue, sprintColumns, sprintJql, sprintMineJql, sprintRows } from "../../shared/jira/sprint.js";
 import { clearToken, loadJira, saveSettings, saveToken, syncCurlConfig } from "../../shared/jira/store.js";
 import {
-  countsDue, keepAttention, listSections, pickTab, stepTab, tabAttentionJql, tabFilters, tabLayout, tabList, todayCount, withAttention,
+  countsDue, dropAttention, keepAttention, listSections, pickTab, stepTab, tabAttentionJql, tabFilters, tabLayout, tabList, tabReload, todayCount,
+  withAttention,
 } from "../../shared/jira/views.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
@@ -866,8 +867,9 @@ export default class Jira extends View {
 
   // Reads the settings file again (cheap) and, when its text changed, acts on it (settingsReload). Text that doesn't
   // parse keeps the settings and tabs in use, with the problem in the form. Another address starts over, as Save does
-  // for one. Otherwise it loads and rebuilds the tabs: a tab whose search changed starts over, every tab is counted
-  // again, and the shown one (maybe another now: its view may have gone) is loaded if it never was.
+  // for one. Otherwise it loads and rebuilds the tabs: a tab whose search changed starts over, one whose severity alone
+  // changed is searched again (tabReload, researchTab), every tab is counted again, and the shown one (maybe another
+  // now: its view may have gone) is loaded if it never was or is to be searched again.
   async reloadSettings(cx) {
     const path = this.jira?.paths.settingsPath;
     if (!path) return;
@@ -893,17 +895,33 @@ export default class Jira extends View {
       if (this.jira.settings.baseUrl && this.jira.token) await this.connect(cx);
       return;
     }
-    const searches = new Map(this.tabs().map((x) => [x.id, x.jql]));
+    const was = new Map(this.tabs().map((x) => [x.id, x]));
     const before = this.selected;
     const query = this.shown().query;
     await this.load();
-    for (const x of this.tabs()) if (searches.get(x.id) !== x.jql) { this.states.delete(x.id); this.counts.delete(x.id); this.scrollTop(x.id); }
+    for (const x of this.tabs()) {
+      const plan = tabReload(was.get(x.id), x);
+      if (plan === "restart") { this.states.delete(x.id); this.counts.delete(x.id); this.scrollTop(x.id); }
+      else if (plan === "research") this.researchTab(x.id);
+    }
     this.countsAt = undefined;
     if (this.selected !== before) this.followSelection(cx);
     if (this.shown().query !== query) this.searchInput.set_value(this.shown().query);
     cx.notify();
     const s = this.shown();
     if (!s.fetchedAt && !s.loading) await this.refresh(cx);
+  }
+
+  // A tab whose severity changed in the settings (its search didn't): its rows are searched again, its search text,
+  // open issue and the rows it asks for kept. A search of it still running is dropped (its rows would lack the field)
+  // and it reads "Loading…" until the new rows come, rather than rows without their levels: the shown tab at once
+  // (reloadSettings), another when next shown (showTab: never fetched). Its count keeps its number, not its attention
+  // number, which its next count asks again (the shown tab's refresh; another's next round, due at once).
+  researchTab(id) {
+    const s = this.states.get(id);
+    if (s) { s.seq.next(); s.loading = false; s.fetchedAt = null; }
+    const count = dropAttention(this.counts.get(id));
+    if (count) this.counts.set(id, count);
   }
 
   // Opens an issue in the detail (from the brief, the board, a list or a key). Opening it reads its New-in-sprint and

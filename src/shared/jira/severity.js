@@ -57,8 +57,17 @@ export function severityValue(issue, field) {
   return readValue(Array.isArray(raw) ? raw[0] : raw);
 }
 
-// The first level whose values hold `value`, else null (the ticket has no level: unrated).
-export const levelOf = (value, severity) => severity.levels.find((l) => l.values.includes(value)) ?? null;
+// A value as levels compare it: trimmed, in lower case (Jira's `in` ignores case, so the attention count and the box
+// agree); anything but text null.
+const sameText = (v) => (typeof v === "string" ? v.trim().toLowerCase() : null);
+
+// The first level whose values hold `value`, whatever its case and the spaces around it, else null (the ticket has no
+// level: unrated).
+export function levelOf(value, severity) {
+  const v = sameText(value);
+  if (!v) return null;
+  return severity.levels.find((l) => l.values.some((x) => sameText(x) === v)) ?? null;
+}
 
 // The colours by name that are not the page's own: the rest are theme colours (blocked, done, dim).
 const NAMED_HEX = { orange: "#f97316", yellow: "#eab308", blue: "#3b82f6", purple: "#8b5cf6" };

@@ -287,20 +287,21 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   `"severity"` rates a tab's tickets by one of their Jira fields: `field` is the field's id (a custom field's
   `customfield_NNNNN`, or a built-in one such as `priority`), `levels` its values worst first, each
   `{ "values", "label", "color", "attention"? }`, and `unrated` names the rest (default "No severity"). A ticket's
-  level is the first whose `values` holds the field's value. In that tab each row and board card shows its level's
-  `label` as a small chip before the key, in the level's `color` (`red`, `orange`, `yellow`, `green`, `blue`,
-  `purple`, `gray`, or `#rrggbb`); a ticket whose field is empty, or holds a value no level lists, has no chip. A view
-  with `severity` and no `group` is grouped by severity (`"group": "severity"` says so): one section per level in the
-  order given, titled `<label> · <values>`, then the unrated tickets, each split To do / In progress / Done; empty
-  levels aren't shown. A level with `"attention": true` needs attention now: its open tickets (not in Jira's Done
-  category) are listed first, in a box titled **Needs attention now** with a red border, split To do / In progress
-  (its done ones stay in the level's section below). With none open, one quiet line says "Nothing needs attention
-  now". When the tab lists only its first rows and some of those tickets are past them (with nothing typed in the
-  search box), the box ends with "N more not loaded" and Load more. While any are open, the tab's count is red, whatever is typed in its search box; hover it for
-  how many. That number takes one more count-only search with each of the tab's counts, and a failed one leaves the
-  count as it was. `"group": "type"` keeps the type sections and adds the chips and the red count, without the box. A
-  malformed block (no field, no levels, a level without values or a label, an unknown colour) is skipped with a line
-  in Settings and the tab works without it. For example:
+  level is the first whose `values` holds the field's value (ignoring case, as Jira does). In that tab each row and
+  board card shows its level's `label` as a small chip before the key, in the level's `color` (`red`, `orange`,
+  `yellow`, `green`, `blue`, `purple`, `gray`, or `#rrggbb`); a ticket whose field is empty, or holds a value no level
+  lists, has no chip. A view with `severity` and no `group` is grouped by severity (`"group": "severity"` says so):
+  one section per level in the order given, titled `<label> · <values>`, then the unrated tickets, each split To do /
+  In progress / Done; empty levels aren't shown. A level with `"attention": true` needs attention now: its open
+  tickets (not in Jira's Done category) are listed first, in a box titled **Needs attention now** with a red border,
+  split To do / In progress (its done ones stay in the level's section below). With none open, one quiet line says
+  "Nothing needs attention now". When the tab lists only its first rows and some of those tickets are past them (with
+  nothing typed in the search box), the box ends with "N more not loaded" and Load more. While any are open, the tab's
+  count is red, whatever is typed in its search box; hover it for how many. That number takes one more count-only
+  search with each of the tab's counts, and a failed one leaves the count as it was. `"group": "type"` keeps the type
+  sections and adds the chips and the red count, without the box. A malformed block (no field, no levels, a level
+  without values or a label, an unknown colour) is skipped with a line in Settings and the tab works without it. For
+  example:
 
   ```json
   { "id": "triage", "name": "Triage",
