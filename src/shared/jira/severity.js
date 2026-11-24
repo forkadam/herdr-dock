@@ -85,9 +85,11 @@ function fieldRef(field) {
 }
 
 // A view's JQL -> the search for its open tickets at an attention level (the levels with `attention`), its ORDER BY
-// dropped; null when no level asks for attention.
+// dropped; null when no level asks for attention. A level asks only for the values it owns (levelOf: the first level
+// holding a value, case aside, has it), so a value an earlier calmer level claims is left out, and one an earlier
+// attention level has already asked for isn't asked twice; the count then agrees with the box.
 export function attentionJql(jql, severity) {
-  const values = severity.levels.filter((l) => l.attention).flatMap((l) => l.values);
+  const values = severity.levels.filter((l) => l.attention).flatMap((l) => l.values.filter((v) => levelOf(v, severity) === l));
   if (!values.length) return null;
   const m = /^(.*?)\s*\b(order\s+by\s+.+)$/is.exec(String(jql ?? "").trim());
   const where = (m ? m[1] : String(jql ?? "")).trim();
@@ -187,4 +189,26 @@ export function attentionNotLoaded(attention, counted, { left = 0, query = "" } 
   if (!Number.isFinite(counted) || !(left > 0) || String(query ?? "").trim()) return 0;
   const loaded = attention.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.rows.length, 0), 0);
   return Math.max(0, counted - loaded);
+}
+
+// "<n> need attention now", "1 needs attention now".
+export const needsAttention = (n) => `${n} ${n === 1 ? "needs" : "need"} attention now`;
+
+// The one line a severity tab's list adds for what needs attention, beside the rows of its box (`attention`,
+// severitySections'), as { kind, text }, or null for none. Drawn in the box when it has rows, else in its place.
+// - "rejected": Jira refused the attention search (`rejected`, its message: a value no option has, a wrong field).
+// - "more": some are past the loaded rows (attentionNotLoaded), drawn with Load more.
+// With no row in the box, also:
+// - "quiet": "Nothing needs attention now", only where that holds: nothing typed in the search box (`query`), and
+//   every row loaded (`left`) or the attention count (`counted`) at 0.
+// - "search": something typed and the count says some need attention, which this search doesn't list.
+export function attentionLine(attention, { counted, rejected = null, left = 0, query = "" } = {}) {
+  if (rejected) return { kind: "rejected", text: `Couldn't check what needs attention: ${rejected}` };
+  const missing = attentionNotLoaded(attention, counted, { left, query });
+  if (missing > 0) return { kind: "more", text: `${missing} more not loaded` };
+  if (attention.length) return null;
+  const typed = String(query ?? "").trim() !== "";
+  if (!typed && (!(left > 0) || counted === 0)) return { kind: "quiet", text: "Nothing needs attention now" };
+  if (typed && counted > 0) return { kind: "search", text: `${needsAttention(counted)} (not in this search)` };
+  return null;
 }

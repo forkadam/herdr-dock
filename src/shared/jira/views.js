@@ -2,8 +2,8 @@
 // rows are split into sections, and the count written on a tab.
 import { BUILTIN_FILTERS } from "./jql.js";
 import { groupByCategory } from "./model.js";
-import { HIDDEN_EVERY_MS } from "./page.js";
-import { attentionJql, severitySections } from "./severity.js";
+import { HIDDEN_EVERY_MS, countFailure } from "./page.js";
+import { attentionJql, needsAttention, severitySections } from "./severity.js";
 
 // What the All tab searches: everything assigned to me, resolved or not.
 export const ALL_JQL = "assignee = currentUser() ORDER BY updated DESC";
@@ -79,11 +79,20 @@ export function tabCountText({ total, problem } = {}) {
 // attention level (`attention`, the number of them), else "plain". `count` is { total, problem, attention }.
 export const countTone = (count) => (count?.problem ? "problem" : count?.attention > 0 ? "attention" : "plain");
 
-// The tip on a tab's count when tickets need attention, else null.
-export const attentionTip = (count) => (count?.attention > 0 ? `${count.attention} need attention now` : null);
+// The tip on a tab's count when tickets need attention ("1 needs attention now", "<n> need attention now"), else null.
+export const attentionTip = (count) => (count?.attention > 0 ? needsAttention(count.attention) : null);
 
 // The tip on a tab: why its search failed, else attentionTip's, else null.
 export const countTip = (count) => (count?.problem ? `${count.problem.message} ${count.problem.hint ?? ""}`.trim() : attentionTip(count));
+
+// What a failed attention search does: "page" for a rejected or forbidden token (countFailure); "rejected" when Jira
+// refused the search itself (kind "invalid": a value no option has, a wrong field), said in the tab until that search
+// changes or one succeeds; else "quiet" (a slow or failing Jira: the count stays as it was, nothing said).
+export const attentionFailure = (kind) => (countFailure(kind) === "page" ? "page" : kind === "invalid" ? "rejected" : "quiet");
+
+// The message of a tab's rejected attention search (`rejection`: { jql, message }), while the tab still asks that
+// search (`jql`: its attention search now); else null.
+export const attentionRejected = (rejection, jql) => (rejection && jql != null && rejection.jql === jql ? rejection.message : null);
 
 // The search for a tab's tickets that need attention now: attentionJql over `jql` (what the tab searches, before its
 // search text: the count ignores that); null for a tab without severity, or none of whose levels asks for attention.

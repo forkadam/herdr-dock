@@ -295,13 +295,15 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
   In progress / Done; empty levels aren't shown. A level with `"attention": true` needs attention now: its open
   tickets (not in Jira's Done category) are listed first, in a box titled **Needs attention now** with a red border,
   split To do / In progress (its done ones stay in the level's section below). With none open, one quiet line says
-  "Nothing needs attention now". When the tab lists only its first rows and some of those tickets are past them (with
-  nothing typed in the search box), the box ends with "N more not loaded" and Load more. While any are open, the tab's
-  count is red, whatever is typed in its search box; hover it for how many. That number takes one more count-only
-  search with each of the tab's counts, and a failed one leaves the count as it was. `"group": "type"` keeps the type
-  sections and adds the chips and the red count, without the box. A malformed block (no field, no levels, a level
-  without values or a label, an unknown colour) is skipped with a line in Settings and the tab works without it. For
-  example:
+  "Nothing needs attention now" when that is sure (nothing typed in the search box, and every row loaded or the count
+  below at 0); with a search typed, "N need attention now (not in this search)". When the tab lists only its first
+  rows and some of those tickets are past them (with nothing typed in the search box), the box ends with "N more not
+  loaded" and Load more. While any are open, the tab's count is red, whatever is typed in its search box; hover it for
+  how many. That number takes one more count-only search with each of the tab's counts, and a failed one leaves the
+  count as it was; when Jira refuses that search (a value no option has, a wrong field id), the box's place says
+  "Couldn't check what needs attention" with Jira's reason. `"group": "type"` keeps the type sections and adds the
+  chips and the red count, without the box. A malformed block (no field, no levels, a level without values or a label,
+  an unknown colour) is skipped with a line in Settings and the tab works without it. For example:
 
   ```json
   { "id": "triage", "name": "Triage",

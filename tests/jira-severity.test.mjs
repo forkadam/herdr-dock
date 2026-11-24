@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  COLOR_NAMES, attentionJql, attentionNotLoaded, chipOf, chipWidth, colorOf, inkOn, levelOf, parseSeverity, severityFields, severityRow, severitySections,
+  COLOR_NAMES, attentionJql, attentionLine, attentionNotLoaded, chipOf, chipWidth, colorOf, inkOn, levelOf, parseSeverity, severityFields, severityRow, severitySections,
   severityValue, tint,
 } from "../src/shared/jira/severity.js";
 import { ROW_FIELDS } from "../src/shared/jira/jql.js";
@@ -151,7 +151,7 @@ test("severityValue: a string as is, value before name, the first of a list, any
   assert.equal(at("High"), "High");
   assert.equal(at({ value: "V", name: "N" }), "V");
   assert.equal(at({ name: "N" }), "N");
-  assert.equal(at([{ value: "V1" }, { value: "V2" }]), "V1");
+  assert.equal(at([{ value: "A1" }, { value: "A2" }]), "A1");
   assert.equal(at(["S1", "S2"]), "S1");
   assert.equal(at([]), null);
   assert.equal(at(null), null);
@@ -278,4 +278,49 @@ test("attentionNotLoaded: the attention count less the attention rows loaded, wh
   assert.equal(attentionNotLoaded(attention, 5, { left: 10, query: "login" }), 0);
   // Not counted yet.
   assert.equal(attentionNotLoaded(attention, undefined, { left: 10 }), 0);
+});
+
+test("attentionJql: only the values whose level (the first that holds them, whatever the case) asks for attention", () => {
+  const clash = parseSeverity({ field: "customfield_10001", levels: [
+    { values: ["Medium"], label: "S2", color: "orange" },
+    { values: ["High", "medium", "Critical"], label: "S1", color: "red", attention: true },
+    { values: ["Low", "critical"], label: "S3", color: "gray", attention: true } ] }, "v").severity;
+  // "medium" is S2's (first level wins, case aside): not asked for; "critical" is S1's "Critical" already: asked once.
+  assert.equal(attentionJql("project = X", clash), '(project = X) AND cf[10001] in ("High", "Critical", "Low") AND statusCategory != Done');
+  // Every attention value claimed by a calmer level before it: nothing to ask.
+  const none = parseSeverity({ field: "f", levels: [{ values: ["A"], label: "a", color: "gray" }, { values: ["a"], label: "b", color: "red", attention: true }] }, "v").severity;
+  assert.equal(attentionJql("project = X", none), null);
+});
+
+test("attentionLine: Jira rejected the attention search: said, with or without rows in the box", () => {
+  const { attention } = severitySections([row("A-1", "High")], sev);
+  const text = "Couldn't check what needs attention: Jira refused the request. The option 'Critcal' does not exist.";
+  assert.deepEqual(attentionLine([], { rejected: "Jira refused the request. The option 'Critcal' does not exist.", counted: 3, left: 10 }), { kind: "rejected", text });
+  assert.deepEqual(attentionLine(attention, { rejected: "Jira refused the request. The option 'Critcal' does not exist.", counted: 5, left: 10 }), { kind: "rejected", text });
+});
+
+test("attentionLine: some past the loaded rows: '<n> more not loaded' (with Load more), in a box with rows or without", () => {
+  const { attention } = severitySections([row("A-1", "High"), row("A-2", "Highest", "indeterminate")], sev);
+  assert.deepEqual(attentionLine(attention, { counted: 5, left: 10 }), { kind: "more", text: "3 more not loaded" });
+  assert.deepEqual(attentionLine([], { counted: 4, left: 10 }), { kind: "more", text: "4 more not loaded" });
+  // Rows in the box and nothing missing, or a search typed: nothing more to say.
+  assert.equal(attentionLine(attention, { counted: 2, left: 10 }), null);
+  assert.equal(attentionLine(attention, { counted: 5, left: 10, query: "login" }), null);
+});
+
+test("attentionLine: 'Nothing needs attention now' only where it holds: no search text, and every row loaded or the count at 0", () => {
+  const quiet = { kind: "quiet", text: "Nothing needs attention now" };
+  assert.deepEqual(attentionLine([], { left: 0 }), quiet);
+  assert.deepEqual(attentionLine([], { counted: 0, left: 0 }), quiet);
+  assert.deepEqual(attentionLine([], { counted: 0, left: 10 }), quiet);
+  // Rows left to load and the count unknown (not answered yet, or failed): nothing is claimed.
+  assert.equal(attentionLine([], { left: 10 }), null);
+  assert.equal(attentionLine([], { counted: undefined, left: 10 }), null);
+});
+
+test("attentionLine: a search typed: '<n> need attention now (not in this search)' when the count says so, else nothing", () => {
+  assert.deepEqual(attentionLine([], { counted: 2, left: 0, query: "login" }), { kind: "search", text: "2 need attention now (not in this search)" });
+  assert.deepEqual(attentionLine([], { counted: 1, left: 10, query: "login" }), { kind: "search", text: "1 needs attention now (not in this search)" });
+  assert.equal(attentionLine([], { counted: 0, left: 0, query: "login" }), null);
+  assert.equal(attentionLine([], { left: 10, query: "login" }), null);
 });

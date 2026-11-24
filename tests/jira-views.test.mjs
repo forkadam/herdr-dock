@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ALL_JQL, attentionTip, countTip, countTone, dropAttention, keepAttention, listSections, pickTab, sectionsFor, stepTab, tabAttentionJql, tabCountText, tabList,
+  ALL_JQL, attentionFailure, attentionRejected, attentionTip, countTip, countTone, dropAttention, keepAttention, listSections, pickTab, sectionsFor, stepTab, tabAttentionJql, tabCountText, tabList,
   tabReload, todayCount, withAttention,
 } from "../src/shared/jira/views.js";
 import { attentionJql, parseSeverity, severitySections } from "../src/shared/jira/severity.js";
@@ -167,7 +167,7 @@ test("countTone / attentionTip: no count at all, and a count that never heard of
   assert.equal(countTone({ total: 4 }), "plain");
   assert.equal(attentionTip(undefined), null);
   assert.equal(attentionTip({ attention: 0 }), null);
-  assert.equal(attentionTip({ attention: 1 }), "1 need attention now");
+  assert.equal(attentionTip({ attention: 1 }), "1 needs attention now");
 });
 
 const severity = parseSeverity({ field: "customfield_10001", levels: [
@@ -205,6 +205,7 @@ test("countTip: a failed search says why; else the attention tip; else none", ()
   assert.equal(countTip({ problem: { message: "Bad JQL.", hint: "Fix it." }, attention: 2 }), "Bad JQL. Fix it.");
   assert.equal(countTip({ problem: { message: "Bad JQL." } }), "Bad JQL.");
   assert.equal(countTip({ total: 3, attention: 2 }), "2 need attention now");
+  assert.equal(countTip({ total: 3, attention: 1 }), "1 needs attention now");
   assert.equal(countTip({ total: 3, attention: 0 }), null);
   assert.equal(countTip({ total: 3 }), null);
   assert.equal(countTip(undefined), null);
@@ -250,4 +251,19 @@ test("dropAttention: a tab's count without its attention number, the rest kept; 
   assert.deepEqual(dropAttention({ problem, attention: 2, loading: true }), { problem, loading: true });
   assert.deepEqual(dropAttention({ total: 4 }), { total: 4 });
   assert.equal(dropAttention(undefined), undefined);
+});
+
+test("attentionFailure: a rejected or forbidden token takes the page; Jira refusing the search is said; the rest stays quiet", () => {
+  assert.equal(attentionFailure("auth"), "page");
+  assert.equal(attentionFailure("forbidden"), "page");
+  assert.equal(attentionFailure("invalid"), "rejected");
+  for (const kind of ["offline", "timeout", "server", "tls", "notfound", "unknown"]) assert.equal(attentionFailure(kind), "quiet", kind);
+});
+
+test("attentionRejected: a rejection is said only while the tab asks the same search", () => {
+  const rejection = { jql: "(project = X) AND cf[10001] in (\"Critcal\") AND statusCategory != Done", message: "Jira refused the request." };
+  assert.equal(attentionRejected(rejection, rejection.jql), "Jira refused the request.");
+  assert.equal(attentionRejected(rejection, "(project = X) AND cf[10001] in (\"Critical\") AND statusCategory != Done"), null);
+  assert.equal(attentionRejected(rejection, null), null);
+  assert.equal(attentionRejected(undefined, rejection.jql), null);
 });

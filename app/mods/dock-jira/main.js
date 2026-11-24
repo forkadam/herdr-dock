@@ -956,7 +956,7 @@ function fieldRef(field) {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(field) ? field : quote(field);
 }
 function attentionJql(jql, severity) {
-  const values = severity.levels.filter((l) => l.attention).flatMap((l) => l.values);
+  const values = severity.levels.filter((l) => l.attention).flatMap((l) => l.values.filter((v) => levelOf(v, severity) === l));
   if (!values.length) return null;
   const m = /^(.*?)\s*\b(order\s+by\s+.+)$/is.exec(String(jql ?? "").trim());
   const where = (m ? m[1] : String(jql ?? "")).trim();
@@ -1026,6 +1026,17 @@ function attentionNotLoaded(attention, counted, { left = 0, query = "" } = {}) {
   if (!Number.isFinite(counted) || !(left > 0) || String(query ?? "").trim()) return 0;
   const loaded = attention.reduce((n, s) => n + s.parts.reduce((m, p) => m + p.rows.length, 0), 0);
   return Math.max(0, counted - loaded);
+}
+var needsAttention = (n) => `${n} ${n === 1 ? "needs" : "need"} attention now`;
+function attentionLine(attention, { counted, rejected = null, left = 0, query = "" } = {}) {
+  if (rejected) return { kind: "rejected", text: `Couldn't check what needs attention: ${rejected}` };
+  const missing = attentionNotLoaded(attention, counted, { left, query });
+  if (missing > 0) return { kind: "more", text: `${missing} more not loaded` };
+  if (attention.length) return null;
+  const typed = String(query ?? "").trim() !== "";
+  if (!typed && (!(left > 0) || counted === 0)) return { kind: "quiet", text: "Nothing needs attention now" };
+  if (typed && counted > 0) return { kind: "search", text: `${needsAttention(counted)} (not in this search)` };
+  return null;
 }
 
 // src/shared/jira/settings.js
@@ -1496,8 +1507,10 @@ function tabCountText({ total, problem } = {}) {
   return total > 99 ? "99+" : String(total);
 }
 var countTone = (count) => count?.problem ? "problem" : count?.attention > 0 ? "attention" : "plain";
-var attentionTip = (count) => count?.attention > 0 ? `${count.attention} need attention now` : null;
+var attentionTip = (count) => count?.attention > 0 ? needsAttention(count.attention) : null;
 var countTip = (count) => count?.problem ? `${count.problem.message} ${count.problem.hint ?? ""}`.trim() : attentionTip(count);
+var attentionFailure = (kind) => countFailure(kind) === "page" ? "page" : kind === "invalid" ? "rejected" : "quiet";
+var attentionRejected = (rejection, jql) => rejection && jql != null && rejection.jql === jql ? rejection.message : null;
 var tabAttentionJql = (tab, jql) => tab.severity ? attentionJql(jql, tab.severity) : null;
 var keepAttention = (before, count, attends) => attends && Number.isFinite(before?.attention) ? { ...count, attention: before.attention } : count;
 var withAttention = (count, n) => count && Number.isFinite(n) ? { ...count, attention: n } : count;
@@ -1748,6 +1761,7 @@ var Jira = class extends View {
     this.tabId = null;
     this.states = /* @__PURE__ */ new Map();
     this.counts = /* @__PURE__ */ new Map();
+    this.attentionRejects = /* @__PURE__ */ new Map();
     this.sprint = blankSprint(null);
     this.sprintOpen = false;
     this.closedSeq = latestOnly();
@@ -2113,19 +2127,28 @@ var Jira = class extends View {
   // How many of a tab's tickets need attention now (its count's `attention`, which reddens its count): one count-only
   // search (attentionSearch), after the tab's own (refresh, refreshCounts), whatever is typed in its search box. Its
   // answer is kept only while the tab still asks the same. A failed one leaves `attention` as it was, with no "!" for
-  // it alone, except a rejected or forbidden token, which takes the page (countFailure): true then.
+  // it alone (attentionFailure): a rejected or forbidden token takes the page (true then); Jira refusing the search
+  // itself is remembered for the tab, whose list says so; anything else says nothing.
   async countAttention(cx, tab) {
     const jql = this.attentionSearch(tab);
     if (!jql || !this.connected || this.problem) return false;
     const r = await this.client(cx).search(jql, { maxResults: 0 });
     if (!r.ok) {
-      if (countFailure(r.problem.kind) !== "page") return false;
-      this.pageProblem(r.problem);
-      cx.notify();
-      return true;
+      const failure = attentionFailure(r.problem.kind);
+      if (failure === "page") {
+        this.pageProblem(r.problem);
+        cx.notify();
+        return true;
+      }
+      if (failure === "rejected") {
+        this.attentionRejects.set(tab.id, { jql, message: r.problem.message });
+        cx.notify();
+      }
+      return false;
     }
     const now = this.tabs().find((x) => x.id === tab.id);
     if (!now || this.attentionSearch(now) !== jql) return false;
+    this.attentionRejects.delete(tab.id);
     const count = withAttention(this.counts.get(tab.id), r.data?.total);
     if (count) this.counts.set(tab.id, count);
     cx.notify();
@@ -3013,6 +3036,7 @@ var Jira = class extends View {
     Object.assign(this, view, {
       states: /* @__PURE__ */ new Map(),
       counts: /* @__PURE__ */ new Map(),
+      attentionRejects: /* @__PURE__ */ new Map(),
       countsAt: void 0,
       projectStatuses: /* @__PURE__ */ new Map(),
       sprint: blankSprint(this.options.board),
@@ -3180,27 +3204,32 @@ ${previewTask(r, startTemplate(this.options.actions, r, this.jira?.settings.star
       ...sec.title ? [h_flex4().h(38).px(16).pt(14).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(12).text_color(t.dim).child(String(sec.parts.reduce((n, g) => n + g.rows.length, 0))))] : [],
       ...sec.parts.flatMap(group)
     ];
+    const box = attention && this.attentionBox(t, tab, attention, group);
     const scroll = this.scroll(`${tab.id}/list`);
-    return v_flex3().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(attention), (el) => el.child(this.attentionBox(t, tab, attention, group))).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
+    return v_flex3().id(`jira-list-${tab.id}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().pb(16).when(Boolean(scroll), (el) => el.track_scroll(scroll)).when(Boolean(box), (el) => el.child(box)).children(sections.flatMap(section)).when(Boolean(more), (el) => el.child(more));
   }
   // Above a severity tab's sections: its open tickets at an attention level (`attention`, severitySections'), by level,
   // in a box with a red title and a red-tinted border, each level split To do / In progress (`group` draws a part, as
-  // the list does). When the tab's attention count is more than the box holds and rows are left to load, the box ends
-  // with how many aren't loaded and Load more (attentionNotLoaded). With nothing in it, one quiet line says so.
+  // the list does), and one line of attentionLine's: at the box's end when it has rows or some aren't loaded (with
+  // Load more), else alone in its place; null when there's nothing to draw.
   attentionBox(t, tab, attention, group) {
     const s = this.state(tab.id);
-    const missing = attentionNotLoaded(attention, this.counts.get(tab.id)?.attention, { left: s.total - s.rows.length, query: s.query });
-    if (!attention.length && !missing) {
-      return div4().px(16).pt(12).pb(2).flex_none().text_size(12).text_color(t.dim).child("Nothing needs attention now");
-    }
+    const line = attentionLine(attention, {
+      counted: this.counts.get(tab.id)?.attention,
+      rejected: attentionRejected(this.attentionRejects.get(tab.id), this.attentionSearch(tab)),
+      left: s.total - s.rows.length,
+      query: s.query
+    });
+    const say = (l) => div4().text_size(12).text_color(l.kind === "rejected" ? WARN2 : t.dim).truncate().when(l.kind === "rejected", (el) => el.tooltip(l.text)).child(l.text);
+    if (!attention.length && line?.kind !== "more") return line ? say(line).px(16).pt(12).pb(2).flex_none() : null;
     const size = (sec) => sec.parts.reduce((n, g) => n + g.rows.length, 0);
     const level = (sec) => [
       h_flex4().h(30).px(16).pt(8).gap(6).flex_none().items_center().child(div4().text_size(12.5).font_semibold().text_color(t.foreground).child(sec.title)).child(div4().text_size(11.5).text_color(t.dim).child(String(size(sec)))),
       ...sec.parts.flatMap(group)
     ];
     const shown = attention.reduce((n, sec) => n + size(sec), 0);
-    const more = missing ? this.more(t, "jira-more-attention") : null;
-    return v_flex3().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden().border_1().border_color(tint(t.blocked, 0.55)).child(h_flex4().h(36).px(16).pt(6).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now")).when(shown > 0, (el) => el.child(div4().text_size(12).text_color(t.dim).child(String(shown))))).children(attention.flatMap(level)).when(missing > 0, (el) => el.child(h_flex4().flex_none().pl(16).items_center().child(div4().text_size(12).text_color(t.muted).child(`${missing} more not loaded`)).when(Boolean(more), (x) => x.child(more))));
+    const more = line?.kind === "more" ? this.more(t, "jira-more-attention") : null;
+    return v_flex3().id("jira-attention").flex_none().mx(10).mt(12).mb(2).pb(6).rounded(10).overflow_hidden().border_1().border_color(tint(t.blocked, 0.55)).child(h_flex4().h(36).px(16).pt(6).gap(6).flex_none().items_center().child(div4().text_size(13).font_semibold().text_color(t.blocked).child("Needs attention now")).when(shown > 0, (el) => el.child(div4().text_size(12).text_color(t.dim).child(String(shown))))).children(attention.flatMap(level)).when(line?.kind === "more", (el) => el.child(h_flex4().flex_none().pl(16).items_center().child(div4().text_size(12).text_color(t.muted).child(line.text)).when(Boolean(more), (x) => x.child(more)))).when(line?.kind === "rejected", (el) => el.child(say(line).px(16).pt(8).pb(2).flex_none()));
   }
   // `severity`: the shown tab's, for the card's chip (null on Today's sprint board: no chips there).
   card(t, r, severity = null) {
