@@ -242,3 +242,19 @@ test("claude: footnotes across a mid-turn marker are numbered once and noted at 
     assert.ok(!JSON.stringify(reply).includes("[^1]"));
   } finally { x.done(); }
 });
+
+test("claude: says whether the session's last prompts got Render's hint; codex answers don't", () => {
+  const x = home();
+  try {
+    const plain = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") });
+    assert.equal(plain.hints.state, "silent");
+    assert.equal(plain.hints.checked, 3);
+    const p = (uuid, text) => JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } });
+    const hint = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: ["The Render panel beside this terminal draws ```mermaid."] } });
+    const file = join(x.h, "hinted.jsonl");
+    writeFileSync(file, [p("u1", "first"), hint, p("u2", "second"), hint].join("\n") + "\n");
+    assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }).hints, { state: "ok", checked: 2 });
+    const codex = run({ ...x.base, mode: "codex", cwd: "/nowhere", codexHome: join(x.h, "no-codex") });
+    assert.equal(codex.hints, undefined);
+  } finally { x.done(); }
+});

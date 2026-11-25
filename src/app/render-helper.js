@@ -4,7 +4,8 @@
 //
 //   { mode: "claude", transcript, open?, cacheDir, relBase, theme }   Claude Code's session transcript
 //   { mode: "codex", cwd, codexHome?, now?, open?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
-//       -> { exchanges: rows (newest first), open: { [id]: { reply: blocks, buttons } }, diagrams, canHtml }
+//       -> { exchanges: rows (newest first), open: { [id]: { reply: blocks, buttons } }, diagrams, canHtml }, and for
+//          Claude hints: { state: "ok" | "silent" | "unknown", checked } (transcript.js, hintReach)
 //          open: exchanges opened by hand, whose blocks to send besides the newest three's; ids not there are ignored
 //   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file -> { blocks, buttons, canHtml }
 //   { mode: "list", cwd }                                           the Markdown files under cwd
@@ -28,7 +29,7 @@ import { copyHtml } from "./clipboard.js";
 import { cacheToPrune, themeKey } from "../shared/render/cache.js";
 import { mermaidColors, paintDiagram } from "../shared/render/paint.js";
 import { decideFigure, figureSvg } from "../shared/render/figure.js";
-import { codexCwd, exchangeRow, readClaude, readCodex, replyText } from "../shared/render/transcript.js";
+import { codexCwd, exchangeRow, hintReach, readClaude, readCodex, replyText } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
 
 const MAX_LOG = 64 * 1024 * 1024; // a session log bigger than this is read from its last 64 MB
@@ -191,8 +192,10 @@ function run(req) {
   switch (req?.mode) {
     case "clear":
       return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
-    case "claude":
-      return fromLog(readClaude, readText(req.transcript, MAX_LOG).split("\n"), req, { source: "claude", file: req.transcript });
+    case "claude": {
+      const lines = readText(req.transcript, MAX_LOG).split("\n");
+      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: hintReach(lines) });
+    }
     case "codex": {
       const home = req.codexHome || join(homedir(), ".codex");
       for (const file of codexRollouts(home, req.now ?? Date.now())) {

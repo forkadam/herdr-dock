@@ -103090,6 +103090,7 @@ ${parts.join("\n")}
 }
 
 // src/shared/render/hints.js
+var HINT_PHRASE = "Render panel beside this terminal";
 var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
 var HINT = [
   [
@@ -103268,6 +103269,28 @@ function readClaude(lines) {
     }
   });
   return fold(events, () => lastStop !== "end_turn" || openTools.size > 0);
+}
+var REACH_PROMPTS = 3;
+var NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
+var hintIn = (content) => (Array.isArray(content) ? content : [content]).some((c) => typeof c === "string" && c.includes(HINT_PHRASE));
+function hintReach(lines) {
+  const got = [];
+  let hinted = false;
+  for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
+    const o = parse(lines[i]);
+    if (!o || o.isSidechain) continue;
+    if (o.type === "attachment") {
+      if (o.attachment?.type === "hook_additional_context" && hintIn(o.attachment.content)) hinted = true;
+      continue;
+    }
+    if (o.type !== "user" || o.isMeta) continue;
+    const text = userText(o.message?.content);
+    if (text == null || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
+    got.push(hinted);
+    hinted = false;
+  }
+  const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
+  return { state, checked: got.length };
 }
 function readCodex(lines) {
   const events = [];
@@ -103471,8 +103494,10 @@ function run2(req) {
   switch (req?.mode) {
     case "clear":
       return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
-    case "claude":
-      return fromLog(readClaude, readText(req.transcript, MAX_LOG).split("\n"), req, { source: "claude", file: req.transcript });
+    case "claude": {
+      const lines = readText(req.transcript, MAX_LOG).split("\n");
+      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: hintReach(lines) });
+    }
     case "codex": {
       const home = req.codexHome || join(homedir(), ".codex");
       for (const file of codexRollouts(home, req.now ?? Date.now())) {
