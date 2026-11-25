@@ -52,3 +52,32 @@ test("hintsNotice: missing or moved offers Set up; unreadable says so; present, 
   assert.equal(n("missing", { dismissed: true }), null);
   assert.deepEqual(n("missing", { error: "Cannot write" }), { text: "Set up failed: Cannot write", action: "setup" });
 });
+
+// ---- Colour ----
+import { COLOURS, openWithin, pieces, tableWidths } from "../src/shared/render/view.js";
+
+test("COLOURS: every role is a theme key, none hard-coded", () => {
+  const keys = new Set(["foreground", "muted", "dim", "border", "surface", "raised", ...Array.from({ length: 16 }, (_, i) => `ansi${i}`)]);
+  for (const [role, key] of Object.entries(COLOURS)) assert.ok(keys.has(key), `${role}: ${key}`);
+  assert.equal(COLOURS.tableHeader, "ansi3");
+  assert.equal(COLOURS.number, "ansi5");
+});
+
+test("pieces: words keep their spaces; line breaks and code stay whole", () => {
+  assert.deepEqual(pieces([{ text: "two words " }, { text: "\n" }, { text: "a b", role: "code" }]).map((p) => p.text),
+    ["two ", "words ", "\n", "a b"]);
+});
+
+test("openWithin: the newest that fit, at least one; a hand-opened one stays and older open ones fold to fit", () => {
+  const rows = [{ id: "a", size: 30000 }, { id: "b", size: 30000 }, { id: "c", size: 30000 }, { id: "d", size: 100 }];
+  assert.deepEqual(openWithin(rows, new Map()), ["a", "b"]);
+  assert.deepEqual(openWithin(rows, new Map([["d", true]])), ["a", "b", "d"]);
+  assert.deepEqual(openWithin([{ id: "x", size: 200000 }], new Map()), ["x"]);
+  assert.deepEqual(openWithin(rows, new Map([["a", false]])), ["b", "c"]);
+});
+
+test("tableWidths: fits the panel, never below a column's longest word, wide tables keep their minimum", () => {
+  const w = tableWidths([4, 199], [4, 6], 360);
+  assert.ok(w.reduce((a, b) => a + b) <= 360 + 32);
+  assert.ok(w[1] >= 6 * 7.2);
+});
