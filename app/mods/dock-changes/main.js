@@ -113,19 +113,19 @@ async function resolveRepo(exec2, { cwd, on }) {
   const r = await exec2("git", ["rev-parse", "--show-toplevel"], { cwd, on });
   return r.code === 0 ? parseRepoPaths(r.stdout) : null;
 }
-async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null, mode = "uncommitted" }) {
+async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null, mode = "uncommitted", bases = null }) {
   let repo = root ? { root, gitDir } : await resolveRepo(exec2, { cwd, on });
   if (!repo) return { notRepo: true };
   const runGit = (r, args) => exec2("git", [...GIT_READ, ...args], { cwd: r.root, on });
   let [status, headDiff] = await Promise.all([
-    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
+    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch", "--no-ahead-behind"]),
     runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"])
   ]);
   if (status.code !== 0 && root) {
     repo = await resolveRepo(exec2, { cwd, on });
     if (!repo) return { notRepo: true };
     [status, headDiff] = await Promise.all([
-      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
+      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch", "--no-ahead-behind"]),
       runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"])
     ]);
   }
@@ -146,9 +146,9 @@ async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null, 
       parseNumstat(r.stdout, stats);
     }
   }
-  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats, mode === "branch" ? Infinity : FILE_LIMIT);
   const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
-  return mode === "branch" ? { ...out, ...await branchView((args) => runGit(repo, args), { branch, hasHead, untracked: files.filter((f) => f.fresh) }) } : out;
+  return mode === "branch" ? { ...out, ...await branchView((args) => runGit(repo, args), { branch, hasHead, statusFiles: files, bases }) } : out;
 }
 async function defaultBranch(runGit) {
   const exists = async (name) => (await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])).code === 0;
@@ -166,16 +166,22 @@ function parseNameStatus(stdout) {
   for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i + 1]] = parts[i][0];
   return out;
 }
-async function branchView(runGit, { branch, hasHead, untracked }) {
-  const base = await defaultBranch(runGit);
-  if (!base) return { base: null, mergeBase: null, onBase: false, files: [] };
-  if (branch && (branch === base || `origin/${branch}` === base)) return { base, mergeBase: null, onBase: true, files: [] };
-  const near = hasHead ? await nearestBase(runGit, base) : { base, mergeBase: null };
-  if (!near.mergeBase) return { base: near.base, mergeBase: null, onBase: false, files: [] };
-  return { ...await branchFiles(runGit, near.mergeBase, untracked), base: near.base, mergeBase: near.mergeBase, onBase: false };
+async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
+  const none = { mergeBase: null, onBase: false, files: [], limited: false };
+  const name = bases?.name ?? await defaultBranch(runGit);
+  if (!name) return { ...none, base: null, bases: { name: null, remote: null } };
+  if (branch && (branch === name || `origin/${branch}` === name)) return { ...none, base: name, onBase: true, bases: { name, remote: bases?.remote ?? null } };
+  if (!hasHead) return { ...none, base: name, bases: { name, remote: bases?.remote ?? null } };
+  const found = { name, remote: bases?.remote ?? await remoteOf(runGit, name) };
+  const near = await nearestBase(runGit, name, found.remote);
+  if (!near.mergeBase) return { ...none, base: near.base, bases: found };
+  return { ...await branchFiles(runGit, near.mergeBase, statusFiles), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
 }
-async function nearestBase(runGit, name) {
-  const remote = !name.startsWith("origin/") && (await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`])).code === 0 ? `origin/${name}` : null;
+async function remoteOf(runGit, name) {
+  if (name.startsWith("origin/")) return null;
+  return (await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`])).code === 0 ? `origin/${name}` : null;
+}
+async function nearestBase(runGit, name, remote) {
   const [local, other] = await Promise.all([name, remote].map(async (ref) => {
     if (!ref) return null;
     const r = await runGit(["merge-base", "HEAD", ref]);
@@ -184,7 +190,8 @@ async function nearestBase(runGit, name) {
   if (other && other !== local && (!local || (await runGit(["merge-base", "--is-ancestor", local, other])).code === 0)) return { base: remote, mergeBase: other };
   return { base: name, mergeBase: local };
 }
-async function branchFiles(runGit, mergeBase, untracked) {
+async function branchFiles(runGit, mergeBase, statusFiles) {
+  const conflicts = new Set(statusFiles.filter((f) => f.status === "U").map((f) => f.path));
   const [numstat, names] = await Promise.all([
     runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
     runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"])
@@ -193,14 +200,19 @@ async function branchFiles(runGit, mergeBase, untracked) {
   const stats = {};
   parseNumstat(numstat.stdout, stats);
   const letters = parseNameStatus(names.stdout);
-  const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
-  for (const f of untracked) if (!letters[f.path]) files.push(f);
+  const files = Object.keys(letters).map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
+  for (const f of statusFiles) if (f.fresh && !letters[f.path]) files.push(f);
   return { files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
 }
 function followsLine({ root, branch, view, base }) {
   if (!root) return "";
   const name = String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
   return [name, branch ?? "detached", ...view === "branch" && base ? [`vs ${base}`] : []].join(" \xB7 ");
+}
+function folderOf(context) {
+  if (context == null) return null;
+  const { view: _view, ...place } = JSON.parse(context);
+  return JSON.stringify(place);
 }
 function emptyText({ view, error, loading, root, branch, base, mergeBase, onBase }) {
   if (error) return error;
@@ -513,6 +525,7 @@ var Changes = class extends View {
     this.base = null;
     this.mergeBase = null;
     this.onBase = false;
+    this.bases = null;
     this.open = null;
     this.closed = false;
     this.limited = false;
@@ -536,7 +549,7 @@ var Changes = class extends View {
     this.sync = createChangesSync({
       watchFolder,
       getLocation: where,
-      onReset: (nextContext, loc) => {
+      onReset: (nextContext) => {
         this.context = nextContext;
         this.root = null;
         this.gitDir = null;
@@ -548,7 +561,8 @@ var Changes = class extends View {
         this.base = null;
         this.mergeBase = null;
         this.onBase = false;
-        const { view: _view, ...place } = loc ?? {}, folder = JSON.stringify(place);
+        this.bases = null;
+        const folder = folderOf(nextContext);
         if (folder !== this.folder) {
           this.message = "";
           this.input.set_value("");
@@ -561,7 +575,7 @@ var Changes = class extends View {
       },
       onRun: async ({ loc, context, isCurrent, notify }) => {
         try {
-          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view });
+          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view, bases: this.bases });
           if (!isCurrent()) return null;
           if (res.notRepo) {
             this.root = null;
@@ -573,6 +587,7 @@ var Changes = class extends View {
             this.base = null;
             this.mergeBase = null;
             this.onBase = false;
+            this.bases = null;
             this.error = "Not a git repository";
             return null;
           }
@@ -587,6 +602,7 @@ var Changes = class extends View {
           this.base = res.base ?? null;
           this.mergeBase = res.mergeBase ?? null;
           this.onBase = Boolean(res.onBase);
+          this.bases = res.bases ?? null;
           if (this.open && !res.files.some((f) => f.path === this.open)) {
             this.open = null;
             this.setLines([]);
@@ -676,12 +692,12 @@ var Changes = class extends View {
           const r = await exec("git", args, { cwd: root, on });
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         }
-        if (key() === context) {
+        if (folderOf(key()) === folderOf(context)) {
           this.message = "";
           this.input.set_value("");
         }
       } catch (e) {
-        if (key() === context) this.note = `Commit failed: ${e}`;
+        if (folderOf(key()) === folderOf(context)) this.note = `Commit failed: ${e}`;
       } finally {
         this.sync.setBusy(false, runCtx(cx2));
         cx2.notify();

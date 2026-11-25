@@ -14,7 +14,7 @@ import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, Tabs, Tab
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, shared, setShared, props, checking } from "herdr";
 import { followLocation } from "../../shared/follow.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
-import { GIT_READ, POLL_MS, createChangesSync, emptyText, fetchChanges, followsLine } from "../../shared/changes.js";
+import { GIT_READ, POLL_MS, createChangesSync, emptyText, fetchChanges, folderOf, followsLine } from "../../shared/changes.js";
 
 const MOD = "dock-changes";
 // Uncommitted: what isn't committed yet. Branch: everything on this branch that isn't on the
@@ -72,7 +72,7 @@ export default class Changes extends View {
   init(_props, cx) {
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     this.root = null; this.gitDir = null; this.on = null; this.context = null; this.folder = null;
-    this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
+    this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false; this.bases = null;
     this.open = null; this.closed = false; this.limited = false; this.error = null; this.note = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -86,29 +86,31 @@ export default class Changes extends View {
     this.sync = createChangesSync({
       watchFolder,
       getLocation: where,
-      onReset: (nextContext, loc) => {
+      onReset: (nextContext) => {
         this.context = nextContext; this.root = null; this.gitDir = null; this.on = null;
         this.files = []; this.open = null; this.setLines([]);
-        this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
+        // A new folder or view looks the default branch up again.
+        this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false; this.bases = null;
         // Switching the view keeps a commit message being written; following another folder doesn't.
-        const { view: _view, ...place } = loc ?? {}, folder = JSON.stringify(place);
+        const folder = folderOf(nextContext);
         if (folder !== this.folder) { this.message = ""; this.input.set_value(""); }
         this.folder = folder; this.error = null; this.note = null;
         this.closed = false; this.limited = false;
       },
       onRun: async ({ loc, context, isCurrent, notify }) => {
         try {
-          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view });
+          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view, bases: this.bases });
           if (!isCurrent()) return null;
           if (res.notRepo) {
             this.root = null; this.gitDir = null; this.files = []; this.setLines([]); this.open = null;
-            this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
+            this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false; this.bases = null;
             this.error = "Not a git repository";
             return null;
           }
           this.root = res.root; this.gitDir = res.gitDir; this.on = loc.on; this.hasHead = res.hasHead;
           this.files = res.files; this.limited = res.limited; this.error = null;
           this.branch = res.branch ?? null; this.base = res.base ?? null; this.mergeBase = res.mergeBase ?? null; this.onBase = Boolean(res.onBase);
+          this.bases = res.bases ?? null;
           if (this.open && !res.files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
           // The first file's diff shows until you pick another.
           if (!this.open && !this.closed && res.files.length) this.open = res.files[0].path;
@@ -195,8 +197,9 @@ export default class Changes extends View {
           const r = await exec("git", args, { cwd: root, on });
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         }
-        if (key() === context) { this.message = ""; this.input.set_value(""); }
-      } catch (e) { if (key() === context) this.note = `Commit failed: ${e}`; }
+        // Still the same folder, whichever view is showing now.
+        if (folderOf(key()) === folderOf(context)) { this.message = ""; this.input.set_value(""); }
+      } catch (e) { if (folderOf(key()) === folderOf(context)) this.note = `Commit failed: ${e}`; }
       finally { this.sync.setBusy(false, runCtx(cx)); cx.notify(); }
     });
     cx.notify();
