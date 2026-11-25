@@ -143,8 +143,10 @@ config order (it scrolls when there are many):
   - **Uncommitted**: what isn't committed yet, as Herdr's panel shows. It empties when an agent commits as it goes.
   - **Branch**: everything on this branch that isn't on the default branch yet, committed or not, plus new files,
     each diffed against where the branch left the default branch. The line under the title adds `vs <default branch>`.
-    The default branch is the one `origin/HEAD` names, the local branch when it exists (so work merged locally
-    but not pushed isn't shown again), else `origin/<name>`; without `origin/HEAD`, local `main`, then `master`.
+    The default branch is the one `origin/HEAD` names (without `origin/HEAD`, local `main`, then `master`). When
+    both the local branch and `origin/<name>` exist, it compares with whichever this branch left last: so work
+    merged into local `main` but not pushed isn't shown again, and a local `main` behind `origin/main` (fetched,
+    not fast-forwarded) doesn't make teammates' work look like this branch's.
     On the default branch itself there's nothing to compare, and the panel says so.
 
   The view is remembered. The Commit box commits the uncommitted changes in either view.

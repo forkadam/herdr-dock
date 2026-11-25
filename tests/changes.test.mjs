@@ -538,3 +538,26 @@ test("fetchChanges branch view: a branch with more files than the limit lists th
   assert.equal(r.files.length, LIMIT);
   assert.equal(r.limited, true);
 });
+
+test("fetchChanges branch view: compares with whichever of main and origin/main the branch left last", async () => {
+  // mbs: the merge base of HEAD with each of main and origin/main; "old" is an ancestor of "new".
+  const exec = (mbs) => {
+    const base = fakeGit({ refs: ["main"], originHead: "origin/main" });
+    return async (cmd, args) => {
+      if (args.includes("--verify") && args.at(-1) === "refs/remotes/origin/main") return { code: 0, stdout: "", stderr: "" };
+      if (args.includes("--is-ancestor")) { const [a, b] = args.slice(-2); return { code: a === "old" && b === "new" ? 0 : 1, stdout: "", stderr: "" }; }
+      if (args.includes("merge-base")) return { code: 0, stdout: `${mbs[args.at(-1)]}\n`, stderr: "" };
+      if (args.includes("diff") && ["old", "new", "same"].some((x) => args.includes(x))) return { code: 0, stdout: "", stderr: "" };
+      return base(cmd, args);
+    };
+  };
+  // Local main behind origin/main (fetched, not fast-forwarded): teammates' work isn't this branch's.
+  const behind = await fetchBranch({ exec: exec({ main: "old", "origin/main": "new" }), cwd: "/repo", on: null, mode: "branch" });
+  assert.deepEqual([behind.base, behind.mergeBase], ["origin/main", "new"]);
+  // Local main ahead (merged locally, not pushed): work already merged isn't shown again.
+  const ahead = await fetchBranch({ exec: exec({ main: "new", "origin/main": "old" }), cwd: "/repo", on: null, mode: "branch" });
+  assert.deepEqual([ahead.base, ahead.mergeBase], ["main", "new"]);
+  // Both the same: the local name.
+  const same = await fetchBranch({ exec: exec({ main: "same", "origin/main": "same" }), cwd: "/repo", on: null, mode: "branch" });
+  assert.deepEqual([same.base, same.mergeBase], ["main", "same"]);
+});

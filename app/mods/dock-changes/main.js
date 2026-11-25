@@ -170,9 +170,21 @@ async function branchView(runGit, { branch, hasHead, untracked }) {
   const base = await defaultBranch(runGit);
   if (!base) return { base: null, mergeBase: null, onBase: false, files: [] };
   if (branch && (branch === base || `origin/${branch}` === base)) return { base, mergeBase: null, onBase: true, files: [] };
-  const mb = hasHead ? await runGit(["merge-base", "HEAD", base]) : { code: 1 };
-  if (mb.code !== 0) return { base, mergeBase: null, onBase: false, files: [] };
-  const mergeBase = mb.stdout.trim();
+  const near = hasHead ? await nearestBase(runGit, base) : { base, mergeBase: null };
+  if (!near.mergeBase) return { base: near.base, mergeBase: null, onBase: false, files: [] };
+  return { ...await branchFiles(runGit, near.mergeBase, untracked), base: near.base, mergeBase: near.mergeBase, onBase: false };
+}
+async function nearestBase(runGit, name) {
+  const remote = !name.startsWith("origin/") && (await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`])).code === 0 ? `origin/${name}` : null;
+  const [local, other] = await Promise.all([name, remote].map(async (ref) => {
+    if (!ref) return null;
+    const r = await runGit(["merge-base", "HEAD", ref]);
+    return r.code === 0 ? r.stdout.trim() || null : null;
+  }));
+  if (other && other !== local && (!local || (await runGit(["merge-base", "--is-ancestor", local, other])).code === 0)) return { base: remote, mergeBase: other };
+  return { base: name, mergeBase: local };
+}
+async function branchFiles(runGit, mergeBase, untracked) {
   const [numstat, names] = await Promise.all([
     runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
     runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"])
@@ -183,7 +195,7 @@ async function branchView(runGit, { branch, hasHead, untracked }) {
   const letters = parseNameStatus(names.stdout);
   const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
   for (const f of untracked) if (!letters[f.path]) files.push(f);
-  return { base, mergeBase, onBase: false, files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
+  return { files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
 }
 function followsLine({ root, branch, view, base }) {
   if (!root) return "";
