@@ -117,8 +117,15 @@ export const CHAR_PX = 7.2;
 const CELL_PAD = 16;
 
 // A table's column widths in px for a panel `panelPx` wide: columnWidths in characters, never below a column's longest
-// word (a table that can't fit then scrolls sideways).
+// word (a table that can't fit then scrolls sideways). A table that fits is stretched to the panel's width, the spare
+// width shared by the columns' natural widths (Adam's call: stretched, as the Markdown view drew tables).
 export function tableWidths(natural, words, panelPx) {
   const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
-  return columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
+  const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
+  const used = fitted.reduce((a, w) => a + w, 0);
+  if (used >= panelPx) return fitted;
+  const weight = natural.reduce((a, n) => a + Math.max(1, n), 0);
+  const out = fitted.map((w, c) => Math.floor(w + ((panelPx - used) * Math.max(1, natural[c])) / weight));
+  out[out.length - 1] += panelPx - out.reduce((a, w) => a + w, 0);
+  return out;
 }

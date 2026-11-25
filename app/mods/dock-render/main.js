@@ -323,7 +323,13 @@ var CHAR_PX = 7.2;
 var CELL_PAD = 16;
 function tableWidths(natural, words, panelPx) {
   const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
-  return columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
+  const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
+  const used = fitted.reduce((a, w) => a + w, 0);
+  if (used >= panelPx) return fitted;
+  const weight = natural.reduce((a, n) => a + Math.max(1, n), 0);
+  const out = fitted.map((w, c) => Math.floor(w + (panelPx - used) * Math.max(1, natural[c]) / weight));
+  out[out.length - 1] += panelPx - out.reduce((a, w) => a + w, 0);
+  return out;
 }
 
 // src/mods/dock-render/main.js

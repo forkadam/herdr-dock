@@ -81,3 +81,9 @@ test("tableWidths: fits the panel, never below a column's longest word, wide tab
   assert.ok(w.reduce((a, b) => a + b) <= 360 + 32);
   assert.ok(w[1] >= 6 * 7.2);
 });
+
+test("tableWidths: a table that fits is stretched to the panel, columns sharing the spare width by their natural width", () => {
+  const w = tableWidths([4, 12], [4, 6], 400);
+  assert.equal(w.reduce((a, b) => a + b), 400);
+  assert.ok(w[1] > w[0] * 2);
+});

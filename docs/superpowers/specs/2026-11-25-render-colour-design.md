@@ -139,7 +139,8 @@ The code roles follow prismantis's `PRISM_COLORS` mapping onto its slots (`codeC
 - **Tables**: a ruled grid with a rounded border, header row tinted and coloured, a rule between rows. Every cell of a
   column has the same width, from the column's widest cell (wide characters count two), shrunk to fit the panel the
   way the table art does it (`columnWidths`), never below its longest word; cells wrap. When even that doesn't fit,
-  the table scrolls sideways.
+  the table scrolls sideways. A table that fits is **stretched to the panel's width**, the spare width shared by the
+  columns' natural widths (Adam's call after seeing the preview: stretched, as today's panel draws tables).
 - **Lists**: the marker in its colour, then the item's blocks, indented; nested lists indent again.
 - **Quotes**: a 3 px `ansi4` bar left of their blocks. **Alerts**: as today, with their blocks drawn this way.
 - **Raw HTML** (a block or inline): shown as its text, never lost.
