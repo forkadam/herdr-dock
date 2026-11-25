@@ -888,9 +888,14 @@ No Python is needed anywhere; everything runs on Node.
 
 ## Known limitations
 
-- macOS and Omarchy are untested. v1 was verified on Windows only.
+- Used on Windows, macOS and Omarchy (Linux); other Linux setups are untested.
 - Per-agent context is available only for local Claude agents. Other and remote agents show no number.
 - Third-party mods placed in the left panel are hidden in icons mode.
 - Drag-resizes and collapses are machine-local and are not synced. They survive restarts, config edits and mode
   changes; a config edit to a size wins for that size.
 - Layout regeneration re-applies the panel mode after a 400 ms wait, so you may see a brief flicker.
+- Render draws replies itself to colour them, so their text can't be mouse-selected: use the copy buttons, or the
+  terminal's own text.
+- Render's **html** copy buttons work on macOS only; elsewhere they're hidden (md, art and copy still work).
+- Render draws at most about 64 KB of Markdown at once: a longer file or reply comes in pages, and opening an
+  exchange past that folds older open ones.
