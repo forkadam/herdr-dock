@@ -66,3 +66,27 @@ last 3 *typed prompts* and, for each, whether a Render hint arrived before the n
 
 Exact layout of the Why text and button (follow the hints row's existing style); test names; where in `main.js` the
 per-transcript dismissal set lives.
+
+## Revision (2026-11-25, after the third review): the hook records each run
+
+The third review found that Claude Code can switch hooks off from many places (project and local settings'
+`disableAllHooks`/`disableAllHooksInCheckout`, `--settings`, managed `disableAllHooks` / `allowManagedHooksOnly`, bare
+and safe mode). Guessing them from settings files (`hooksSpeak`, the settings-mtime rule) can't keep up. Chosen instead
+(approach B, picked by the user): **the hook leaves a record of each run**, and Render judges from what happened.
+
+- **The record.** On each run the hook reads its stdin JSON (Claude Code passes `session_id`, the transcript's file
+  name; checked in Claude Code 2.1.332's hook-input builder) and writes `<app home>/herdr-dock/hint-runs/<session_id>.json`
+  = `{ at: <ms>, event: "session" | "prompt", decision }`, `decision` one of `"spoke"`, `"not-herdr"` (none of the
+  Herdr variables), `"prismantis"`, `"settings-invalid"`. App home: three folders up from the script
+  (`<app home>/mods/dock-render/herdr-hint.mjs`), or `DOCK_APP_HOME` (tests). Atomic write (temp + rename); a session id
+  that isn't `[A-Za-z0-9-]` writes nothing; any failure is swallowed (a hint is never worth a failed prompt).
+- **The verdict** (pure, `reachVerdict(hints, run)`): `null` unless the transcript is `"silent"` and the record is for a
+  prompt run no older than the newest typed prompt (5 s tolerance). Then `"spoke"` → **Diagram hints aren't reaching
+  Claude in this session** (the hook sent it, Claude Code didn't pass it on); `"not-herdr"` → **The diagram-hint hook
+  doesn't see Herdr in this session** (none of the variables reached Claude's environment, e.g. Claude started outside
+  Herdr and attached, or run through WSL, tmux or ssh in this pane). `"prismantis"`, `"settings-invalid"`, no record,
+  or a record older than the prompt (the hook didn't run: hooks are off somewhere) → no row. The set-up rows are
+  unchanged.
+- **Removed:** `hooksSpeak`, the settings-mtime rule, and the panel's prismantis flag; the record replaces them.
+- **Tidying:** the helper deletes records older than 14 days after each Claude read.
+- **Why texts:** one per verdict, each ending with copy details (which now include the record).
