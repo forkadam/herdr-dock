@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir, hostname } from "node:os";
 import { spawnSync } from "node:child_process";
 import { buildAll, ROOT } from "./build.mjs";
-import { LOCAL_REL, mergeWithLocal, migrationPlan, parseConfig, parseLocal } from "../src/shared/config.js";
+import { LOCAL_REL, mergeWithLocal, migrationPlan, missingMods, parseConfig, parseLocal, withoutMissing } from "../src/shared/config.js";
 import { buildLayout } from "../src/shared/layout.js";
 import { rightStateFromShared } from "../src/shared/panel.js";
 import { slashPath } from "../src/shared/path.js";
@@ -53,7 +53,12 @@ if (!local.ok) fail(`invalid local file ${slashPath(localPath)}: ${local.error}`
 // Build with this PC's right panel state (Herdr's shared.json) so a deploy keeps it.
 let sharedState = null;
 try { sharedState = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8").replace(/^\uFEFF/, "")); } catch { sharedState = null; }
-const merged = mergeWithLocal(parsed.config, host, local.local);
+// Placed mods that aren't installed in this app home are left out of the layout (a local file copied from another
+// machine, or a mod removed since): never a block naming a mod that isn't there.
+const placed = mergeWithLocal(parsed.config, host, local.local);
+const missing = missingMods(placed, (id) => existsSync(join(appHome, "mods", id, "mod.json")));
+if (missing.size) console.log(`left out of the layout (not installed): ${[...missing].join(", ")}`);
+const merged = withoutMissing(placed, missing);
 const layout = buildLayout(merged, rightStateFromShared(sharedState));
 const browser = browserOf(merged);
 

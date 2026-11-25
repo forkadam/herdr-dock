@@ -1497,13 +1497,28 @@ async function migrateLocal({ configPath, localPath, host, read, write, headText
   if (plan.configText !== configText) await write(configPath, plan.configText, configText);
   return true;
 }
-function planApply(configText, hostname, currentLayoutText, lastGood, state = {}, localText = null) {
+function missingMods(merged, installed) {
+  const out = /* @__PURE__ */ new Set();
+  for (const region of Object.values(merged?.regions ?? {})) {
+    for (const { mod } of region?.features ?? []) if (!String(mod).startsWith("dock-") && !installed(mod)) out.add(mod);
+  }
+  return out;
+}
+function withoutMissing(merged, missing) {
+  if (!missing?.size) return merged;
+  const regions = {};
+  for (const [name, region] of Object.entries(merged.regions ?? {})) {
+    regions[name] = { ...region, features: (region.features ?? []).filter(({ mod }) => String(mod).startsWith("dock-") || !missing.has(mod)) };
+  }
+  return { ...merged, regions };
+}
+function planApply(configText, hostname, currentLayoutText, lastGood, state = {}, localText = null, missing = /* @__PURE__ */ new Set()) {
   if (typeof configText !== "string") return { write: null, error: "config file not found", merged: lastGood };
   const parsed = parseConfig(configText);
   if (!parsed.ok) return { write: null, error: parsed.error, merged: lastGood };
   const local = parseLocal(localText);
   if (!local.ok) return { write: null, error: local.error, merged: lastGood };
-  const merged = mergeWithLocal(parsed.config, hostname, local.local);
+  const merged = withoutMissing(mergeWithLocal(parsed.config, hostname, local.local), missing);
   const text = JSON.stringify(buildLayout(merged, state), null, 2) + "\n";
   return { write: text === currentLayoutText ? null : text, error: null, merged };
 }
@@ -2641,12 +2656,26 @@ var DockCore = class extends View {
     if (next !== history) setShared(HISTORY_KEY, next);
   }
   // Re-read the config; write the layout only when it changed and the config is valid.
+  // The placed mods (besides dock-*) with no <app home>/mods/<id>/mod.json here, logged when the set changes.
+  async missingMods(merged) {
+    const home = slashPath(appHome());
+    const ids = [...missingMods(merged, () => false)];
+    const present = /* @__PURE__ */ new Set();
+    for (const id of ids) if (await readTextFile(`${home}/mods/${id}/mod.json`).then(() => true, () => false)) present.add(id);
+    const missing = missingMods(merged, (id) => present.has(id));
+    const key = [...missing].sort().join(",");
+    if (key && key !== this.missingKey) console.log(`dock-core: left out of the layout (not installed): ${[...missing].join(", ")}`);
+    this.missingKey = key;
+    return missing;
+  }
   async reload(cx) {
     if (!this.configPath || checking()) return;
     const configText = await readTextFile(this.configPath).catch(() => null);
     const localText = this.localPath ? await readTextFile(this.localPath).catch(() => null) : null;
     const current = await readTextFile(this.layoutPath).catch(() => null);
     let plan = planApply(configText, this.host, current, this.merged, {}, localText);
+    const missing = plan.error || !plan.merged ? /* @__PURE__ */ new Set() : await this.missingMods(plan.merged);
+    if (missing.size) plan = planApply(configText, this.host, current, this.merged, {}, localText, missing);
     if (!plan.error && plan.merged) {
       const active = shared(ACTIVE_KEY);
       const u = rightConfigUpdate({
@@ -2655,7 +2684,7 @@ var DockCore = class extends View {
         saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) }
       });
       for (const [key, value] of Object.entries(u.set)) setShared(key, value);
-      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? void 0 }, localText);
+      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? void 0 }, localText, missing);
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);

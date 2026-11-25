@@ -12,7 +12,8 @@ export function placeability(id, modJson) {
   if (id.startsWith("_") || id.startsWith(".")) return "hidden-name";
   if (modJson === null || typeof modJson !== "object") return "broken";
   if (HELPER_MODS.includes(id)) return "helper";
-  if (modJson.overlay && (modJson.place === "none" || modJson.place === undefined)) return "overlay";
+  // An overlay (a dialog or window) unless its mod.json says it can also sit in the dock ("dock": true).
+  if (modJson.overlay && modJson.dock !== true && (modJson.place === "none" || modJson.place === undefined)) return "overlay";
   return null;
 }
 

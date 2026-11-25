@@ -82,3 +82,8 @@ test("buildInventory: while the browser is off, dock-browser isn't listed for pl
   // Callers that don't say (an older session) keep listing it.
   assert.ok(ids().includes("dock-browser"));
 });
+
+test("placeability: an overlay that says dock: true can be placed; other overlays can't", () => {
+  assert.equal(placeability("gitlab-ci", { place: "none", overlay: { kind: "window" }, dock: true }), null);
+  assert.equal(placeability("some-dialog", { place: "none", overlay: { kind: "dialog" } }), "overlay");
+});

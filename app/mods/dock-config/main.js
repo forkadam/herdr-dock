@@ -411,7 +411,7 @@ function placeability(id, modJson) {
   if (id.startsWith("_") || id.startsWith(".")) return "hidden-name";
   if (modJson === null || typeof modJson !== "object") return "broken";
   if (HELPER_MODS.includes(id)) return "helper";
-  if (modJson.overlay && (modJson.place === "none" || modJson.place === void 0)) return "overlay";
+  if (modJson.overlay && modJson.dock !== true && (modJson.place === "none" || modJson.place === void 0)) return "overlay";
   return null;
 }
 function installedFallbackIds(installedJsonText) {

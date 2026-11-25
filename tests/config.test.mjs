@@ -94,3 +94,25 @@ test("dock-footer can only be placed in the left panel", () => {
   const r = parseConfig(JSON.stringify({ v: 1, regions: { top: { features: [{ mod: "dock-core" }] }, bottom: { features: [{ mod: "dock-footer" }] } } }));
   assert.match(r.error, /dock-footer can only be placed in regions\.left/);
 });
+
+// ---- Mods that aren't installed are left out of the layout ----
+import { readFileSync as readConfigFile } from "node:fs";
+import { missingMods, planApply, withoutMissing } from "../src/shared/config.js";
+
+test("withoutMissing / missingMods: a placed mod that isn't installed is left out; dock-* never are", () => {
+  const merged = { regions: { right: { features: [{ mod: "dock-pipelines" }, { mod: "gitlab-ci" }, { mod: "files" }] } } };
+  assert.deepEqual(withoutMissing(merged, new Set(["gitlab-ci"])).regions.right.features.map((f) => f.mod), ["dock-pipelines", "files"]);
+  assert.equal(withoutMissing(merged, new Set(["dock-pipelines"])).regions.right.features.length, 3);
+  assert.deepEqual([...missingMods(merged, (id) => id !== "gitlab-ci")], ["gitlab-ci"]);
+});
+
+test("planApply: a local.json naming a missing mod writes a layout without its block", () => {
+  const configText = readConfigFile("config/dock.json", "utf8");
+  const local = JSON.stringify({ v: 1, regions: { right: { features: [{ mod: "dock-pipelines" }, { mod: "gitlab-ci" }] } } });
+  const with_ = planApply(configText, "host", null, null, {}, local);
+  assert.ok(with_.write.includes('"gitlab-ci"'));
+  const without = planApply(configText, "host", null, null, {}, local, new Set(["gitlab-ci"]));
+  assert.ok(!without.write.includes('"gitlab-ci"'));
+  assert.ok(without.write.includes('"dock-pipelines"'));
+  assert.ok(!without.merged.regions.right.features.some((f) => f.mod === "gitlab-ci"));
+});

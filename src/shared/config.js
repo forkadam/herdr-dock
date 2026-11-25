@@ -224,17 +224,39 @@ export async function migrateLocal({ configPath, localPath, host, read, write, h
   return true;
 }
 
+// The placed mods that aren't installed (installed(id) false), so the layout can leave them out: a local.json copied
+// from another machine, or a mod removed since it was placed, must never give a broken block. dock-* mods are part of
+// herdr-dock itself and never checked.
+export function missingMods(merged, installed) {
+  const out = new Set();
+  for (const region of Object.values(merged?.regions ?? {})) {
+    for (const { mod } of region?.features ?? []) if (!String(mod).startsWith("dock-") && !installed(mod)) out.add(mod);
+  }
+  return out;
+}
+
+// The merged config without those mods in any region (dock-* never removed).
+export function withoutMissing(merged, missing) {
+  if (!missing?.size) return merged;
+  const regions = {};
+  for (const [name, region] of Object.entries(merged.regions ?? {})) {
+    regions[name] = { ...region, features: (region.features ?? []).filter(({ mod }) => String(mod).startsWith("dock-") || !missing.has(mod)) };
+  }
+  return { ...merged, regions };
+}
+
 // What to do with a (possibly half-saved) config, with the local file's text (null when there is
 // none) merged over it: the layout text to write, or null when nothing changed or either is bad. A bad
 // config or local file keeps lastGood as merged, so the window keeps its last good layout. Output matches deploy: pretty JSON + newline.
-export function planApply(configText, hostname, currentLayoutText, lastGood, state = {}, localText = null) {
+export function planApply(configText, hostname, currentLayoutText, lastGood, state = {}, localText = null, missing = new Set()) {
   if (typeof configText !== "string") return { write: null, error: "config file not found", merged: lastGood };
   const parsed = parseConfig(configText);
   if (!parsed.ok) return { write: null, error: parsed.error, merged: lastGood };
   // An invalid local file (perhaps half-saved) is reported like a bad config and never merged.
   const local = parseLocal(localText);
   if (!local.ok) return { write: null, error: local.error, merged: lastGood };
-  const merged = mergeWithLocal(parsed.config, hostname, local.local);
+  // `missing`: placed mods that aren't installed on this machine, left out (see missingMods).
+  const merged = withoutMissing(mergeWithLocal(parsed.config, hostname, local.local), missing);
   const text = JSON.stringify(buildLayout(merged, state), null, 2) + "\n";
   return { write: text === currentLayoutText ? null : text, error: null, merged };
 }

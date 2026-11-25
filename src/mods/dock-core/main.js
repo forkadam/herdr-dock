@@ -5,7 +5,7 @@ import {
   setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
 import { createCollector } from "../../shared/collector.js";
-import { LOCAL_REL, migrateLocal, planApply } from "../../shared/config.js";
+import { LOCAL_REL, migrateLocal, missingMods, planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
   PAGE_KEY, focusLeavesPage, liveRight, liveSizes, liveWork, modeFromConfig, nextMode, nextPage, planPage, planPanel, planRight,
@@ -543,6 +543,19 @@ export default class DockCore extends View {
   }
 
   // Re-read the config; write the layout only when it changed and the config is valid.
+  // The placed mods (besides dock-*) with no <app home>/mods/<id>/mod.json here, logged when the set changes.
+  async missingMods(merged) {
+    const home = slashPath(appHome());
+    const ids = [...missingMods(merged, () => false)];
+    const present = new Set();
+    for (const id of ids) if (await readTextFile(`${home}/mods/${id}/mod.json`).then(() => true, () => false)) present.add(id);
+    const missing = missingMods(merged, (id) => present.has(id));
+    const key = [...missing].sort().join(",");
+    if (key && key !== this.missingKey) console.log(`dock-core: left out of the layout (not installed): ${[...missing].join(", ")}`);
+    this.missingKey = key;
+    return missing;
+  }
+
   async reload(cx) {
     if (!this.configPath || checking()) return;
     const configText = await readTextFile(this.configPath).catch(() => null);
@@ -551,6 +564,9 @@ export default class DockCore extends View {
     // Parse first, decide this PC's right panel state from the new config, then build the layout
     // file with it, so the file already matches what the panel should be.
     let plan = planApply(configText, this.host, current, this.merged, {}, localText);
+    // Placed mods that aren't installed on this machine are left out of the layout (never a broken block).
+    const missing = plan.error || !plan.merged ? new Set() : await this.missingMods(plan.merged);
+    if (missing.size) plan = planApply(configText, this.host, current, this.merged, {}, localText, missing);
     if (!plan.error && plan.merged) {
       const active = shared(ACTIVE_KEY);
       const u = rightConfigUpdate({
@@ -558,7 +574,7 @@ export default class DockCore extends View {
         saved: { shown: shared(RIGHT_KEY), active, configHidden: shared(RIGHT_CONFIG_KEY) },
       });
       for (const [key, value] of Object.entries(u.set)) setShared(key, value);
-      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? undefined }, localText);
+      plan = planApply(configText, this.host, current, this.merged, { ...u.state, page: shared(PAGE_KEY) ?? undefined }, localText, missing);
     }
     const error = plan.error ?? this.hostError;
     if ((shared(ERROR_KEY) ?? null) !== error) setShared(ERROR_KEY, error);
