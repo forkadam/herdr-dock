@@ -87,9 +87,13 @@ function columnWidths(natural, available, gap, words = []) {
   return widths;
 }
 
-// The plain text of marked inline tokens: markup gone, link text kept, escapes as their character.
+// The plain text of marked inline tokens: markup gone, escapes as their character, a link as "text (address)" (as
+// prismantis's displayText) or just its address when that is its text.
 export function cellText(tokens) {
-  return (tokens ?? []).map((t) => (Array.isArray(t.tokens) && t.type !== "codespan" ? cellText(t.tokens) : t.text ?? "")).join("");
+  return (tokens ?? []).map((t) => {
+    if (t.type === "link") { const text = cellText(t.tokens); return text && text !== t.href ? `${text} (${t.href})` : t.href; }
+    return Array.isArray(t.tokens) && t.type !== "codespan" ? cellText(t.tokens) : t.text ?? "";
+  }).join("");
 }
 
 const rowsOf = (token) => [token.header, ...token.rows].map((r) => token.header.map((_, c) => cellText(r[c]?.tokens).replace(/\s+/g, " ").trim()));

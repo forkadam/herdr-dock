@@ -32,16 +32,25 @@ function commandText(text) {
   return args ? `${name} ${args}` : name;
 }
 
+// What you sent, as shown: a slash command as "/name args", a bash-mode command as "! cmd", else the text.
+function youText(text) {
+  if (/<command-name>/.test(text)) return commandText(text);
+  const bash = /^\s*<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
+  return bash ? `! ${bash[1].trim()}` : text;
+}
+
+// Lines that end a turn without starting one: an interruption, a slash command's or bash mode's output.
+const TURN_ENDS = /^\s*(\[Request interrupted by user|<(local-command-stdout|bash-stdout|bash-stderr)>)/;
+
 // Who a user line (or a queued message) comes from: { by, event, text }, or null when it isn't shown.
 function speaker(text, originKind, mode) {
-  if (originKind === "human" || mode === "prompt") return { by: "you", event: null, text: /<command-name>/.test(text) ? commandText(text) : text };
+  if (originKind === "human" || mode === "prompt") return { by: "you", event: null, text: youText(text) };
   if (originKind) return { by: "event", event: originKind, text: eventText(text) };
   if (mode) return { by: "event", event: mode, text: eventText(text) };
   const s = text.trimStart();
   if (s.startsWith("<task-notification>")) return { by: "event", event: "task-notification", text: eventText(text) };
-  if (/<command-name>/.test(text)) return { by: "you", event: null, text: commandText(text) };
-  if (/^<(local-command-caveat|local-command-stdout|system-reminder)>/.test(s)) return null;
-  return { by: "you", event: null, text };
+  if (/^<(local-command-caveat|local-command-stdout|system-reminder|bash-stdout|bash-stderr)>/.test(s)) return null;
+  return { by: "you", event: null, text: youText(text) };
 }
 
 // The shared fold. Events: { role: "user", id, by, event, text, at } | { role: "marker", by, event, text, at }
@@ -110,11 +119,14 @@ export function readClaude(lines) {
       if (Array.isArray(content)) for (const c of content) if (c?.type === "tool_result") openTools.delete(c.tool_use_id);
       if (o.isMeta) return;
       const id = o.uuid ?? `line-${i}`;
-      if (o.isCompactSummary) { events.push({ role: "user", id, by: "event", event: "compaction", text: "", at }); return; }
+      // A new turn: Claude hasn't answered it yet (its first line can take a while), and earlier tool calls are over.
+      const begin = () => { lastStop = null; openTools.clear(); };
+      if (o.isCompactSummary) { begin(); events.push({ role: "user", id, by: "event", event: "compaction", text: "", at }); return; }
       const text = userText(content);
       if (text == null) return;
+      if (TURN_ENDS.test(text)) { lastStop = "end_turn"; openTools.clear(); return; }
       const who = speaker(text, o.origin?.kind ?? null, null);
-      if (who) events.push({ role: "user", id, ...who, at });
+      if (who) { begin(); events.push({ role: "user", id, ...who, at }); }
     } else if (o.type === "attachment" && o.attachment?.type === "queued_command") {
       const a = o.attachment;
       const who = speaker(String(a.prompt ?? ""), a.origin?.kind ?? null, a.commandMode ?? null);

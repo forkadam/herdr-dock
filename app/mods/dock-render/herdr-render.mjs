@@ -98925,7 +98925,13 @@ function columnWidths(natural, available, gap, words = []) {
   return widths;
 }
 function cellText(tokens) {
-  return (tokens ?? []).map((t) => Array.isArray(t.tokens) && t.type !== "codespan" ? cellText(t.tokens) : t.text ?? "").join("");
+  return (tokens ?? []).map((t) => {
+    if (t.type === "link") {
+      const text = cellText(t.tokens);
+      return text && text !== t.href ? `${text} (${t.href})` : t.href;
+    }
+    return Array.isArray(t.tokens) && t.type !== "codespan" ? cellText(t.tokens) : t.text ?? "";
+  }).join("");
 }
 var rowsOf = (token) => [token.header, ...token.rows].map((r2) => token.header.map((_2, c) => cellText(r2[c]?.tokens).replace(/\s+/g, " ").trim()));
 var ART_WIDTH = 100;
@@ -98954,6 +98960,12 @@ function tableText(token) {
 // src/shared/render/blocks.js
 var ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
 var OPTIONS = { gfm: true };
+function fenced(code, lang) {
+  const fence = "`".repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((r2) => r2.length + 1)));
+  return `${fence}${lang}
+${code}
+${fence}`;
+}
 function mdBlocks(text) {
   const out2 = [];
   let run2 = "";
@@ -98977,7 +98989,8 @@ function mdBlocks(text) {
       });
     } else if (token.type === "code") {
       flush();
-      out2.push({ kind: "code", md: raw.trim(), lang: String(token.lang ?? "").trim().split(/\s+/)[0], buttons: [{ label: "copy", text: token.text }] });
+      const lang = String(token.lang ?? "").trim().split(/\s+/)[0];
+      out2.push({ kind: "code", md: fenced(token.text, lang), lang, buttons: [{ label: "copy", text: token.text }] });
     } else if (token.type === "list") {
       flush();
       out2.push({ kind: "list", md: raw.trim(), buttons: [{ label: "copy", text: raw.trim() }] });
@@ -99511,15 +99524,20 @@ function commandText(text) {
   const args2 = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? "";
   return args2 ? `${name} ${args2}` : name;
 }
+function youText(text) {
+  if (/<command-name>/.test(text)) return commandText(text);
+  const bash = /^\s*<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
+  return bash ? `! ${bash[1].trim()}` : text;
+}
+var TURN_ENDS = /^\s*(\[Request interrupted by user|<(local-command-stdout|bash-stdout|bash-stderr)>)/;
 function speaker(text, originKind, mode) {
-  if (originKind === "human" || mode === "prompt") return { by: "you", event: null, text: /<command-name>/.test(text) ? commandText(text) : text };
+  if (originKind === "human" || mode === "prompt") return { by: "you", event: null, text: youText(text) };
   if (originKind) return { by: "event", event: originKind, text: eventText(text) };
   if (mode) return { by: "event", event: mode, text: eventText(text) };
   const s = text.trimStart();
   if (s.startsWith("<task-notification>")) return { by: "event", event: "task-notification", text: eventText(text) };
-  if (/<command-name>/.test(text)) return { by: "you", event: null, text: commandText(text) };
-  if (/^<(local-command-caveat|local-command-stdout|system-reminder)>/.test(s)) return null;
-  return { by: "you", event: null, text };
+  if (/^<(local-command-caveat|local-command-stdout|system-reminder|bash-stdout|bash-stderr)>/.test(s)) return null;
+  return { by: "you", event: null, text: youText(text) };
 }
 function fold(events, running) {
   const exchanges = [];
@@ -99590,14 +99608,27 @@ function readClaude(lines) {
       }
       if (o.isMeta) return;
       const id = o.uuid ?? `line-${i}`;
+      const begin = () => {
+        lastStop = null;
+        openTools.clear();
+      };
       if (o.isCompactSummary) {
+        begin();
         events.push({ role: "user", id, by: "event", event: "compaction", text: "", at: at2 });
         return;
       }
       const text = userText(content);
       if (text == null) return;
+      if (TURN_ENDS.test(text)) {
+        lastStop = "end_turn";
+        openTools.clear();
+        return;
+      }
       const who = speaker(text, o.origin?.kind ?? null, null);
-      if (who) events.push({ role: "user", id, ...who, at: at2 });
+      if (who) {
+        begin();
+        events.push({ role: "user", id, ...who, at: at2 });
+      }
     } else if (o.type === "attachment" && o.attachment?.type === "queued_command") {
       const a = o.attachment;
       const who = speaker(String(a.prompt ?? ""), a.origin?.kind ?? null, a.commandMode ?? null);

@@ -1,8 +1,8 @@
 {
   "repo": "forkadam/herdr-dock",
   "branch": "main",
-  "version": "f9e5061574d5",
-  "source": "1ec6450",
+  "version": "4f96bacf1eaf",
+  "source": "88f80fd",
   "mods": [
     "dock-agents",
     "dock-attention",

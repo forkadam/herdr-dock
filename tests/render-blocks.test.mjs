@@ -96,3 +96,17 @@ test("width: CJK counts two columns, ✓ one, a combining mark none", () => {
   assert.equal(width("✓"), 1);
   assert.equal(width("e\u0301"), 1);
 });
+
+test("an indented code block is drawn as code; a fence inside code gets a longer fence", () => {
+  const [b] = toBlocks("    npm install\n    npm test");
+  assert.equal(b.kind, "code");
+  assert.equal(b.md, "```\nnpm install\nnpm test\n```");
+  const [c] = toBlocks("````md\n```js\nx\n```\n````");
+  assert.equal(c.md, "````md\n```js\nx\n```\n````");
+});
+
+test("art and TSV keep a link's address after its text (as prismantis does); a bare link is just the address", () => {
+  const tok = marked.lexer("| a |\n|---|\n| [docs](http://x/y) |\n| <http://z> |")[0];
+  assert.equal(tableText(tok), "a\ndocs (http://x/y)\nhttp://z");
+  assert.match(tableArt(tok), /docs \(http:\/\/x\/y\)/);
+});

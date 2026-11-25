@@ -13,6 +13,13 @@ import { tableArt, tableText } from "./table-copy.js";
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
 const OPTIONS = { gfm: true };
 
+// Code as a fenced block, whatever it was written as (an indented block loses its indent once cut out): the fence is
+// longer than any run of backticks inside.
+function fenced(code, lang) {
+  const fence = "`".repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((r) => r.length + 1)));
+  return `${fence}${lang}\n${code}\n${fence}`;
+}
+
 function mdBlocks(text) {
   const out = [];
   let run = "";
@@ -35,7 +42,8 @@ function mdBlocks(text) {
       });
     } else if (token.type === "code") {
       flush();
-      out.push({ kind: "code", md: raw.trim(), lang: String(token.lang ?? "").trim().split(/\s+/)[0], buttons: [{ label: "copy", text: token.text }] });
+      const lang = String(token.lang ?? "").trim().split(/\s+/)[0];
+      out.push({ kind: "code", md: fenced(token.text, lang), lang, buttons: [{ label: "copy", text: token.text }] });
     } else if (token.type === "list") {
       flush();
       out.push({ kind: "list", md: raw.trim(), buttons: [{ label: "copy", text: raw.trim() }] });

@@ -186,3 +186,34 @@ test("shownSize: natural size when it fits; never below 70% (then it scrolls); n
   assert.deepEqual(shownSize({ w: 20, h: 10 }, 332), { w: 40, h: 20, scroll: false });
   assert.deepEqual(shownSize({}, 332), { w: 332, h: 199, scroll: false });
 });
+
+// ---- Review fixes: when a turn is still going, and lines that aren't turns ----
+const U = (o) => JSON.stringify({ type: "user", timestamp: "2026-11-25T10:00:00Z", ...o });
+const A = (content, stop) => JSON.stringify({ type: "assistant", timestamp: "2026-11-25T10:00:01Z", message: { content, stop_reason: stop } });
+
+test("a prompt Claude hasn't answered yet is working…, even after an ended turn", () => {
+  const x = readClaude([
+    U({ uuid: "a", origin: { kind: "human" }, message: { content: "first" } }), A([{ type: "text", text: "done" }], "end_turn"),
+    U({ uuid: "b", origin: { kind: "human" }, message: { content: "second" } }),
+  ]).exchanges;
+  assert.equal(exchangeRow(x[0]).state, "working");
+});
+
+test("a slash command's output and bash mode end their turn; bash output starts nothing", () => {
+  const x = readClaude([
+    U({ uuid: "c", message: { content: "<command-name>/model</command-name>\n<command-args></command-args>" } }),
+    U({ message: { content: "<local-command-stdout>Set model</local-command-stdout>" } }),
+    U({ uuid: "d", message: { content: "<bash-input>git status</bash-input>" } }),
+    U({ message: { content: "<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>" } }),
+  ]).exchanges;
+  assert.deepEqual(x.map((e) => [e.id, e.by, e.text, exchangeRow(e).state]), [["d", "you", "! git status", "none"], ["c", "you", "/model", "none"]]);
+});
+
+test("an interruption starts nothing and ends the turn", () => {
+  const x = readClaude([
+    U({ uuid: "e", origin: { kind: "human" }, message: { content: "go" } }),
+    A([{ type: "tool_use", id: "t9", name: "Bash", input: {} }], "tool_use"),
+    U({ message: { content: [{ type: "text", text: "[Request interrupted by user for tool use]" }] } }),
+  ]).exchanges;
+  assert.deepEqual(x.map((e) => [e.id, exchangeRow(e).state]), [["e", "none"]]);
+});
