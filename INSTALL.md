@@ -51,7 +51,13 @@ of deploy's `status line:` messages it printed:
   agree, before it prints, after the input is read.
 - **already feeds herdr-dock**: nothing to do.
 
-If they don't want it, run `node scripts/deploy.mjs --no-statusline` next time and restore the backup.
+Deploy also adds two hooks there (its `diagram hints:` message): once per session, and as a one-line reminder on each
+prompt, they tell Claude what the Render panel draws. They're quiet outside Herdr and while prismantis's own diagram
+hints are on. Tell the user they're there.
+
+The backup is the file as it was before this deploy (one backup, even when both the status line and the hooks
+changed it). If they want neither, restore the backup and run `node scripts/deploy.mjs --no-statusline --no-hints`
+from then on; for just one, use that one flag and remove its entry by hand.
 
 ## 5. Pipelines: gh and glab
 
@@ -92,13 +98,13 @@ logged in, they can press the refresh button in Git projects instead.
 ## 8. Finish
 
 Give the user a short summary: where it is cloned, that deploy and `herdr-app status` passed, whether the status
-line, the CLIs and the browser were set up or skipped, and whether they need to restart Herdr. Mention the layout switch
+line, the diagram-hint hooks, the CLIs and the browser were set up or skipped, and whether they need to restart Herdr. Mention the layout switch
 (Ctrl+Shift+L, pick `herdr-dock`) and that updates arrive from the Dock layout dialog or `npm run update`.
 
 ## Never
 
 - Never edit files outside the repo, Herdr's app home (`~/.config/herdr-app`, or `$HERDR_APP_HOME`),
-  `~/.claude/settings.json` (deploy's status line) and the status-line script.
+  `~/.claude/settings.json` (deploy's status line and diagram-hint hooks) and the status-line script.
 - Never commit or push.
 - Never put per-PC settings in `config/dock.json`. They go in `<app home>/herdr-dock/local.json`, through the Dock
   layout dialog.

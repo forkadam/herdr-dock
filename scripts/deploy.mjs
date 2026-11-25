@@ -152,11 +152,13 @@ if (existsSync(claudeHome)) {
   say(`install the status-line writer: ${join(claudeHome, "herdr-statusline-cache.mjs")}`);
   if (!dry) cpSync(join(ROOT, "scripts/herdr-statusline-cache.mjs"), join(claudeHome, "herdr-statusline-cache.mjs"));
   // Claude Code's statusLine runs the writer installed with dock-quotas (no status line of your own needed).
-  if (noStatusline) console.log("--no-statusline: leaving ~/.claude/settings.json alone");
+  let statusChanged = false; // the status line backed settings.json up and changed it: the hints keep that backup
+  if (noStatusline) console.log("--no-statusline: leaving the status line alone");
   else {
     const writer = slashPath(join(appHome, "mods/dock-quotas/herdr-statusline-cache.mjs"));
     try {
       const r = setupStatusline({ claudeHome, writer, dry });
+      statusChanged = r.changed;
       say(`status line: ${r.message}`);
     } catch (e) {
       console.error(`status line setup failed (Quotas offers Set up): ${e.message}`);
@@ -166,7 +168,7 @@ if (existsSync(claudeHome)) {
   if (noHints) console.log("--no-hints: leaving the diagram-hint hooks out");
   else {
     try {
-      const r = setupHints({ claudeHome, script: slashPath(join(appHome, "mods/dock-render/herdr-hint.mjs")), dry });
+      const r = setupHints({ claudeHome, script: slashPath(join(appHome, "mods/dock-render/herdr-hint.mjs")), dry, backup: !statusChanged });
       say(`diagram hints: ${r.message}`);
     } catch (e) {
       console.error(`diagram hints setup failed: ${e.message}`);

@@ -9,8 +9,9 @@ import { slashPath } from "../shared/path.js";
 
 const readOrNull = (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } };
 
-// -> { state: present | added | updated | invalid | no-claude, changed, message }.
-export function setupHints({ claudeHome, script, dry = false }) {
+// -> { state: present | added | updated | invalid | no-claude, changed, message }. `backup: false` when this run already
+// backed the file up (deploy's status line changed it first), so the backup keeps the file as it was.
+export function setupHints({ claudeHome, script, dry = false, backup = true }) {
   if (!existsSync(claudeHome)) {
     return { state: "no-claude", changed: false, message: `no ${slashPath(claudeHome)}: Claude Code isn't set up here; nothing to do` };
   }
@@ -23,7 +24,8 @@ export function setupHints({ claudeHome, script, dry = false }) {
   const state = plan.state === "missing" ? "added" : "updated";
   const what = state === "added" ? `add the SessionStart and UserPromptSubmit hooks to ${where}` : `point the hooks in ${where} at ${slashPath(script)}`;
   if (dry) return { state, changed: false, message: `would ${what}` };
-  if (text != null) copyFileSync(settingsPath, settingsPath + ".bak-herdr-dock");
+  const backedUp = backup && text != null;
+  if (backedUp) copyFileSync(settingsPath, settingsPath + ".bak-herdr-dock");
   const tmp = `${settingsPath}.tmp-herdr-dock-${process.pid}`;
   try {
     writeFileSync(tmp, plan.text);
@@ -31,5 +33,5 @@ export function setupHints({ claudeHome, script, dry = false }) {
   } finally {
     rmSync(tmp, { force: true });
   }
-  return { state, changed: true, message: `${what[0].toUpperCase()}${what.slice(1)}` + (text != null ? " (backup: settings.json.bak-herdr-dock)" : "") };
+  return { state, changed: true, message: `${what[0].toUpperCase()}${what.slice(1)}` + (backedUp ? " (backup: settings.json.bak-herdr-dock)" : "") };
 }

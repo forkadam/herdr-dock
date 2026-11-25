@@ -472,9 +472,10 @@ terminal, so you keep Claude Code's own terminal UI:
   `mods/dock-render/herdr-hint.mjs`: once per session (at start, after `/clear` and after compaction) a note on what
   the panel draws and how to write a ```` ```figure ````, and on each prompt a one-line reminder (about 40 tokens).
   They're quiet outside Herdr (no `HERDR_PANE_ID`) and while [prismantis](https://github.com/NahumLitvin/prismantis)'s
-  own diagram hints are on, so you never get two notes. `npm run deploy -- --no-hints` leaves them out; to remove them,
-  delete the two `herdr-hint` entries from `hooks` in `~/.claude/settings.json`. The note's wording is adapted from
-  prismantis (MIT).
+  own diagram hints are on, so you never get two notes. `npm run deploy -- --no-hints` leaves them out. Deleting the
+  two `herdr-hint` entries from `hooks` in `~/.claude/settings.json` removes them only until the next deploy or update
+  (`npm run update` and the Dock layout dialog's Update run deploy), which adds them back. The note's wording is
+  adapted from prismantis (MIT).
 - Replies are read with `marked` (MIT), bundled into the helper. The table art, its width and wrapping, and the macOS
   pasteboard script behind html copies are ported from [prismantis](https://github.com/NahumLitvin/prismantis) (MIT).
 - **Keys**: `dock-render.conversation|diagrams|files|refresh|clear` (`answer` still works), and in Files

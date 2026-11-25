@@ -165,13 +165,14 @@ test("deploy installs the status-line writer into an existing Claude folder, and
     assert.ok(existsSync(writer) && existsSync(join(tmp, "mods/dock-quotas/herdr-statusline-setup.mjs")));
     assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).statusLine.command, `node "${slashPath(writer)}"`);
     assert.match(r.stdout, /status line: Add a status line/);
-    // The diagram hints: both hook entries run the script installed with dock-render; the file was backed up first.
+    // The diagram hints: both hook entries run the script installed with dock-render. There was no settings.json
+    // before this deploy, so there is nothing to back up.
     const settings = JSON.parse(readFileSync(join(claude, "settings.json"), "utf8"));
     const script = slashPath(join(tmp, "mods/dock-render/herdr-hint.mjs"));
     assert.ok(existsSync(script));
     assert.deepEqual(settings.hooks.SessionStart.map((g) => g.hooks[0].command), [`node "${script}" session`]);
     assert.deepEqual(settings.hooks.UserPromptSubmit.map((g) => g.hooks[0].command), [`node "${script}" prompt`]);
-    assert.ok(existsSync(join(claude, "settings.json.bak-herdr-dock")));
+    assert.equal(existsSync(join(claude, "settings.json.bak-herdr-dock")), false);
     const again = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
     assert.match(again.stdout, /status line: the Claude status line already feeds herdr-dock/);
     assert.match(again.stdout, /diagram hints: already/);
@@ -414,4 +415,28 @@ test("deploy that stops before the browser step leaves a failed result, not a ru
     const res = setupResult(tmp);
     assert.deepEqual({ ...res, at: typeof res.at }, { state: "failed", at: "number", action: "on", message: "deploy stopped before the browser step finished" });
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("deploy's first run into Claude settings keeps one backup of the original, and --no-statusline says what it leaves", () => {
+  const tmp = tmpHome();
+  const claude = mkdtempSync(join(tmpdir(), "dock-claude-"));
+  try {
+    const original = JSON.stringify({ theme: "dark" }, null, 2) + "\n";
+    writeFileSync(join(claude, "settings.json"), original);
+    const r = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
+    assert.equal(r.status, 0, r.stderr);
+    // Both the status line and the hints changed the file; the backup is still the file as it was.
+    const now = JSON.parse(readFileSync(join(claude, "settings.json"), "utf8"));
+    assert.ok(now.statusLine && now.hooks);
+    assert.equal(readFileSync(join(claude, "settings.json.bak-herdr-dock"), "utf8"), original);
+    const plain = mkdtempSync(join(tmpdir(), "dock-claude-"));
+    try {
+      const r2 = run(["--app-home", tmp, "--no-statusline"], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: plain });
+      assert.match(r2.stdout, /--no-statusline: leaving the status line alone/);
+      assert.doesNotMatch(r2.stdout, /settings\.json alone/);
+    } finally { rmSync(plain, { recursive: true, force: true }); }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(claude, { recursive: true, force: true });
+  }
 });
