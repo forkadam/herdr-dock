@@ -99277,10 +99277,12 @@ function paintDiagram(svg, source, theme) {
   }
 }
 
-// src/shared/render/figure.js
-var FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
+// src/shared/render/figure-limits.js
 var FIGURE_MAX_COLUMNS = 100;
 var FIGURE_MAX_LINES = 80;
+
+// src/shared/render/figure.js
+var FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
 var FIGURE_FONT = 13;
 var FIGURE_CELL = 7.8;
 var FIGURE_LINE = 18;

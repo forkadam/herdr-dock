@@ -18,8 +18,83 @@ import {
   setShared,
   shared,
   theme,
-  watchFolder
+  watchFolder,
+  window
 } from "herdr";
+
+// src/shared/platform.js
+function listDirCommand(platform, dir) {
+  if (platform === "windows") return { command: "cmd", args: ["/c", "dir", "/b", "/ad", dir.replaceAll("/", "\\")] };
+  return { command: "ls", args: ["-1", "-p", dir] };
+}
+
+// src/shared/render/figure-limits.js
+var FIGURE_MAX_COLUMNS = 100;
+var FIGURE_MAX_LINES = 80;
+
+// src/shared/statusline.js
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function readSettings(text) {
+  if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
+  let settings;
+  try {
+    settings = JSON.parse(String(text).replace(/^﻿/, ""));
+  } catch (e) {
+    return { ok: false, error: `not valid JSON (${e.message})` };
+  }
+  if (!isObj(settings)) return { ok: false, error: "the root is not an object" };
+  const sl = settings.statusLine;
+  const command = isObj(sl) && typeof sl.command === "string" && sl.command.trim() ? sl.command : null;
+  return { ok: true, settings, command };
+}
+
+// src/shared/render/hints.js
+var HINT_MARK = "herdr-hint";
+var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
+var HINT = [
+  [
+    "Replies in this session are also drawn in the Render panel beside this terminal (herdr-dock, in the Herdr app); it is not a command or tool to call.",
+    "Markdown tables, GitHub alerts (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION]), fenced code with a language tag, and ```mermaid blocks are drawn there:",
+    "flowchart, sequenceDiagram, stateDiagram-v2, classDiagram and erDiagram diagrams, and xychart-beta bar or line charts.",
+    "When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
+    "Skip diagrams and pictures for short or simple answers.",
+    "Put any command or snippet the user may run or copy in a fenced block with a language tag, never inline code: fenced blocks get a copy button, inline code does not."
+  ].join(" "),
+  [
+    "A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.",
+    "Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.",
+    "When the user asks you to explain, compare or plan something and pictures would make it easier to grasp, build the reply around them, with the core on the first screen as a picture or a sentence.",
+    "Color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
+    `At most ${FIGURE_MAX_COLUMNS} columns and ${FIGURE_MAX_LINES} lines, glyphs one column wide such as ${GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text. Draw a time axis with edge ticks like \u258F\u2500\u2500\u2500\u258F\u2500\u2500\u2500\u258F, not \u251C\u253C\u2524: \u2588 fills its cell, \u251C\u253C\u2524 sit mid-cell.`
+  ].join(" ")
+].join("\n");
+var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
+var hintCommand = (script, event) => `node "${String(script).replace(/\\/g, "/")}" ${event}`;
+function hintsPlan(settingsText, script) {
+  const r = readSettings(settingsText);
+  if (!r.ok) return { state: "invalid", error: r.error };
+  const settings = r.settings;
+  if (settings.hooks !== void 0 && !isObj2(settings.hooks)) return { state: "invalid", error: "hooks is not an object" };
+  const hooks = settings.hooks ?? (settings.hooks = {});
+  let added = false, moved = false;
+  for (const [event, name] of Object.entries(EVENTS)) {
+    if (hooks[name] !== void 0 && !Array.isArray(hooks[name])) return { state: "invalid", error: `hooks.${name} is not a list` };
+    const groups = hooks[name] ?? (hooks[name] = []);
+    const want = hintCommand(script, event);
+    const ours = groups.flatMap((g) => Array.isArray(g?.hooks) ? g.hooks : []).find((h) => typeof h?.command === "string" && h.command.includes(HINT_MARK));
+    if (!ours) {
+      groups.push({ hooks: [{ type: "command", command: want }] });
+      added = true;
+    } else if (ours.command !== want) {
+      ours.command = want;
+      moved = true;
+    }
+  }
+  if (!added && !moved) return { state: "present" };
+  const nl = settingsText && String(settingsText).includes("\r\n") ? "\r\n" : "\n";
+  return { state: added ? "missing" : "moved", text: JSON.stringify(settings, null, 2).replace(/\n/g, nl) + nl };
+}
 
 // src/shared/path.js
 function slashPath(p) {
@@ -52,11 +127,11 @@ function parseJson(text) {
     return null;
   }
 }
-var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObj3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 var isNum = (v) => typeof v === "number" && Number.isFinite(v);
 function matchSession(recordText, fg, terminalCreatedMs, nowMs) {
   const r = parseJson(recordText);
-  if (!isObj(r) || !fg) return null;
+  if (!isObj3(r) || !fg) return null;
   if (r.pid !== fg.pid || r.kind !== "interactive") return null;
   if (typeof r.sessionId !== "string" || !UUID_RE.test(r.sessionId)) return null;
   if (!isNum(r.startedAt)) return null;
@@ -135,12 +210,12 @@ var ALERTS = {
 function openIds(rows, toggled) {
   return rows.filter((r, i) => toggled.get(r.id) ?? i < OPEN_NEWEST).map((r) => r.id);
 }
-var EVENTS = { "task-notification": "BACKGROUND TASK", compaction: "CONTEXT COMPACTED" };
+var EVENTS2 = { "task-notification": "BACKGROUND TASK", compaction: "CONTEXT COMPACTED" };
 function speakerLabel(role, event = null) {
   if (role === "you") return "YOU";
   if (role === "claude") return "CLAUDE";
   if (!event) return "EVENT";
-  return EVENTS[event] ?? String(event).replace(/[-_]+/g, " ").trim().toUpperCase();
+  return EVENTS2[event] ?? String(event).replace(/[-_]+/g, " ").trim().toUpperCase();
 }
 var shownButtons = (buttons, canHtml) => (buttons ?? []).filter((b) => canHtml || b.html === void 0);
 function copyPlan(button, canHtml) {
@@ -158,12 +233,21 @@ var replyNote = (row) => row.state === "working" ? "working\u2026" : row.state =
 function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
 }
+function hintsNotice(state, { dismissed, error }) {
+  if (dismissed) return null;
+  if (error) return { text: `Set up failed: ${error}`, action: "setup" };
+  if (state === "missing") return { text: "Diagram hints for Claude aren't set up", action: "setup" };
+  if (state === "moved") return { text: "Diagram hints point at another install", action: "setup" };
+  if (state === "invalid") return { text: "~/.claude/settings.json can't be read: diagram hints aren't set up", action: null };
+  return null;
+}
 
 // src/mods/dock-render/main.js
 var MOD = "dock-render";
 var VIEW_KEY = "dock.render.view";
 var VIEWS = [["conversation", "Conversation"], ["diagrams", "Diagrams"], ["files", "Files"]];
 var COPIED_MS = 1500;
+var HINTS_KEY = "dock.render.hintsDismissed";
 var SETTLE_MS = 600;
 var CODEX_POLL_MS = 4e3;
 var PAD = 14;
@@ -184,6 +268,7 @@ var Render = class extends View {
     this.showAll = /* @__PURE__ */ new Set();
     this.opening = /* @__PURE__ */ new Set();
     this.copied = null;
+    this.hints = { state: null, busy: false, error: null, checked: false };
     this.files = null;
     this.file = null;
     this.problem = null;
@@ -421,6 +506,54 @@ var Render = class extends View {
     const card = div().id(id).flex_none().rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer().hover((st) => st.border_color(t.accent)).tooltip("Open large").on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } })).child(image(s.svg).w(w).h(h));
     return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
   }
+  // ---- the diagram-hint hooks ----
+  hintScript() {
+    return `${slashPath(appHome())}/mods/dock-render/herdr-hint.mjs`;
+  }
+  // Whether Claude Code's settings hold the hooks (as Quotas checks its status line): present, missing, moved,
+  // invalid, or no-claude when there's no ~/.claude at all.
+  async checkHints() {
+    const dir = `${slashPath(home())}/.claude`;
+    try {
+      const text = await readTextFile(`${dir}/settings.json`).catch(() => null);
+      if (text == null) {
+        const probe = listDirCommand(window()?.platform, dir);
+        const r = await exec(probe.command, probe.args).catch(() => null);
+        this.hints.state = r && r.code === 0 ? "missing" : "no-claude";
+      } else this.hints.state = hintsPlan(text, this.hintScript()).state;
+    } catch (e) {
+      this.hints.state = null;
+      console.log(`dock-render: diagram hints check failed: ${e?.message ?? e}`);
+    }
+  }
+  // Set up: runs the setup command shipped with this mod (it backs settings.json up, then writes it), then checks again.
+  runHintsSetup(cx) {
+    if (this.hints.busy) return;
+    Object.assign(this.hints, { busy: true, error: null });
+    cx.notify();
+    cx.spawn(async (cx2) => {
+      try {
+        const r = await exec("node", [`${slashPath(appHome())}/mods/dock-render/herdr-hints-setup.mjs`], { timeout: 3e4 });
+        if (r.code !== 0) this.hints.error = (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
+        else console.log(`dock-render: ${r.stdout.trim()}`);
+      } catch (e) {
+        this.hints.error = `couldn't run node: ${e?.message ?? e}`;
+      } finally {
+        this.hints.busy = false;
+        await this.checkHints();
+        cx2.notify();
+      }
+    });
+  }
+  // One line under the header while the hooks are missing: Set up, and × to never ask again.
+  hintsRow(t) {
+    const n = hintsNotice(this.hints.state, { dismissed: shared(HINTS_KEY) === true, error: this.hints.error });
+    if (!n) return null;
+    return h_flex().id("render-hints").px(PAD).py(4).gap(8).flex_none().items_center().border_b(1).border_color(t.border).child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.hints.error ? t.blocked ?? t.ansi1 : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex().id("render-hints-setup").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).when(!this.hints.busy, (b) => b.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runHintsSetup(cx))).child(this.hints.busy ? "Setting up\u2026" : "Set up"))).child(div().id("render-hints-dismiss").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover)).tooltip("Don't ask again").on_click((_e, cx) => {
+      setShared(HINTS_KEY, true);
+      cx.notify();
+    }).child(svg("mods/workspace-chrome/x.svg").size(12)));
+  }
   // ---- copying ----
   // A row of copy buttons; `key` names the row, so the one pressed can say "copied".
   buttons(t, list, key, canHtml, end = true) {
@@ -602,6 +735,13 @@ var Render = class extends View {
     const t = theme();
     if (this.zoom) return this.zoomView(t);
     this.follow(cx);
+    if (!this.hints.checked && !checking() && this.shown()) {
+      this.hints.checked = true;
+      cx.spawn(async (cx2) => {
+        await this.checkHints();
+        cx2.notify();
+      });
+    }
     const view = this.view();
     const body = this.problem && !this.data ? [this.note(t, this.problem)] : !this.target && !this.problem ? [this.note(t, "Focus a Claude Code or Codex agent: its conversation shows here, drawn.")] : view === "diagrams" ? this.diagramsView(t) : view === "files" ? this.filesView(t) : this.conversationView(t);
     return v_flex().id("dock-render").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
@@ -609,7 +749,7 @@ var Render = class extends View {
         this.width = size.width;
         cx2.notify();
       }
-    }).child(this.header(t)).child(v_flex().id("render-body").flex_1().min_h(0).overflow_y_scrollbar().px(PAD).py(12).gap(10).children(body));
+    }).child(this.header(t)).children([this.hintsRow(t)].filter(Boolean)).child(v_flex().id("render-body").flex_1().min_h(0).overflow_y_scrollbar().px(PAD).py(12).gap(10).children(body));
   }
 };
 export {

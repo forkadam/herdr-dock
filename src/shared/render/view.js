@@ -59,3 +59,14 @@ export const replyNote = (row) => (row.state === "working" ? "working…" : row.
 export function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
 }
+
+// The Render panel's row about the diagram-hint hooks, from what the check found in ~/.claude/settings.json
+// ("present" | "missing" | "moved" | "invalid" | "no-claude" | null), or null when there's nothing to say.
+export function hintsNotice(state, { dismissed, error }) {
+  if (dismissed) return null;
+  if (error) return { text: `Set up failed: ${error}`, action: "setup" };
+  if (state === "missing") return { text: "Diagram hints for Claude aren't set up", action: "setup" };
+  if (state === "moved") return { text: "Diagram hints point at another install", action: "setup" };
+  if (state === "invalid") return { text: "~/.claude/settings.json can't be read: diagram hints aren't set up", action: null };
+  return null;
+}

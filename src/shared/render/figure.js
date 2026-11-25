@@ -6,8 +6,8 @@
 import { contrast } from "./paint.js";
 
 export const FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
-export const FIGURE_MAX_COLUMNS = 100;
-export const FIGURE_MAX_LINES = 80;
+import { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES } from "./figure-limits.js";
+export { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES };
 // The SVG's grid, in px: a 13 px monospace font in 7.8 x 18 cells, 10 px around.
 export const FIGURE_FONT = 13;
 export const FIGURE_CELL = 7.8;

@@ -11,21 +11,24 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, TextView } from "gpui-base";
 import {
   agents, appHome, checking, closeOverlay, exec, focused, hc, home, nextCommand, openOverlay, panes, props, readTextFile, setShared, shared,
-  theme, watchFolder,
+  theme, watchFolder, window,
 } from "herdr";
+import { listDirCommand } from "../../shared/platform.js";
+import { hintsPlan } from "../../shared/render/hints.js";
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
 import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.js";
 import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 import {
-  ALERTS, ROLE_COLOR, copyPlan, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf,
+  ALERTS, ROLE_COLOR, copyPlan, hintsNotice, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf,
 } from "../../shared/render/view.js";
 
 const MOD = "dock-render";
 const VIEW_KEY = "dock.render.view";
 const VIEWS = [["conversation", "Conversation"], ["diagrams", "Diagrams"], ["files", "Files"]];
 const COPIED_MS = 1500;
+const HINTS_KEY = "dock.render.hintsDismissed"; // the diagram-hints row's ×: don't ask again
 const SETTLE_MS = 600; // after a log changes, wait this long (an answer arrives in bursts)
 const CODEX_POLL_MS = 4000; // Codex's rollout folder changes by the day: it is polled while shown
 const PAD = 14;
@@ -48,6 +51,7 @@ export default class Render extends View {
     this.showAll = new Set(); // exchange ids whose long turn text is shown in full
     this.opening = new Set(); // exchange ids opened by hand whose blocks are being read
     this.copied = null; // { key, note } of the copy button just pressed
+    this.hints = { state: null, busy: false, error: null, checked: false }; // the diagram-hint hooks in Claude's settings
     this.files = null; // [{ path, name, rel, mtimeMs }]
     this.file = null; // { path, blocks, buttons, canHtml } of the file opened
     this.problem = null;
@@ -242,6 +246,63 @@ export default class Render extends View {
       .on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } }))
       .child(image(s.svg).w(w).h(h));
     return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
+  }
+
+  // ---- the diagram-hint hooks ----
+
+  hintScript() { return `${slashPath(appHome())}/mods/dock-render/herdr-hint.mjs`; }
+
+  // Whether Claude Code's settings hold the hooks (as Quotas checks its status line): present, missing, moved,
+  // invalid, or no-claude when there's no ~/.claude at all.
+  async checkHints() {
+    const dir = `${slashPath(home())}/.claude`;
+    try {
+      const text = await readTextFile(`${dir}/settings.json`).catch(() => null);
+      if (text == null) {
+        const probe = listDirCommand(window()?.platform, dir);
+        const r = await exec(probe.command, probe.args).catch(() => null);
+        this.hints.state = r && r.code === 0 ? "missing" : "no-claude";
+      } else this.hints.state = hintsPlan(text, this.hintScript()).state;
+    } catch (e) {
+      this.hints.state = null;
+      console.log(`dock-render: diagram hints check failed: ${e?.message ?? e}`);
+    }
+  }
+
+  // Set up: runs the setup command shipped with this mod (it backs settings.json up, then writes it), then checks again.
+  runHintsSetup(cx) {
+    if (this.hints.busy) return;
+    Object.assign(this.hints, { busy: true, error: null });
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("node", [`${slashPath(appHome())}/mods/dock-render/herdr-hints-setup.mjs`], { timeout: 30000 });
+        if (r.code !== 0) this.hints.error = (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
+        else console.log(`dock-render: ${r.stdout.trim()}`);
+      } catch (e) {
+        this.hints.error = `couldn't run node: ${e?.message ?? e}`;
+      } finally {
+        this.hints.busy = false;
+        await this.checkHints();
+        cx.notify();
+      }
+    });
+  }
+
+  // One line under the header while the hooks are missing: Set up, and × to never ask again.
+  hintsRow(t) {
+    const n = hintsNotice(this.hints.state, { dismissed: shared(HINTS_KEY) === true, error: this.hints.error });
+    if (!n) return null;
+    return h_flex().id("render-hints").px(PAD).py(4).gap(8).flex_none().items_center().border_b(1).border_color(t.border)
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.hints.error ? (t.blocked ?? t.ansi1) : t.muted).child(n.text))
+      .when(n.action === "setup", (el) => el.child(h_flex().id("render-hints-setup").h(22).px(8).flex_none().items_center().rounded(6)
+        .border_1().border_color(t.border).text_size(11.5).text_color(t.foreground)
+        .when(!this.hints.busy, (b) => b.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runHintsSetup(cx)))
+        .child(this.hints.busy ? "Setting up…" : "Set up")))
+      .child(div().id("render-hints-dismiss").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+        .text_color(t.dim).hover((s) => s.bg(t.hover)).tooltip("Don't ask again")
+        .on_click((_e, cx) => { setShared(HINTS_KEY, true); cx.notify(); })
+        .child(svg("mods/workspace-chrome/x.svg").size(12)));
   }
 
   // ---- copying ----
@@ -449,6 +510,10 @@ export default class Render extends View {
     const t = theme();
     if (this.zoom) return this.zoomView(t);
     this.follow(cx);
+    if (!this.hints.checked && !checking() && this.shown()) {
+      this.hints.checked = true;
+      cx.spawn(async (cx) => { await this.checkHints(); cx.notify(); });
+    }
     const view = this.view();
     const body = this.problem && !this.data ? [this.note(t, this.problem)]
       : !this.target && !this.problem ? [this.note(t, "Focus a Claude Code or Codex agent: its conversation shows here, drawn.")]
@@ -456,6 +521,7 @@ export default class Render extends View {
     return v_flex().id("dock-render").size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .on_size_change((size, cx) => { if (Math.abs((size?.width ?? 0) - this.width) > 2) { this.width = size.width; cx.notify(); } })
       .child(this.header(t))
+      .children([this.hintsRow(t)].filter(Boolean))
       .child(v_flex().id("render-body").flex_1().min_h(0).overflow_y_scrollbar().px(PAD).py(12).gap(10).children(body));
   }
 }

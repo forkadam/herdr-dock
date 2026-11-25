@@ -4,20 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// src/shared/render/figure.js
-var FIGURE_ROLES = ["accent", "warn", "ok", "note", "dim", "strong"];
+// src/shared/render/figure-limits.js
 var FIGURE_MAX_COLUMNS = 100;
 var FIGURE_MAX_LINES = 80;
-var RAW_MAX_LINE = FIGURE_MAX_COLUMNS * 4;
-var segmenter = new Intl.Segmenter();
-var MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")}):([^{}]*)\\}`, "g");
-var BOX = {};
-var SHAPES = ["0101", "1010", "0110", "0011", "1100", "1001", "1110", "1011", "0111", "1101", "1111", "0110", "0011", "1001", "1100"];
-for (const [chars, weight] of [["\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u256D\u256E\u256F\u2570", 1], ["\u2501\u2503\u250F\u2513\u2517\u251B\u2523\u252B\u2533\u253B\u254B", 2], ["\u2550\u2551\u2554\u2557\u255A\u255D\u2560\u2563\u2566\u2569\u256C", 3]]) {
-  [...chars].forEach((ch, i) => {
-    BOX[ch] = [...SHAPES[i]].map((arm) => arm === "1" ? weight : 0);
-  });
-}
 
 // src/shared/statusline.js
 var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);

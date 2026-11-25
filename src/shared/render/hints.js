@@ -3,7 +3,7 @@
 // on each prompt (UserPromptSubmit). Both are quiet outside Herdr (no HERDR_PANE_ID) and while prismantis's own
 // hints are on, so there's never a plain-terminal note nor two notes at once. The wording is adapted from prismantis
 // 0.20.0's HINT and FIGURE_HINT (hooks/register.tsx, hooks/figure.tsx): https://github.com/NahumLitvin/prismantis (MIT).
-import { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES } from "./figure.js";
+import { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES } from "./figure-limits.js";
 import { readSettings } from "../statusline.js";
 
 // In a hook's command: says the entry is herdr-dock's.
