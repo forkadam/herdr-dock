@@ -1504,6 +1504,14 @@ function missingMods(merged, installed) {
   }
   return out;
 }
+async function findMissing(merged, readText, home) {
+  const present = /* @__PURE__ */ new Set();
+  for (const id of missingMods(merged, () => false)) {
+    const text = await Promise.resolve().then(() => readText(`${home}/mods/${id}/mod.json`)).catch(() => null);
+    if (text != null) present.add(id);
+  }
+  return missingMods(merged, (id) => present.has(id));
+}
 function withoutMissing(merged, missing) {
   if (!missing?.size) return merged;
   const regions = {};
@@ -2658,11 +2666,7 @@ var DockCore = class extends View {
   // Re-read the config; write the layout only when it changed and the config is valid.
   // The placed mods (besides dock-*) with no <app home>/mods/<id>/mod.json here, logged when the set changes.
   async missingMods(merged) {
-    const home = slashPath(appHome());
-    const ids = [...missingMods(merged, () => false)];
-    const present = /* @__PURE__ */ new Set();
-    for (const id of ids) if (await readTextFile(`${home}/mods/${id}/mod.json`).then(() => true, () => false)) present.add(id);
-    const missing = missingMods(merged, (id) => present.has(id));
+    const missing = await findMissing(merged, readTextFile, slashPath(appHome()));
     const key = [...missing].sort().join(",");
     if (key && key !== this.missingKey) console.log(`dock-core: left out of the layout (not installed): ${[...missing].join(", ")}`);
     this.missingKey = key;

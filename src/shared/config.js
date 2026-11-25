@@ -235,6 +235,18 @@ export function missingMods(merged, installed) {
   return out;
 }
 
+// The placed mods (besides dock-*) not installed under `home` (`<home>/mods/<id>/mod.json`), read with `readText`.
+// Herdr's readTextFile gives null for a file that isn't there (it doesn't reject), so null means missing, as does a read
+// that fails.
+export async function findMissing(merged, readText, home) {
+  const present = new Set();
+  for (const id of missingMods(merged, () => false)) {
+    const text = await Promise.resolve().then(() => readText(`${home}/mods/${id}/mod.json`)).catch(() => null);
+    if (text != null) present.add(id);
+  }
+  return missingMods(merged, (id) => present.has(id));
+}
+
 // The merged config without those mods in any region (dock-* never removed).
 export function withoutMissing(merged, missing) {
   if (!missing?.size) return merged;

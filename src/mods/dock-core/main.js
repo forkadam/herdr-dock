@@ -5,7 +5,7 @@ import {
   setShared, shared, spaces, theme, watchFolder, window, writeTextFile,
 } from "herdr";
 import { createCollector } from "../../shared/collector.js";
-import { LOCAL_REL, migrateLocal, missingMods, planApply } from "../../shared/config.js";
+import { LOCAL_REL, findMissing, migrateLocal, planApply } from "../../shared/config.js";
 import { leftFeatureIds } from "../../shared/layout.js";
 import {
   PAGE_KEY, focusLeavesPage, liveRight, liveSizes, liveWork, modeFromConfig, nextMode, nextPage, planPage, planPanel, planRight,
@@ -545,11 +545,7 @@ export default class DockCore extends View {
   // Re-read the config; write the layout only when it changed and the config is valid.
   // The placed mods (besides dock-*) with no <app home>/mods/<id>/mod.json here, logged when the set changes.
   async missingMods(merged) {
-    const home = slashPath(appHome());
-    const ids = [...missingMods(merged, () => false)];
-    const present = new Set();
-    for (const id of ids) if (await readTextFile(`${home}/mods/${id}/mod.json`).then(() => true, () => false)) present.add(id);
-    const missing = missingMods(merged, (id) => present.has(id));
+    const missing = await findMissing(merged, readTextFile, slashPath(appHome()));
     const key = [...missing].sort().join(",");
     if (key && key !== this.missingKey) console.log(`dock-core: left out of the layout (not installed): ${[...missing].join(", ")}`);
     this.missingKey = key;

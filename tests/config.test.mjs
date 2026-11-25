@@ -116,3 +116,11 @@ test("planApply: a local.json naming a missing mod writes a layout without its b
   assert.ok(without.write.includes('"dock-pipelines"'));
   assert.ok(!without.merged.regions.right.features.some((f) => f.mod === "gitlab-ci"));
 });
+
+test("findMissing: a mod.json Herdr reads as null (absent) or can't read is missing; one it reads is installed", async () => {
+  const { findMissing } = await import("../src/shared/config.js");
+  const merged = { regions: { right: { features: [{ mod: "dock-pipelines" }, { mod: "gitlab-ci" }, { mod: "files" }, { mod: "gone" }] } } };
+  const files = { "/h/mods/files/mod.json": "{}" };
+  const read = async (p) => { if (p.includes("/gone/")) throw new Error("EACCES"); return files[p] ?? null; };   // Herdr: null when absent
+  assert.deepEqual([...(await findMissing(merged, read, "/h"))].sort(), ["gitlab-ci", "gone"]);
+});
