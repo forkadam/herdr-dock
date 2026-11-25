@@ -146,9 +146,9 @@ async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null, 
       parseNumstat(r.stdout, stats);
     }
   }
-  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats, mode === "branch" ? Infinity : FILE_LIMIT);
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
   const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
-  return mode === "branch" ? { ...out, ...await branchView((args) => runGit(repo, args), { branch, hasHead, statusFiles: files, bases }) } : out;
+  return mode === "branch" ? { ...out, ...await branchView((args) => runGit(repo, args), { branch, hasHead, statusText: status.stdout, bases }) } : out;
 }
 async function defaultBranch(runGit) {
   const exists = async (name) => (await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])).code === 0;
@@ -166,7 +166,7 @@ function parseNameStatus(stdout) {
   for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i + 1]] = parts[i][0];
   return out;
 }
-async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
+async function branchView(runGit, { branch, hasHead, statusText, bases }) {
   const none = { mergeBase: null, onBase: false, files: [], limited: false };
   const name = bases?.name ?? await defaultBranch(runGit);
   if (!name) return { ...none, base: null, bases: { name: null, remote: null } };
@@ -175,7 +175,7 @@ async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
   const found = { name, remote: bases?.remote ?? await remoteOf(runGit, name) };
   const near = await nearestBase(runGit, name, found.remote);
   if (!near.mergeBase) return { ...none, base: near.base, bases: found };
-  return { ...await branchFiles(runGit, near.mergeBase, statusFiles), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
+  return { ...await branchFiles(runGit, near.mergeBase, statusText), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
 }
 async function remoteOf(runGit, name) {
   if (name.startsWith("origin/")) return null;
@@ -190,8 +190,7 @@ async function nearestBase(runGit, name, remote) {
   if (other && other !== local && (!local || (await runGit(["merge-base", "--is-ancestor", local, other])).code === 0)) return { base: remote, mergeBase: other };
   return { base: name, mergeBase: local };
 }
-async function branchFiles(runGit, mergeBase, statusFiles) {
-  const conflicts = new Set(statusFiles.filter((f) => f.status === "U").map((f) => f.path));
+async function branchFiles(runGit, mergeBase, statusText) {
   const [numstat, names] = await Promise.all([
     runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
     runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"])
@@ -199,10 +198,30 @@ async function branchFiles(runGit, mergeBase, statusFiles) {
   if (numstat.code !== 0) throw new Error(numstat.stderr || `git diff exited ${numstat.code}`);
   const stats = {};
   parseNumstat(numstat.stdout, stats);
-  const letters = parseNameStatus(names.stdout);
-  const files = Object.keys(letters).map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
-  for (const f of statusFiles) if (f.fresh && !letters[f.path]) files.push(f);
+  const letters = parseNameStatus(names.stdout), paths = Object.keys(letters);
+  const listed = (path) => Object.prototype.hasOwnProperty.call(letters, path);
+  const { conflicts, fresh } = branchStatus(statusText, Math.max(0, FILE_LIMIT + 1 - paths.length), listed);
+  const files = paths.map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
+  files.push(...fresh);
   return { files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
+}
+function branchStatus(stdout, limit, skip = () => false) {
+  const text = String(stdout ?? ""), conflicts = /* @__PURE__ */ new Set(), fresh = [];
+  for (let at = 0; at < text.length; ) {
+    let end = text.indexOf("\0", at);
+    if (end < 0) end = text.length;
+    const x = text[at], y = text[at + 1];
+    if (end > at + 3 && !(x === "#" && y === "#")) {
+      if (x === "?" && y === "?") {
+        if (fresh.length < limit) {
+          const path = text.slice(at + 3, end);
+          if (!skip(path)) fresh.push({ path, status: "A", fresh: true, add: 0, del: 0 });
+        }
+      } else if (x === "U" || y === "U" || x === "A" && y === "A" || x === "D" && y === "D") conflicts.add(text.slice(at + 3, end));
+    }
+    at = end + 1;
+  }
+  return { conflicts, fresh };
 }
 function followsLine({ root, branch, view, base }) {
   if (!root) return "";

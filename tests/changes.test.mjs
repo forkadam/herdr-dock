@@ -640,3 +640,14 @@ test("fetchChanges branch view: a default branch found once is reused; one not f
   await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch", bases: { name: null, remote: null } });
   assert.ok(lookups() > 0);
 });
+
+import { branchStatus } from "../src/shared/changes.js";
+
+test("branchStatus: every conflict, and new files up to the limit that aren't listed already", () => {
+  const status = "## feat...origin/feat\0UU c.js\0 M m.js\0AA d.js\0?? n1.js\0?? n2.js\0?? n3.js\0?? n4.js\0";
+  const { conflicts, fresh } = branchStatus(status, 2, (path) => path === "n1.js");
+  assert.deepEqual([...conflicts].sort(), ["c.js", "d.js"]);
+  assert.deepEqual(fresh.map((f) => f.path), ["n2.js", "n3.js"]);
+  assert.deepEqual(fresh[0], { path: "n2.js", status: "A", fresh: true, add: 0, del: 0 });
+  assert.deepEqual(branchStatus("", 5).fresh, []);
+});

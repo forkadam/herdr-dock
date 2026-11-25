@@ -127,10 +127,9 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, 
     }
   }
 
-  // The branch view reads every status entry, so no new file is cut before its own list is capped.
-  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats, mode === "branch" ? Infinity : FILE_LIMIT);
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
   const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
-  return mode === "branch" ? { ...out, ...(await branchView((args) => runGit(repo, args), { branch, hasHead, statusFiles: files, bases })) } : out;
+  return mode === "branch" ? { ...out, ...(await branchView((args) => runGit(repo, args), { branch, hasHead, statusText: status.stdout, bases })) } : out;
 }
 
 // The repo's default branch to compare a branch with: origin/HEAD's name, as the local branch when it exists (you may
@@ -158,7 +157,7 @@ function parseNameStatus(stdout) {
 // merge base (committed and not), plus untracked files. On the default branch itself, or with none, no files.
 // Every return sets `limited`, so the uncommitted list's note never carries over; `bases` goes back
 // to the caller for the next refresh.
-async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
+async function branchView(runGit, { branch, hasHead, statusText, bases }) {
   const none = { mergeBase: null, onBase: false, files: [], limited: false };
   const name = bases?.name ?? await defaultBranch(runGit);
   if (!name) return { ...none, base: null, bases: { name: null, remote: null } };
@@ -167,7 +166,7 @@ async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
   const found = { name, remote: bases?.remote ?? await remoteOf(runGit, name) };
   const near = await nearestBase(runGit, name, found.remote);
   if (!near.mergeBase) return { ...none, base: near.base, bases: found };
-  return { ...(await branchFiles(runGit, near.mergeBase, statusFiles)), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
+  return { ...(await branchFiles(runGit, near.mergeBase, statusText)), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
 }
 
 // origin/<name> when it exists beside a local default branch.
@@ -189,9 +188,7 @@ async function nearestBase(runGit, name, remote) {
   return { base: name, mergeBase: local };
 }
 
-// A conflicted file is M in a diff against a commit; only status says it's in conflict (UU).
-async function branchFiles(runGit, mergeBase, statusFiles) {
-  const conflicts = new Set(statusFiles.filter((f) => f.status === "U").map((f) => f.path));
+async function branchFiles(runGit, mergeBase, statusText) {
   const [numstat, names] = await Promise.all([
     runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
     runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"]),
@@ -199,10 +196,36 @@ async function branchFiles(runGit, mergeBase, statusFiles) {
   if (numstat.code !== 0) throw new Error(numstat.stderr || `git diff exited ${numstat.code}`);
   const stats = {};
   parseNumstat(numstat.stdout, stats);
-  const letters = parseNameStatus(names.stdout);
-  const files = Object.keys(letters).map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
-  for (const f of statusFiles) if (f.fresh && !letters[f.path]) files.push(f);
+  const letters = parseNameStatus(names.stdout), paths = Object.keys(letters);
+  const listed = (path) => Object.prototype.hasOwnProperty.call(letters, path);
+  // A conflicted file is M in a diff against a commit; only status says it's in conflict (UU). New
+  // files: only as many as can still show, so the list can say when it's cut.
+  const { conflicts, fresh } = branchStatus(statusText, Math.max(0, FILE_LIMIT + 1 - paths.length), listed);
+  const files = paths.map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
+  files.push(...fresh);
   return { files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
+}
+
+// What the branch view needs from `git status -z` output, read in place without an object per entry
+// (a repo with a million unignored files lists a million): every conflicted path, and up to `limit`
+// new files that `skip` doesn't already list.
+export function branchStatus(stdout, limit, skip = () => false) {
+  const text = String(stdout ?? ""), conflicts = new Set(), fresh = [];
+  for (let at = 0; at < text.length;) {
+    let end = text.indexOf("\0", at);
+    if (end < 0) end = text.length;
+    const x = text[at], y = text[at + 1];
+    if (end > at + 3 && !(x === "#" && y === "#")) {
+      if (x === "?" && y === "?") {
+        if (fresh.length < limit) {
+          const path = text.slice(at + 3, end);
+          if (!skip(path)) fresh.push({ path, status: "A", fresh: true, add: 0, del: 0 });
+        }
+      } else if (x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D")) conflicts.add(text.slice(at + 3, end));
+    }
+    at = end + 1;
+  }
+  return { conflicts, fresh };
 }
 
 // The dim line under the panel's title: which folder and branch it follows, and in the branch

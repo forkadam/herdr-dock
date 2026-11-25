@@ -1,16 +1,21 @@
 // The Changes branch view against real git repos, for the cases a fake git can't vouch for.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fetchChanges } from "../src/shared/changes.js";
 
-// No machine config: an empty HOME, no system config.
+// No machine config and nothing from a calling git (a hook exports GIT_DIR, GIT_INDEX_FILE…):
+// an empty HOME, no system config, no GIT_* variables.
 const home = mkdtempSync(join(tmpdir(), "changes-home-"));
 test.after(() => rmSync(home, { recursive: true, force: true }));
-const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+const env = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1",
+};
 
 // The panel's reads, as Herdr's exec runs them.
 const exec = (cmd, args, { cwd }) => new Promise((resolve) => execFile(cmd, args, { cwd, env, maxBuffer: 1 << 24 },
@@ -72,4 +77,20 @@ test("branch view, real git: a file in conflict shows U", async (t) => {
   assert.throws(() => r.git("merge", "-q", "main"));
   const res = await branchView(r.dir);
   assert.equal(res.files.find((f) => f.path === "a.js")?.status, "U");
+});
+
+// Run from a git hook, the tests inherit GIT_DIR, GIT_INDEX_FILE and the like: they must still touch
+// only their own temp repos.
+test("real-git tests ignore inherited GIT_* variables", { skip: process.env.CHANGES_GIT_CHILD === "1" }, (t) => {
+  const decoy = repo(t);
+  decoy.commit("d.js", "d\n");
+  const refs = () => decoy.git("for-each-ref", "--format=%(refname) %(objectname)");
+  const before = refs();
+  const { NODE_TEST_CONTEXT: _ctx, ...parent } = process.env;
+  const child = spawnSync(process.execPath, ["--test", fileURLToPath(import.meta.url)], {
+    encoding: "utf8",
+    env: { ...parent, CHANGES_GIT_CHILD: "1", GIT_DIR: join(decoy.dir, ".git"), GIT_INDEX_FILE: join(decoy.dir, ".git", "index") },
+  });
+  assert.equal(refs(), before);
+  assert.equal(child.status, 0, child.stdout.slice(-2000));
 });
