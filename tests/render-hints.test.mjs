@@ -64,7 +64,7 @@ test("hintsPlan: a BOM-prefixed file reads; invalid JSON is left alone", () => {
 
 // ---- The hook script (src/app/render-hint.js; bundled as mods/dock-render/herdr-hint.mjs) ----
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -91,4 +91,26 @@ test("the script: broken settings print nothing; prismantis on prints nothing", 
   assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, "{ broken").stdout, "");
   assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM()).stdout, "");
   assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM({ diagramHints: false })).status, 0);
+});
+
+// ---- The setup command (src/app/hints-setup.js; bundled as mods/dock-render/herdr-hints-setup.mjs) ----
+const SETUP_JS = join(import.meta.dirname, "..", "src", "app", "hints-setup.js");
+const setupCli = (args, claude) => spawnSync(process.execPath, [SETUP_JS, ...args], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: claude } });
+
+test("the setup command: adds the hooks; --check says what it would do and writes nothing; invalid exits 1", () => {
+  const claude = mkdtempSync(join(tmpdir(), "hint-claude-"));
+  try {
+    writeFileSync(join(claude, "settings.json"), "{}");
+    const check = setupCli(["--check", "--script", "/x/herdr-hint.mjs"], claude);
+    assert.equal(check.status, 0);
+    assert.match(check.stdout, /^added: would add/);
+    assert.equal(readFileSync(join(claude, "settings.json"), "utf8"), "{}");
+    const r = setupCli(["--script", "/x/herdr-hint.mjs"], claude);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /^added: /);
+    assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).hooks.SessionStart[0].hooks[0].command, 'node "/x/herdr-hint.mjs" session');
+    assert.match(setupCli(["--script", "/x/herdr-hint.mjs"], claude).stdout, /^present: /);
+    writeFileSync(join(claude, "settings.json"), "{ nope");
+    assert.equal(setupCli(["--script", "/x/herdr-hint.mjs"], claude).status, 1);
+  } finally { rmSync(claude, { recursive: true, force: true }); }
 });

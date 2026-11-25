@@ -1,9 +1,18 @@
 // Adds the Render panel's diagram-hint hooks (mods/dock-render/herdr-hint.mjs) to Claude Code's settings.json:
 // a SessionStart entry (the note) and a UserPromptSubmit entry (the reminder). `npm run deploy` calls setupHints, the
 // way it sets up the status line. A changed settings.json is first copied to settings.json.bak-herdr-dock; the
-// person's own hooks are kept.
+// person's own hooks are kept. Bundled to mods/dock-render/herdr-hints-setup.mjs for the Herdr-way install and the
+// Render panel's Set up:
+//
+//   node herdr-hints-setup.mjs [--check] [--script <path>]
+//
+// --check prints what it would do and changes nothing. The script defaults to herdr-hint.mjs beside this file;
+// Claude's folder is $DOCK_CLAUDE_HOME, else ~/.claude. Prints "<state>: <message>"; exit 1 when settings.json can't
+// be read or setup failed.
 import { copyFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hintsPlan } from "../shared/render/hints.js";
 import { slashPath } from "../shared/path.js";
 
@@ -34,4 +43,17 @@ export function setupHints({ claudeHome, script, dry = false, backup = true }) {
     rmSync(tmp, { force: true });
   }
   return { state, changed: true, message: `${what[0].toUpperCase()}${what.slice(1)}` + (backedUp ? " (backup: settings.json.bak-herdr-dock)" : "") };
+}
+
+function main(argv) {
+  const at = argv.indexOf("--script");
+  const script = resolve(at >= 0 && argv[at + 1] ? argv[at + 1] : join(dirname(fileURLToPath(import.meta.url)), "herdr-hint.mjs"));
+  const claudeHome = resolve(process.env.DOCK_CLAUDE_HOME || join(homedir(), ".claude"));
+  const r = setupHints({ claudeHome, script: slashPath(script), dry: argv.includes("--check") });
+  console.log(`${r.state}: ${r.message}`);
+  return r.state === "invalid" ? 1 : 0;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error(`diagram hints setup failed: ${e.message}`); process.exitCode = 1; }
 }

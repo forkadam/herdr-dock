@@ -64,6 +64,11 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
         entryPoints: [join(ROOT, "src/app/render-hint.js")], outfile: join(dest, "herdr-hint.mjs"),
         bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
       });
+      // ...and the command that puts it there without deploy (the Herdr-way install, the panel's Set up).
+      await build({
+        entryPoints: [join(ROOT, "src/app/hints-setup.js")], outfile: join(dest, "herdr-hints-setup.mjs"),
+        bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
+      });
     }
     if (name === "dock-browser") {
       // The browse command agents run (node browse.mjs ...): one file, nothing to install.
