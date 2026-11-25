@@ -1,7 +1,7 @@
 // The Render panel's diagram hints for Claude Code (src/shared/render/hints.js, src/app/render-hint.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HINT, HINT_PHRASE, REMINDER, hintCommand, hooksSpeak, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
+import { HINT, HINT_PHRASE, REMINDER, hintCommand, hintDecision, hooksSpeak, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
 
 const IN = { HC_TERMINAL_ID: "t1" };
 const PRISM = (options = {}) => JSON.stringify({ enabledPlugins: { "prismantis@prismantis": true }, pluginConfigs: { "prismantis@prismantis": { options } } });
@@ -31,6 +31,16 @@ test("hintOutput: in Herdr by HC_TERMINAL_ID, HC_SCOPE or HERDR_PANE_ID; empty o
   for (const env of [{ HC_TERMINAL_ID: "t1" }, { HC_SCOPE: "0-abc" }, { HERDR_PANE_ID: "p1" }])
     assert.notEqual(hintOutput("prompt", { env, settingsText: null }), "", JSON.stringify(env));
   assert.equal(hintOutput("prompt", { env: { HC_TERMINAL_ID: "", HC_SCOPE: "", HERDR_PANE_ID: "" }, settingsText: null }), "");
+});
+
+test("hintDecision: spoke (with its output), not-herdr, prismantis, settings-invalid; null for an unknown event", () => {
+  const d = (env, settingsText = null) => hintDecision("prompt", { env, settingsText });
+  assert.equal(d(IN).decision, "spoke");
+  assert.equal(d(IN).output, hintOutput("prompt", { env: IN, settingsText: null }));
+  assert.deepEqual(d({}), { decision: "not-herdr", output: "" });
+  assert.deepEqual(d(IN, PRISM()), { decision: "prismantis", output: "" });
+  assert.deepEqual(d(IN, "{ nope"), { decision: "settings-invalid", output: "" });
+  assert.equal(hintDecision("other", { env: IN, settingsText: null }), null);
 });
 
 test("HINT_PHRASE is in both the note and the reminder", () => {
@@ -161,5 +171,47 @@ test("the setup command runs when reached through a symlink", { skip: process.pl
   } finally {
     rmSync(claude, { recursive: true, force: true });
     rmSync(links, { recursive: true, force: true });
+  }
+});
+
+// ---- The hook's record of each run (<app home>/herdr-dock/hint-runs/<session id>.json) ----
+import { existsSync, readdirSync } from "node:fs";
+
+const runHook = (event, { env = {}, input = "", settings = "{}" } = {}) => {
+  const app = mkdtempSync(join(tmpdir(), "hint-app-"));
+  const claude = mkdtempSync(join(tmpdir(), "hint-cfg-"));
+  writeFileSync(join(claude, "settings.json"), settings);
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].includes(k)));
+  const before = Date.now();
+  const r = spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", input, env: { ...clean, CLAUDE_CONFIG_DIR: claude, DOCK_APP_HOME: app, ...env } });
+  const dir = join(app, "herdr-dock", "hint-runs");
+  const files = existsSync(dir) ? readdirSync(dir) : [];
+  const record = (id) => JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8"));
+  const out = { r, files, before, after: Date.now(), record: files.length ? record(files[0].replace(/.json$/, "")) : null };
+  rmSync(app, { recursive: true, force: true });
+  rmSync(claude, { recursive: true, force: true });
+  return out;
+};
+
+test("the script records each run for its session: when, which event, what it decided", () => {
+  const spoke = runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify({ session_id: "s-1", hook_event_name: "UserPromptSubmit" }) });
+  assert.equal(spoke.r.status, 0);
+  assert.equal(JSON.parse(spoke.r.stdout).hookSpecificOutput.additionalContext, REMINDER);
+  assert.deepEqual(spoke.files, ["s-1.json"]);
+  assert.equal(spoke.record.event, "prompt");
+  assert.equal(spoke.record.decision, "spoke");
+  assert.ok(spoke.record.at >= spoke.before && spoke.record.at <= spoke.after);
+  const quiet = runHook("session", { input: JSON.stringify({ session_id: "s-2" }) });
+  assert.equal(quiet.r.stdout, "");
+  assert.deepEqual([quiet.record.event, quiet.record.decision], ["session", "not-herdr"]);
+  assert.equal(runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify({ session_id: "s-3" }), settings: PRISM() }).record.decision, "prismantis");
+});
+
+test("the script writes no record for a bad or missing session id or input that isn't JSON; its output and exit stay the same", () => {
+  for (const input of [JSON.stringify({ session_id: "../x" }), JSON.stringify({ session_id: "a/b" }), JSON.stringify({ session_id: "a\b" }), JSON.stringify({ session_id: "" }), "{}", "not json", ""]) {
+    const x = runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input });
+    assert.equal(x.r.status, 0, input);
+    assert.deepEqual(x.files, [], input);
+    assert.equal(JSON.parse(x.r.stdout).hookSpecificOutput.additionalContext, REMINDER, input);
   }
 });

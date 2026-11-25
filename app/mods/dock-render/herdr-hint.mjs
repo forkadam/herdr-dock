@@ -1,7 +1,8 @@
 // src/app/render-hint.js
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // src/shared/render/figure-limits.js
 var FIGURE_MAX_COLUMNS = 100;
@@ -54,16 +55,36 @@ function prismantisHints(settings) {
   });
 }
 var EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
-function hintOutput(event, { env, settingsText }) {
+function hintDecision(event, { env, settingsText }) {
   const name = EVENTS[event];
-  if (!name || !inHerdr(env)) return "";
+  if (!name) return null;
+  if (!inHerdr(env)) return { decision: "not-herdr", output: "" };
   const r = readSettings(settingsText);
-  if (!r.ok || prismantisHints(r.settings)) return "";
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } });
+  if (!r.ok) return { decision: "settings-invalid", output: "" };
+  if (prismantisHints(r.settings)) return { decision: "prismantis", output: "" };
+  return { decision: "spoke", output: JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } }) };
 }
 
 // src/app/render-hint.js
+var SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
+function record(input, event, decision) {
+  let id;
+  try {
+    id = JSON.parse(input)?.session_id;
+  } catch {
+    return;
+  }
+  if (typeof id !== "string" || !SESSION_ID.test(id)) return;
+  const home = process.env.DOCK_APP_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const dir = join(home, "herdr-dock", "hint-runs");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${id}.json`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ at: Date.now(), event, decision }));
+  renameSync(tmp, file);
+}
 try {
+  const event = process.argv[2];
   const dir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
   let settingsText = null;
   try {
@@ -71,7 +92,18 @@ try {
   } catch (e) {
     if (e?.code !== "ENOENT") throw e;
   }
-  const out = hintOutput(process.argv[2], { env: process.env, settingsText });
-  if (out) process.stdout.write(out + "\n");
+  const d = hintDecision(event, { env: process.env, settingsText });
+  if (d?.output) process.stdout.write(d.output + "\n");
+  if (d) {
+    let input = "";
+    try {
+      if (!process.stdin.isTTY) input = readFileSync(0, "utf8");
+    } catch {
+    }
+    try {
+      record(input, event, d.decision);
+    } catch {
+    }
+  }
 } catch {
 }

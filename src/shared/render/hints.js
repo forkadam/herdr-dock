@@ -66,11 +66,20 @@ export function hooksSpeak(settingsText) {
 // The hook's stdout for an event ("session" | "prompt"), or "" when it should stay quiet. settingsText: Claude Code's
 // settings.json (null when missing); one that doesn't parse keeps it quiet, as prismantis may be on.
 export function hintOutput(event, { env, settingsText }) {
+  return hintDecision(event, { env, settingsText })?.output ?? "";
+}
+
+// What the hook does for an event, and why: { decision, output } with decision "spoke" (output is the hook's JSON),
+// "not-herdr", "prismantis" or "settings-invalid" (output ""); null for an event it doesn't know. The decision goes in
+// the hook's record of the run, which Render reads to say why hints aren't arriving.
+export function hintDecision(event, { env, settingsText }) {
   const name = EVENTS[event];
-  if (!name || !inHerdr(env)) return "";
+  if (!name) return null;
+  if (!inHerdr(env)) return { decision: "not-herdr", output: "" };
   const r = readSettings(settingsText);
-  if (!r.ok || prismantisHints(r.settings)) return "";
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } });
+  if (!r.ok) return { decision: "settings-invalid", output: "" };
+  if (prismantisHints(r.settings)) return { decision: "prismantis", output: "" };
+  return { decision: "spoke", output: JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } }) };
 }
 
 // A hook's command: node with the script's path in double quotes (forward slashes), then the event.
