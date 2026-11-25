@@ -81,7 +81,7 @@ export function hintsNotice(state, { dismissed, error }) {
 export const COLOURS = {
   heading: "ansi6", strong: "foreground", em: "ansi5", del: "dim", code: "ansi6", link: "ansi4", number: "ansi5", path: "ansi6",
   bullet: "ansi6", quote: "ansi4", tableHeader: "ansi3", rule: "border", codeText: "foreground", codeBg: "surface", inlineCodeBg: "raised",
-  comment: "dim", string: "ansi2", keyword: "ansi4", function: "ansi6", property: "ansi4", attr: "ansi5", regex: "ansi6",
+  note: "dim", comment: "dim", string: "ansi2", keyword: "ansi4", function: "ansi6", property: "ansi4", attr: "ansi5", regex: "ansi6",
 };
 
 // Runs -> the pieces the panel draws: each word with its following spaces, in its run's style, so prose wraps between

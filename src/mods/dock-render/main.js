@@ -21,7 +21,8 @@ import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.
 import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 import {
-  ALERTS, COLOURS, ROLE_COLOR, copyPlan, hintsNotice, openWithin, pieces, replyNote, shownButtons, speakerLabel, tableWidths, viewOf,
+  ALERTS, CHAR_PX, COLOURS, FOLD_OVER, ROLE_COLOR, codeFold, copyPlan, hintsNotice, openWithin, pieces, replyNote, shownButtons, sideBySide,
+  speakerLabel, tableWidths, viewOf,
 } from "../../shared/render/view.js";
 
 const MOD = "dock-render";
@@ -50,6 +51,7 @@ export default class Render extends View {
     this.toggled = new Map(); // exchange id -> opened (true) or folded (false) by hand
     this.full = new Set(); // exchange ids whose long turn text is shown in full (sent to the helper as `full`)
     this.pages = new Map(); // exchange id -> the page of its reply shown (sent as `pages`)
+    this.unfolded = new Set(); // element ids of long code blocks opened past their first 20 lines
     this.opening = new Set(); // exchange ids opened by hand whose blocks are being read
     this.copied = null; // { key, note } of the copy button just pressed
     this.hints = { state: null, busy: false, error: null, checked: false }; // the diagram-hint hooks in Claude's settings
@@ -138,6 +140,7 @@ export default class Render extends View {
     this.toggled = new Map();
     this.full = new Set();
     this.pages = new Map();
+    this.unfolded = new Set();
     this.opening = new Set();
     if (!agent) return;
     const kind = agentKind(agent);
@@ -380,22 +383,66 @@ export default class Render extends View {
   }
 
   // A block in colour. `inner`: inside a list item, quote or alert, where the outer block's copy covers its text.
-  block(t, b, id, maxW, canHtml, inner = false) {
+  // A list of blocks: consecutive tables, diagrams and figures share a row when they all fit (tables fitted to their
+  // content, pictures at their own size); otherwise each is drawn on its own as usual.
+  blockList(t, list, prefix, maxW, canHtml) {
+    const SIDE = new Set(["table", "mermaid", "figure"]);
+    const widthOf = (b) => (b.kind === "table" ? tableWidths(b.natural ?? [], b.words ?? [], maxW - 2, false).reduce((a, w) => a + w, 0) + 2
+      : b.svg && !b.error ? shownSize(b, maxW).w : maxW);
+    const out = [];
+    for (let i = 0; i < list.length;) {
+      let j = i;
+      while (j < list.length && SIDE.has(list[j].kind)) j++;
+      if (j - i >= 2) {
+        const group = list.slice(i, j), widths = group.map(widthOf);
+        if (sideBySide(widths, maxW)) {
+          out.push(h_flex().id(`${prefix}-row${i}`).gap(12).items_start()
+            .children(group.map((b, k) => this.block(t, b, `${prefix}-${i + k}`, widths[k], canHtml, false, true))));
+          i = j;
+          continue;
+        }
+      }
+      const end = Math.max(j, i + 1);
+      for (let k = i; k < end; k++) out.push(this.block(t, list[k], `${prefix}-${k}`, maxW, canHtml));
+      i = end;
+    }
+    return out;
+  }
+
+  block(t, b, id, maxW, canHtml, inner = false, fitted = false) {
     const note = this.copyNote(t, id);
     const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-b${j}`, w, canHtml, true));
     switch (b.kind) {
       case "mermaid":
       case "figure":
         return v_flex().id(id).gap(4).children([this.diagram(t, b, `${id}-pic`, maxW), this.buttons(t, b.buttons, id, canHtml, false), note].filter(Boolean));
-      case "code":
+      case "code": {
+        // Line numbers from 10 lines; over 30 folds to the first 20 (prismantis's thresholds).
+        const lines = b.lines ?? [];
+        const f = codeFold(lines.length, this.unfolded.has(id));
+        const digits = String(lines.length).length;
+        const row = (line, n) => h_flex().whitespace_nowrap().children([
+          f.numbered ? div().w(digits * CHAR_PX + 10).flex_none().text_color(t.dim).child(String(n).padStart(digits)) : null,
+          ...(line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")]),
+        ].filter(Boolean));
+        const fold = f.more ? `+${f.more} more lines` : lines.length > FOLD_OVER ? "show less" : null;
         return v_flex().id(id).w_full().gap(2).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(b.lang || "code")).child(this.buttons(t, b.buttons, id, canHtml)),
           div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().rounded(5).bg(t[COLOURS.codeBg]).p(8)
-            .child(v_flex().flex_none().font_family("Menlo").text_size(12).children((b.lines ?? []).map((line) => h_flex().whitespace_nowrap()
-              .children(line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")])))),
+            .child(v_flex().flex_none().font_family("Menlo").text_size(12).children(lines.slice(0, f.shown).map((line, n) => row(line, n + 1)))),
+          fold ? div().id(`${id}-fold`).text_size(11.5).text_color(t.accent).cursor_pointer()
+            .on_click((_e, cx) => { if (this.unfolded.has(id)) this.unfolded.delete(id); else this.unfolded.add(id); cx.notify(); }).child(fold) : null,
           note].filter(Boolean));
+      }
+      case "footnotes": // a short dim rule, then each note: its mark and its text, dim (code and links keep their colour)
+        return v_flex().id(id).w_full().gap(3).children([
+          div().text_size(12).text_color(t[COLOURS.note]).child("─".repeat(12)),
+          ...(b.notes ?? []).map((n, i) => this.prose(t, [{ text: `${n.mark} ` }, ...n.runs], `${id}-n${i}`, {
+            size: 12, over: (r) => (r.role === "code" || r.role === "link" ? r : { ...r, role: "note" }),
+          })),
+        ]);
       case "table": {
-        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2);
+        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2, !fitted);
         const total = widths.reduce((a, w) => a + w, 0) + 2;
         const cell = (runs, c, r) => div().w(widths[c]).flex_none().px(8).py(4)
           .when(c > 0, (el) => el.border_l(1).border_color(t.border))
@@ -478,7 +525,7 @@ export default class Render extends View {
     const reply = v_flex().id(`${x}-reply`).w_full().gap(8).pl(10).py(4).border_l(3).border_color(claude).children([
       div().text_size(11).font_semibold().text_color(claude).child("CLAUDE"),
       ...(note ? [div().text_size(12.5).text_color(t.dim).child(note)]
-        : [pager("a"), ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW - 13, canHtml)), pager("b"),
+        : [pager("a"), ...this.blockList(t, data.reply, x, maxW - 13, canHtml), pager("b"),
           this.buttons(t, data.buttons, `${x}-copy`, canHtml), this.copyNote(t, `${x}-copy`)]),
     ].filter(Boolean));
     return v_flex().id(x).w_full().gap(6).child(turn).child(reply);
@@ -554,7 +601,7 @@ export default class Render extends View {
           .children([this.buttons(t, f.buttons, "render-file-copy", f.canHtml)].filter(Boolean)),
         ...[this.copyNote(t, "render-file-copy")].filter(Boolean),
         ...(f.pageCount > 1 ? [this.pager(t, "render-file-pga", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx) => { await this.openFile(f.path, page); cx.notify(); }))] : []),
-        ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml)),
+        ...this.blockList(t, f.blocks, "render-file", maxW, f.canHtml),
         ...(f.pageCount > 1 ? [this.pager(t, "render-file-pgb", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx) => { await this.openFile(f.path, page); cx.notify(); }))] : []),
       ];
     }

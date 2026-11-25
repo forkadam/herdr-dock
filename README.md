@@ -452,6 +452,11 @@ terminal, so you keep Claude Code's own terminal UI:
   [Prism](https://prismjs.com) 1.30.0, MIT, bundled into the helper). The panel draws the text itself, so it can't be
   mouse-selected: use the copy buttons, or the terminal's own text. Number and path matching, the shell colouring and
   the code colour mapping are ported from prismantis (MIT).
+- **Code, footnotes, side by side**, as prismantis does them (MIT): code blocks of 10 lines or more get dim line
+  numbers, and one over 30 lines folds to its first 20 with **+N more lines** (**show less** folds it back; **copy**
+  still copies all of it). Footnote references (`[^1]`) become superscript marks numbered by first use, with the notes
+  at the end of the reply under a short rule. Tables, diagrams and figures that follow each other share a row when they
+  all fit the panel (tables then fit their content), and stack otherwise.
 - **A 64 KB budget**: the panel draws at most about 64 KB of Markdown at once (measured: more starts to lag). A longer
   file in Files, or a longer reply, comes in pages ("Page 2 of 5", **Prev** / **Next**); opening an exchange that would
   pass the budget folds older open ones. A long turn of yours shows its first 12 lines until **show all**.

@@ -102372,6 +102372,87 @@ function codeLines(code, lang = "") {
   return toLines(flatten(import_prismjs.default.tokenize(text, grammar), void 0, []));
 }
 
+// src/shared/render/footnotes.js
+var SUPERSCRIPT = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
+var markOf = (n) => [...String(n)].map((d) => SUPERSCRIPT[Number(d)]).join("");
+var NOTE = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/;
+var REF = /\[\^([^\]\s]+)\](?!:)/g;
+var CODE_SPAN = /(`+)(?!`)(.+?)(?<!`)\1(?!`)/g;
+var bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
+function scan(text) {
+  const out2 = [];
+  let fence = null;
+  let note = null;
+  for (const line of String(text ?? "").split("\n")) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      out2.push({ line, code: true });
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
+      continue;
+    }
+    if (f) {
+      fence = f[1];
+      note = null;
+      out2.push({ line, code: true });
+      continue;
+    }
+    const m = NOTE.exec(line);
+    if (m) {
+      note = { label: m[1], text: m[2] };
+      out2.push({ line, note });
+      continue;
+    }
+    if (note && /^( {2,}|\t)\S/.test(line)) {
+      note.text += ` ${line.trim()}`;
+      out2.push({ line, cont: true });
+      continue;
+    }
+    note = null;
+    out2.push({ line });
+  }
+  return out2;
+}
+function outsideCode(line, fn) {
+  let out2 = "", at2 = 0;
+  for (const m of line.matchAll(CODE_SPAN)) {
+    out2 += fn(line.slice(at2, m.index)) + m[0];
+    at2 = m.index + m[0].length;
+  }
+  return out2 + fn(line.slice(at2));
+}
+function collectFootnotes(text) {
+  const lines = scan(text);
+  const defs = /* @__PURE__ */ new Map();
+  for (const l3 of lines) if (l3.note && !defs.has(l3.note.label)) defs.set(l3.note.label, l3.note.text.trim());
+  const marks = /* @__PURE__ */ new Map();
+  for (const l3 of lines) {
+    if (l3.code || l3.note || l3.cont) continue;
+    outsideCode(l3.line, (part) => {
+      for (const m of part.matchAll(REF)) if (defs.has(m[1]) && !marks.has(m[1])) marks.set(m[1], markOf(marks.size + 1));
+      return part;
+    });
+  }
+  for (const label of defs.keys()) if (!marks.has(label)) marks.set(label, markOf(marks.size + 1));
+  const notes = [...marks].map(([label, mark]) => ({ mark, md: defs.get(label) }));
+  return { marks, notes };
+}
+function applyFootnotes(text, marks) {
+  if (!marks?.size) return String(text ?? "");
+  return scan(text).filter((l3) => !(l3.note && marks.has(l3.note.label)) && !l3.cont).map((l3) => l3.code || l3.note ? l3.line : outsideCode(l3.line, (part) => part.replace(REF, (all, label) => marks.get(label) ?? all))).join("\n");
+}
+function footnotesBlock(notes) {
+  const md = notes.map((n2) => `${n2.mark} ${n2.md}`).join("\n");
+  const n = bytes(md);
+  return {
+    kind: "footnotes",
+    md,
+    bytes: n,
+    cost: n,
+    buttons: [],
+    notes: notes.map((x2) => ({ mark: x2.mark, runs: inlineRuns(x.lexer(x2.md, { gfm: true })[0]?.tokens ?? []) }))
+  };
+}
+
 // src/shared/render/blocks.js
 var ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
 var OPTIONS = { gfm: true };
@@ -102381,10 +102462,10 @@ function fenced(code, lang) {
 ${code}
 ${fence}`;
 }
-var bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
+var bytes2 = (s) => new TextEncoder().encode(String(s ?? "")).length;
 var COST_WEIGHT = { code: 2, table: 3 };
 var withBytes = (b) => {
-  const n = bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md);
+  const n = bytes2(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md);
   return { ...b, bytes: n, cost: n * (COST_WEIGHT[b.kind] ?? 1) };
 };
 function drawnSizes(header, rows) {
@@ -102477,8 +102558,8 @@ function tokenBlocks(tokens) {
   flush();
   return out2;
 }
-function toBlocks(text) {
-  return splitSegments(text).flatMap((seg) => seg.kind === "md" ? tokenBlocks(x.lexer(seg.text, OPTIONS)) : [withBytes({ kind: seg.kind, source: seg.source, id: seg.id, buttons: [{ label: "copy source", text: seg.source }] })]);
+function toBlocks(text, { marks } = {}) {
+  return splitSegments(marks ? applyFootnotes(text, marks) : text).flatMap((seg) => seg.kind === "md" ? tokenBlocks(x.lexer(seg.text, OPTIONS)) : [withBytes({ kind: seg.kind, source: seg.source, id: seg.id, buttons: [{ label: "copy source", text: seg.source }] })]);
 }
 function replyButtons(text) {
   const md = String(text ?? "");
@@ -102486,7 +102567,7 @@ function replyButtons(text) {
 }
 
 // src/shared/render/pages.js
-var bytes2 = (s) => new TextEncoder().encode(String(s ?? "")).length;
+var bytes3 = (s) => new TextEncoder().encode(String(s ?? "")).length;
 function groups(items, size, room) {
   const out2 = [];
   let cur = [], n = 0;
@@ -102506,18 +102587,18 @@ function groups(items, size, room) {
 function split(b, budget) {
   if (b.kind === "code") {
     const lines = b.buttons[0].text.split("\n");
-    const room = Math.floor(budget / COST_WEIGHT.code) - bytes2(b.lang) - 16;
-    return groups(lines, (l3) => bytes2(l3) + 1, room).flatMap((g) => toBlocks(fenced(g.join("\n"), b.lang ?? "")));
+    const room = Math.floor(budget / COST_WEIGHT.code) - bytes3(b.lang) - 16;
+    return groups(lines, (l3) => bytes3(l3) + 1, room).flatMap((g) => toBlocks(fenced(g.join("\n"), b.lang ?? "")));
   }
   if (b.kind === "table") {
     const lines = b.md.split("\n");
     const head = lines.slice(0, 2);
-    const room = Math.floor(budget / COST_WEIGHT.table) - bytes2(head.join("\n")) - 2;
-    return groups(lines.slice(2), (l3) => bytes2(l3) + 1, room).flatMap((g) => toBlocks([...head, ...g].join("\n")));
+    const room = Math.floor(budget / COST_WEIGHT.table) - bytes3(head.join("\n")) - 2;
+    return groups(lines.slice(2), (l3) => bytes3(l3) + 1, room).flatMap((g) => toBlocks([...head, ...g].join("\n")));
   }
   if (b.kind === "text") {
     const tokens = x.lexer(b.md, { gfm: true });
-    return groups(tokens, (t) => bytes2(t.raw), budget).flatMap((g) => toBlocks(g.map((t) => t.raw).join("")));
+    return groups(tokens, (t) => bytes3(t.raw), budget).flatMap((g) => toBlocks(g.map((t) => t.raw).join("")));
   }
   return [b];
 }
@@ -103252,8 +103333,9 @@ function blocks(text, req, themeId) {
 function replyBlocks(ex) {
   const out2 = [];
   let run3 = [];
+  const { marks, notes } = collectFootnotes(replyText(ex));
   const flush = () => {
-    if (run3.length) out2.push(...toBlocks(run3.join("\n\n")));
+    if (run3.length) out2.push(...toBlocks(run3.join("\n\n"), { marks }));
     run3 = [];
   };
   for (const p of ex.parts) {
@@ -103265,6 +103347,7 @@ function replyBlocks(ex) {
     out2.push({ kind: "marker", by: p.by, event: p.event, text: p.text, bytes: new TextEncoder().encode(p.text).length });
   }
   flush();
+  if (notes.length) out2.push(footnotesBlock(notes));
   return out2;
 }
 function pageOf(list, asked) {
@@ -103379,7 +103462,9 @@ function run2(req) {
     }
     case "file": {
       const text = readText(req.path, MAX_FILE);
-      const { page, pageCount, list } = pageOf(toBlocks(text), req.page);
+      const { marks, notes } = collectFootnotes(text);
+      const all = [...toBlocks(text, { marks }), ...notes.length ? [footnotesBlock(notes)] : []];
+      const { page, pageCount, list } = pageOf(all, req.page);
       return { ok: true, path: req.path, canHtml: CAN_HTML, blocks: drawn(list, req, themeKey(req.theme)), page, pageCount, buttons: replyButtons(text) };
     }
     case "clip":

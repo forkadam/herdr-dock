@@ -284,6 +284,7 @@ var COLOURS = {
   codeText: "foreground",
   codeBg: "surface",
   inlineCodeBg: "raised",
+  note: "dim",
   comment: "dim",
   string: "ansi2",
   keyword: "ansi4",
@@ -321,11 +322,21 @@ function openWithin(rows, toggled, budget = BUDGET) {
 }
 var CHAR_PX = 7.2;
 var CELL_PAD = 16;
-function tableWidths(natural, words, panelPx) {
+var NUMBER_FROM = 10;
+var FOLD_OVER = 30;
+var FOLD_TO = 20;
+function codeFold(lineCount, open) {
+  const folded = lineCount > FOLD_OVER && !open;
+  return { shown: folded ? FOLD_TO : lineCount, more: folded ? lineCount - FOLD_TO : 0, numbered: lineCount >= NUMBER_FROM };
+}
+function sideBySide(widths, panelPx, gap = 12) {
+  return widths.length >= 2 && widths.reduce((a, w) => a + w, 0) + gap * (widths.length - 1) <= panelPx;
+}
+function tableWidths(natural, words, panelPx, stretch = true) {
   const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
   const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
   const used = fitted.reduce((a, w) => a + w, 0);
-  if (used >= panelPx) return fitted;
+  if (!stretch || used >= panelPx) return fitted;
   const weight = natural.reduce((a, n) => a + Math.max(1, n), 0);
   const out = fitted.map((w, c) => Math.floor(w + (panelPx - used) * Math.max(1, natural[c]) / weight));
   out[out.length - 1] += panelPx - out.reduce((a, w) => a + w, 0);
@@ -357,6 +368,7 @@ var Render = class extends View {
     this.toggled = /* @__PURE__ */ new Map();
     this.full = /* @__PURE__ */ new Set();
     this.pages = /* @__PURE__ */ new Map();
+    this.unfolded = /* @__PURE__ */ new Set();
     this.opening = /* @__PURE__ */ new Set();
     this.copied = null;
     this.hints = { state: null, busy: false, error: null, checked: false };
@@ -470,6 +482,7 @@ var Render = class extends View {
     this.toggled = /* @__PURE__ */ new Map();
     this.full = /* @__PURE__ */ new Set();
     this.pages = /* @__PURE__ */ new Map();
+    this.unfolded = /* @__PURE__ */ new Set();
     this.opening = /* @__PURE__ */ new Set();
     if (!agent) return;
     const kind = agentKind(agent);
@@ -710,21 +723,66 @@ var Render = class extends View {
     return h_flex().id(id).gap(6).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(`${label} ${page + 1} of ${count}`)).child(btn("prev", "Prev", page - 1)).child(btn("next", "Next", page + 1));
   }
   // A block in colour. `inner`: inside a list item, quote or alert, where the outer block's copy covers its text.
-  block(t, b, id, maxW, canHtml, inner = false) {
+  // A list of blocks: consecutive tables, diagrams and figures share a row when they all fit (tables fitted to their
+  // content, pictures at their own size); otherwise each is drawn on its own as usual.
+  blockList(t, list, prefix, maxW, canHtml) {
+    const SIDE = /* @__PURE__ */ new Set(["table", "mermaid", "figure"]);
+    const widthOf = (b) => b.kind === "table" ? tableWidths(b.natural ?? [], b.words ?? [], maxW - 2, false).reduce((a, w) => a + w, 0) + 2 : b.svg && !b.error ? shownSize(b, maxW).w : maxW;
+    const out = [];
+    for (let i = 0; i < list.length; ) {
+      let j = i;
+      while (j < list.length && SIDE.has(list[j].kind)) j++;
+      if (j - i >= 2) {
+        const group = list.slice(i, j), widths = group.map(widthOf);
+        if (sideBySide(widths, maxW)) {
+          out.push(h_flex().id(`${prefix}-row${i}`).gap(12).items_start().children(group.map((b, k) => this.block(t, b, `${prefix}-${i + k}`, widths[k], canHtml, false, true))));
+          i = j;
+          continue;
+        }
+      }
+      const end = Math.max(j, i + 1);
+      for (let k = i; k < end; k++) out.push(this.block(t, list[k], `${prefix}-${k}`, maxW, canHtml));
+      i = end;
+    }
+    return out;
+  }
+  block(t, b, id, maxW, canHtml, inner = false, fitted = false) {
     const note = this.copyNote(t, id);
     const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-b${j}`, w, canHtml, true));
     switch (b.kind) {
       case "mermaid":
       case "figure":
         return v_flex().id(id).gap(4).children([this.diagram(t, b, `${id}-pic`, maxW), this.buttons(t, b.buttons, id, canHtml, false), note].filter(Boolean));
-      case "code":
+      case "code": {
+        const lines = b.lines ?? [];
+        const f = codeFold(lines.length, this.unfolded.has(id));
+        const digits = String(lines.length).length;
+        const row = (line, n) => h_flex().whitespace_nowrap().children([
+          f.numbered ? div().w(digits * CHAR_PX + 10).flex_none().text_color(t.dim).child(String(n).padStart(digits)) : null,
+          ...line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")]
+        ].filter(Boolean));
+        const fold = f.more ? `+${f.more} more lines` : lines.length > FOLD_OVER ? "show less" : null;
         return v_flex().id(id).w_full().gap(2).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(b.lang || "code")).child(this.buttons(t, b.buttons, id, canHtml)),
-          div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().rounded(5).bg(t[COLOURS.codeBg]).p(8).child(v_flex().flex_none().font_family("Menlo").text_size(12).children((b.lines ?? []).map((line) => h_flex().whitespace_nowrap().children(line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")])))),
+          div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().rounded(5).bg(t[COLOURS.codeBg]).p(8).child(v_flex().flex_none().font_family("Menlo").text_size(12).children(lines.slice(0, f.shown).map((line, n) => row(line, n + 1)))),
+          fold ? div().id(`${id}-fold`).text_size(11.5).text_color(t.accent).cursor_pointer().on_click((_e, cx) => {
+            if (this.unfolded.has(id)) this.unfolded.delete(id);
+            else this.unfolded.add(id);
+            cx.notify();
+          }).child(fold) : null,
           note
         ].filter(Boolean));
+      }
+      case "footnotes":
+        return v_flex().id(id).w_full().gap(3).children([
+          div().text_size(12).text_color(t[COLOURS.note]).child("\u2500".repeat(12)),
+          ...(b.notes ?? []).map((n, i) => this.prose(t, [{ text: `${n.mark} ` }, ...n.runs], `${id}-n${i}`, {
+            size: 12,
+            over: (r) => r.role === "code" || r.role === "link" ? r : { ...r, role: "note" }
+          }))
+        ]);
       case "table": {
-        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2);
+        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2, !fitted);
         const total = widths.reduce((a, w) => a + w, 0) + 2;
         const cell = (runs, c, r) => div().w(widths[c]).flex_none().px(8).py(4).when(c > 0, (el) => el.border_l(1).border_color(t.border)).child(this.prose(t, runs, `${id}-c${r}-${c}`, {
           justify: b.align?.[c],
@@ -813,7 +871,7 @@ var Render = class extends View {
       div().text_size(11).font_semibold().text_color(claude).child("CLAUDE"),
       ...note ? [div().text_size(12.5).text_color(t.dim).child(note)] : [
         pager("a"),
-        ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW - 13, canHtml)),
+        ...this.blockList(t, data.reply, x, maxW - 13, canHtml),
         pager("b"),
         this.buttons(t, data.buttons, `${x}-copy`, canHtml),
         this.copyNote(t, `${x}-copy`)
@@ -872,7 +930,7 @@ var Render = class extends View {
           await this.openFile(f.path, page);
           cx2.notify();
         }))] : [],
-        ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml)),
+        ...this.blockList(t, f.blocks, "render-file", maxW, f.canHtml),
         ...f.pageCount > 1 ? [this.pager(t, "render-file-pgb", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx2) => {
           await this.openFile(f.path, page);
           cx2.notify();
