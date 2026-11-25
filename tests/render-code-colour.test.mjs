@@ -8,7 +8,7 @@ const roles = (line) => line.map((r) => [r.text, r.role ?? null]);
 test("shell (and unlabelled) code: command, flags, strings, comments, restarting after | && ; ||", () => {
   assert.ok(isShellLang("") && isShellLang("BASH") && isShellLang("ps1") && !isShellLang("js"));
   const [a, b] = codeLines('npm run deploy --dry-run "x" | grep ok\n# done', "bash");
-  assert.deepEqual(roles(a).filter(([t]) => t.trim()), [["npm", "function"], ["run", null], ["deploy", null], ["--dry-run", "keyword"], ['"x"', "string"], ["|", null], ["grep", "function"], ["ok", null]]);
+  assert.deepEqual(roles(a).filter(([t]) => t.trim()), [["npm", "function"], [" run deploy ", null], ["--dry-run", "keyword"], ['"x"', "string"], [" | ", null], ["grep", "function"], [" ok", null]]);
   assert.deepEqual(roles(b), [["# done", "comment"]]);
   assert.deepEqual(codeLines("ls  -la", "").length, 1);
 });
@@ -31,4 +31,12 @@ test("a language neither knows is plain; lines and empty lines are kept; text is
   assert.ok(lines.flat().every((r) => !r.role));
   const ts = codeLines("let s: string = `t${1}`;\n", "ts");
   assert.equal(ts.map((l) => l.map((r) => r.text).join("")).join("\n"), "let s: string = `t${1}`;\n");
+});
+
+test("neighbouring runs of the same colour are merged (fewer pieces to draw)", () => {
+  for (const [code, lang] of [['const x = { "a": [1, 2] };', "js"], ["npm   run  deploy", "sh"], ['{"a":1,"b":[true,null]}', "json"]]) {
+    const [line] = codeLines(code, lang);
+    for (let i = 1; i < line.length; i++) assert.notEqual(line[i].role ?? null, line[i - 1].role ?? null, `${lang}: ${JSON.stringify(line)}`);
+    assert.equal(line.map((r) => r.text).join(""), code);
+  }
 });

@@ -57,13 +57,20 @@ function flatten(tokens, role, out) {
   return out;
 }
 
+// Appends a run to a line, merged into the last one when they share a colour (fewer pieces for the panel to draw).
+function push(line, text, role) {
+  const last = line.at(-1);
+  if (last && (last.role ?? null) === (role ?? null)) last.text += text;
+  else line.push(role ? { text, role } : { text });
+}
+
 // Runs (which may hold "\n") -> lines of runs; empty pieces dropped, empty lines kept.
 function toLines(runs) {
   const lines = [[]];
   for (const r of runs) {
     r.text.split("\n").forEach((piece, i) => {
       if (i > 0) lines.push([]);
-      if (piece) lines.at(-1).push(r.role ? { text: piece, role: r.role } : { text: piece });
+      if (piece) push(lines.at(-1), piece, r.role);
     });
   }
   return lines;
@@ -76,13 +83,13 @@ function shellLine(line) {
   const out = [];
   let seenCommand = false;
   for (const p of line.split(/("[^"]*"|'[^']*'|\s+)/).filter((x) => x !== "")) {
-    if (/^\s+$/.test(p)) out.push({ text: p });
-    else if (/^["']/.test(p)) out.push({ text: p, role: "string" });
-    else if (/^--?[\w-]/.test(p)) out.push({ text: p, role: "keyword" });
-    else if (!seenCommand && !/^[$>|&;]+$/.test(p)) { seenCommand = true; out.push({ text: p, role: "function" }); }
+    if (/^\s+$/.test(p)) push(out, p);
+    else if (/^["']/.test(p)) push(out, p, "string");
+    else if (/^--?[\w-]/.test(p)) push(out, p, "keyword");
+    else if (!seenCommand && !/^[$>|&;]+$/.test(p)) { seenCommand = true; push(out, p, "function"); }
     else {
       if (/^(\||&&|;|\|\|)$/.test(p)) seenCommand = false;
-      out.push({ text: p });
+      push(out, p);
     }
   }
   return out;

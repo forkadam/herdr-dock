@@ -23,3 +23,10 @@ test("a code block bigger than a page is cut by lines; a table by rows with its 
   assert.ok(tp.length > 1 && tp.every((p) => p[0].header.length === 2));
   assert.equal(tp.flatMap((p) => p[0].rows).length, 3000);
 });
+
+test("pages are cut by cost: 40 KB of code (cost 80 KB) takes two pages", () => {
+  const code = "```js\n" + Array.from({ length: 1400 }, (_, i) => `let v${i} = ${i}; // text`).join("\n") + "\n```";
+  const [b] = toBlocks(code);
+  assert.ok(b.bytes < 65536 && b.cost > 65536);
+  assert.ok(paginate([b]).length >= 2);
+});

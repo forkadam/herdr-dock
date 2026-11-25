@@ -30,3 +30,7 @@ test("inlineRuns: bold keeps numbers coloured inside it, still bold", () => {
 test("inlineRuns: raw inline HTML shows as its text", () => {
   assert.equal(runs("a <kbd>Ctrl</kbd> b").map((r) => r.text).join(""), "a <kbd>Ctrl</kbd> b");
 });
+
+test("inlineRuns: a line break inside a paragraph is a space (only a hard break, two spaces, starts a new line)", () => {
+  assert.deepEqual(runs("hard-wrapped\ntext"), [{ text: "hard-wrapped text" }]);
+});

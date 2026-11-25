@@ -11,7 +11,8 @@
 //       | { kind: "mermaid" | "figure", source, id, buttons }
 import { marked } from "marked";
 import { splitSegments } from "./markdown.js";
-import { tableArt, tableSizes, tableText } from "./table-copy.js";
+import { tableArt, tableText, width } from "./table-copy.js";
+import { pieces } from "./view.js";
 import { inlineRuns } from "./runs.js";
 import { codeLines } from "./code-colour.js";
 
@@ -26,7 +27,24 @@ export function fenced(code, lang) {
 }
 
 const bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
-const withBytes = (b) => ({ ...b, bytes: bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md) });
+// What a block costs the panel to draw, in prose-byte units: code makes about twice the pieces per byte and a table
+// about three times (measured), so the budget counts them so.
+export const COST_WEIGHT = { code: 2, table: 3 };
+const withBytes = (b) => {
+  const n = bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md);
+  return { ...b, bytes: n, cost: n * (COST_WEIGHT[b.kind] ?? 1) };
+};
+
+// Per column, from the cells as drawn: the widest cell's width and its longest piece (a code span is one piece; a
+// link counts its text, not its address).
+function drawnSizes(header, rows) {
+  const cells = [header, ...rows];
+  const column = (measure) => header.map((_, c) => Math.max(0, ...cells.map((r) => measure(r[c] ?? []))));
+  return {
+    natural: column((runs) => width(runs.map((r) => r.text).join("").replace(/\s+/g, " ").trim())),
+    words: column((runs) => Math.max(0, ...pieces(runs).map((p) => width(p.text.trim())))),
+  };
+}
 
 // A text token -> what the panel draws for it (null: nothing to draw, e.g. blank space or a link definition).
 function textPart(token) {
@@ -60,10 +78,12 @@ function tokenBlocks(tokens) {
       flush();
       out.push(withBytes({
         kind: "table", md: raw.trim(),
-        header: token.header.map((c) => inlineRuns(c.tokens)),
-        rows: token.rows.map((r) => r.map((c) => inlineRuns(c.tokens))),
+        ...(() => {
+          const header = token.header.map((c) => inlineRuns(c.tokens));
+          const rows = token.rows.map((r) => r.map((c) => inlineRuns(c.tokens)));
+          return { header, rows, ...drawnSizes(header, rows) };
+        })(),
         align: token.align.map((a) => a ?? null),
-        ...tableSizes(token),
         buttons: [
           { label: "md", text: raw.trim() },
           { label: "art", text: tableArt(token) },

@@ -217,3 +217,11 @@ test("an interruption starts nothing and ends the turn", () => {
   ]).exchanges;
   assert.deepEqual(x.map((e) => [e.id, exchangeRow(e).state]), [["e", "none"]]);
 });
+
+test("exchangeRow: size weighs fenced code double and table lines triple", () => {
+  const ex = { id: "s", by: "you", event: null, text: "hi", at: null, running: false,
+    parts: [{ type: "text", text: "ab\n```\ncode\n```\n| t |", at: null }] };
+  // "hi" 2 + "ab" 2+1 newline + fence lines 4+1, 3+1 counted once + "code\n" 5 x2 + "| t |" 5 x3
+  const row = exchangeRow(ex);
+  assert.ok(row.size > Buffer.byteLength("hi") + Buffer.byteLength(ex.parts[0].text));
+});

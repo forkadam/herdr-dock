@@ -79,7 +79,7 @@ export default class Render extends View {
         const out = await this.helper({ mode: "clear" });
         console.log(`dock-render: cache cleared (${out.removed ?? 0} diagrams)`);
         await this.load(cx);
-        if (this.file) await this.openFile(this.file.path);
+        if (this.file) await this.openFile(this.file.path, this.file.page);
         cx.notify();
       });
       return;
@@ -214,7 +214,7 @@ export default class Render extends View {
     if (!cwd) { this.files = []; return; }
     const out = await this.helper({ mode: "list", cwd });
     this.files = out.ok ? out.files : [];
-    if (this.file) await this.openFile(this.file.path);
+    if (this.file) await this.openFile(this.file.path, this.file.page);
   }
 
   async openFile(path, page = 0) {
@@ -350,7 +350,8 @@ export default class Render extends View {
   // One piece of prose (a word with its spaces) in its run's colour and style.
   piece(t, p, id) {
     if (p.text === "\n") return div().w_full().h(0);
-    let el = div().text_color(t[COLOURS[p.role] ?? "foreground"] ?? t.foreground);
+    // min_w(0): a piece wider than the line (a long code span or path) shrinks and wraps inside instead of overflowing.
+    let el = div().min_w(0).text_color(t[COLOURS[p.role] ?? "foreground"] ?? t.foreground);
     if (p.bold) el = el.font_bold();
     if (p.italic) el = el.italic();
     if (p.strike) el = el.line_through();
@@ -381,7 +382,7 @@ export default class Render extends View {
   // A block in colour. `inner`: inside a list item, quote or alert, where the outer block's copy covers its text.
   block(t, b, id, maxW, canHtml, inner = false) {
     const note = this.copyNote(t, id);
-    const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-${j}`, w, canHtml, true));
+    const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-b${j}`, w, canHtml, true));
     switch (b.kind) {
       case "mermaid":
       case "figure":
@@ -414,7 +415,7 @@ export default class Render extends View {
           inner ? null : this.buttons(t, b.buttons, id, canHtml),
           ...(b.items ?? []).map((it, i) => h_flex().w_full().items_start()
             .child(div().w(22).flex_none().text_size(13).text_color(t[COLOURS.bullet]).child(it.marker))
-            .child(v_flex().flex_1().min_w(0).gap(4).children(it.blocks.map((x, j) => this.block(t, x, `${id}-${i}-${j}`, maxW - 22, canHtml, true))))),
+            .child(v_flex().flex_1().min_w(0).gap(4).children(it.blocks.map((x, j) => this.block(t, x, `${id}-i${i}-${j}`, maxW - 22, canHtml, true))))),
           note].filter(Boolean));
       case "quote":
         return v_flex().id(id).w_full().gap(4).children([

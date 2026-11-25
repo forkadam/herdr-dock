@@ -150,3 +150,25 @@ test("columnWidths moved to columns.js, same results", () => {
   assert.deepEqual(columnWidths([4, 6], 96, 3), [4, 6]);
   assert.deepEqual(columnWidths([14, 199], 93, 3, [14, 4]).reduce((a, b) => a + b), 90);
 });
+
+test("a loose task list draws its marker, not the literal [ ]", () => {
+  const [l] = toBlocks("- [ ] one\n\n- [x] two");
+  assert.deepEqual(l.items.map((i) => i.marker), ["☐", "☑"]);
+  const drawn = l.items.map((i) => i.blocks[0].parts[0].runs.map((r) => r.text).join(""));
+  assert.deepEqual(drawn, ["one", "two"]);
+});
+
+test("table sizes come from what's drawn: a link by its text, a code span as one word", () => {
+  const [t] = toBlocks("| PR | state |\n|---|---|\n| [#12](https://github.com/org/repo/pull/12345/files#diff-abcdef) | `npm run build:app` |");
+  assert.deepEqual(t.natural, [3, 17]);
+  assert.deepEqual(t.words, [3, 17]);
+});
+
+test("cost: code counts double and tables triple their bytes, prose its bytes; a costly code block is paged", () => {
+  const [p] = toBlocks("just prose here");
+  assert.equal(p.cost, p.bytes);
+  const [c] = toBlocks("```js\nlet a = 1;\n```");
+  assert.equal(c.cost, c.bytes * 2);
+  const [t] = toBlocks("| a |\n|---|\n| 1 |");
+  assert.equal(t.cost, t.bytes * 3);
+});

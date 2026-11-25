@@ -81,6 +81,22 @@ function fold(events, running) {
 // Claude's reply as written: its text parts, joined.
 export const replyText = (ex) => ex.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n\n");
 
+// What Markdown costs the panel to draw, in prose-byte units (as blocks.js counts it, cheaply, line by line): fenced
+// code counts twice its bytes and table lines three times.
+export function costOf(text) {
+  const enc = new TextEncoder();
+  let fence = null, n = 0;
+  const lines = String(text ?? "").split("\n");
+  for (const [i, line] of lines.entries()) {
+    const b = enc.encode(line).length + (i < lines.length - 1 ? 1 : 0);
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) { n += b * 2; if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null; }
+    else if (m) { fence = m[1]; n += b * 2; }
+    else n += /^\s*\|/.test(line) ? b * 3 : b;
+  }
+  return n;
+}
+
 // An exchange as the panel's row: preview (the reply's first words), state ("reply" | "working" | "none"), replyAt.
 export function exchangeRow(ex) {
   const reply = replyText(ex);
@@ -92,9 +108,8 @@ export function exchangeRow(ex) {
     return true;
   });
   const preview = prose.join(" ").replace(/[#*_>|`]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
-  const bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
   return {
-    id: ex.id, by: ex.by, event: ex.event, text: ex.text, at: ex.at, preview, size: bytes(ex.text) + bytes(reply),
+    id: ex.id, by: ex.by, event: ex.event, text: ex.text, at: ex.at, preview, size: costOf(ex.text) + costOf(reply),
     state: reply.trim() ? "reply" : ex.running ? "working" : "none",
     replyAt: ex.parts.at(-1)?.at ?? null,
   };

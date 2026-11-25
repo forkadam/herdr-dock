@@ -3,7 +3,7 @@
 // lines, a table by rows (its header repeated); anything else that can't be cut is a page of its own.
 import { marked } from "marked";
 import { BUDGET } from "./budget.js";
-import { fenced, toBlocks } from "./blocks.js";
+import { COST_WEIGHT, fenced, toBlocks } from "./blocks.js";
 
 export { BUDGET };
 
@@ -26,13 +26,13 @@ function groups(items, size, room) {
 function split(b, budget) {
   if (b.kind === "code") {
     const lines = b.buttons[0].text.split("\n");
-    const room = budget - bytes(b.lang) - 16;
+    const room = Math.floor(budget / COST_WEIGHT.code) - bytes(b.lang) - 16;
     return groups(lines, (l) => bytes(l) + 1, room).flatMap((g) => toBlocks(fenced(g.join("\n"), b.lang ?? "")));
   }
   if (b.kind === "table") {
     const lines = b.md.split("\n");
     const head = lines.slice(0, 2);
-    const room = budget - bytes(head.join("\n")) - 2;
+    const room = Math.floor(budget / COST_WEIGHT.table) - bytes(head.join("\n")) - 2;
     return groups(lines.slice(2), (l) => bytes(l) + 1, room).flatMap((g) => toBlocks([...head, ...g].join("\n")));
   }
   if (b.kind === "text") {
@@ -42,9 +42,10 @@ function split(b, budget) {
   return [b];
 }
 
-// Blocks -> pages (at least one, possibly empty).
+// Blocks -> pages (at least one, possibly empty), by what each block costs to draw (`cost`; `bytes` for markers).
 export function paginate(blocks, budget = BUDGET) {
-  const pieces = blocks.flatMap((b) => ((b.bytes ?? 0) > budget ? split(b, budget) : [b]));
-  const pages = groups(pieces, (b) => b.bytes ?? 0, budget);
+  const cost = (b) => b.cost ?? b.bytes ?? 0;
+  const pieces = blocks.flatMap((b) => (cost(b) > budget ? split(b, budget) : [b]));
+  const pages = groups(pieces, cost, budget);
   return pages.length ? pages : [[]];
 }

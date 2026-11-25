@@ -51,10 +51,12 @@ function walk(tokens, base, out) {
         break;
       }
       case "br": out.push({ text: "\n" }); break;
+      case "checkbox": break; // a task item's [ ] / [x]: the panel draws its marker instead
       case "escape": out.push(...decorate(t.text, base)); break;
       default:
         if (Array.isArray(t.tokens) && t.tokens.length && t.type !== "html") walk(t.tokens, base, out);
-        else out.push(...decorate(String(t.type === "html" ? t.raw : t.text ?? t.raw ?? ""), base));
+        // A line break inside a paragraph is a space, as Markdown (and prismantis) show it; only a hard break starts a line.
+        else out.push(...decorate(t.type === "html" ? String(t.raw ?? "") : String(t.text ?? t.raw ?? "").replace(/\n/g, " "), base));
     }
   }
   return out;

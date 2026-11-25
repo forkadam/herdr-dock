@@ -100385,11 +100385,6 @@ function cellText(tokens) {
   }).join("");
 }
 var rowsOf = (token) => [token.header, ...token.rows].map((r2) => token.header.map((_2, c) => cellText(r2[c]?.tokens).replace(/\s+/g, " ").trim()));
-function tableSizes(token) {
-  const cells = rowsOf(token);
-  const column = (measure) => token.header.map((_2, c) => Math.max(0, ...cells.map((r2) => measure(r2[c]))));
-  return { natural: column(width), words: column(longestWord) };
-}
 var ART_WIDTH = 100;
 function tableArt(token) {
   const cells = rowsOf(token);
@@ -100411,6 +100406,24 @@ function tableArt(token) {
 function tableText(token) {
   const tsv = (text) => /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   return [token.header, ...token.rows].map((r2) => r2.map((cell) => tsv(cellText(cell.tokens))).join("	")).join("\n");
+}
+
+// src/shared/render/budget.js
+var BUDGET = 64 * 1024;
+
+// src/shared/render/view.js
+var OPEN_NEWEST = 3;
+var HTML_LIMIT = 512 * 1024;
+function pieces(runs) {
+  const out2 = [];
+  for (const r2 of runs ?? []) {
+    if (r2.text === "\n" || r2.role === "code") {
+      out2.push(r2);
+      continue;
+    }
+    for (const w2 of r2.text.match(/\S+\s*|\s+/g) ?? []) out2.push({ ...r2, text: w2 });
+  }
+  return out2;
 }
 
 // src/shared/render/runs.js
@@ -100465,12 +100478,15 @@ function walk(tokens, base, out2) {
       case "br":
         out2.push({ text: "\n" });
         break;
+      case "checkbox":
+        break;
+      // a task item's [ ] / [x]: the panel draws its marker instead
       case "escape":
         out2.push(...decorate(t.text, base));
         break;
       default:
         if (Array.isArray(t.tokens) && t.tokens.length && t.type !== "html") walk(t.tokens, base, out2);
-        else out2.push(...decorate(String(t.type === "html" ? t.raw : t.text ?? t.raw ?? ""), base));
+        else out2.push(...decorate(t.type === "html" ? String(t.raw ?? "") : String(t.text ?? t.raw ?? "").replace(/\n/g, " "), base));
     }
   }
   return out2;
@@ -102313,12 +102329,17 @@ function flatten(tokens, role, out2) {
   }
   return out2;
 }
+function push(line, text, role) {
+  const last = line.at(-1);
+  if (last && (last.role ?? null) === (role ?? null)) last.text += text;
+  else line.push(role ? { text, role } : { text });
+}
 function toLines(runs) {
   const lines = [[]];
   for (const r2 of runs) {
     r2.text.split("\n").forEach((piece, i) => {
       if (i > 0) lines.push([]);
-      if (piece) lines.at(-1).push(r2.role ? { text: piece, role: r2.role } : { text: piece });
+      if (piece) push(lines.at(-1), piece, r2.role);
     });
   }
   return lines;
@@ -102329,15 +102350,15 @@ function shellLine(line) {
   const out2 = [];
   let seenCommand = false;
   for (const p of line.split(/("[^"]*"|'[^']*'|\s+)/).filter((x2) => x2 !== "")) {
-    if (/^\s+$/.test(p)) out2.push({ text: p });
-    else if (/^["']/.test(p)) out2.push({ text: p, role: "string" });
-    else if (/^--?[\w-]/.test(p)) out2.push({ text: p, role: "keyword" });
+    if (/^\s+$/.test(p)) push(out2, p);
+    else if (/^["']/.test(p)) push(out2, p, "string");
+    else if (/^--?[\w-]/.test(p)) push(out2, p, "keyword");
     else if (!seenCommand && !/^[$>|&;]+$/.test(p)) {
       seenCommand = true;
-      out2.push({ text: p, role: "function" });
+      push(out2, p, "function");
     } else {
       if (/^(\||&&|;|\|\|)$/.test(p)) seenCommand = false;
-      out2.push({ text: p });
+      push(out2, p);
     }
   }
   return out2;
@@ -102361,7 +102382,19 @@ ${code}
 ${fence}`;
 }
 var bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
-var withBytes = (b) => ({ ...b, bytes: bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md) });
+var COST_WEIGHT = { code: 2, table: 3 };
+var withBytes = (b) => {
+  const n = bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md);
+  return { ...b, bytes: n, cost: n * (COST_WEIGHT[b.kind] ?? 1) };
+};
+function drawnSizes(header, rows) {
+  const cells = [header, ...rows];
+  const column = (measure) => header.map((_2, c) => Math.max(0, ...cells.map((r2) => measure(r2[c] ?? []))));
+  return {
+    natural: column((runs) => width(runs.map((r2) => r2.text).join("").replace(/\s+/g, " ").trim())),
+    words: column((runs) => Math.max(0, ...pieces(runs).map((p) => width(p.text.trim()))))
+  };
+}
 function textPart(token) {
   switch (token.type) {
     case "heading":
@@ -102398,10 +102431,12 @@ function tokenBlocks(tokens) {
       out2.push(withBytes({
         kind: "table",
         md: raw.trim(),
-        header: token.header.map((c) => inlineRuns(c.tokens)),
-        rows: token.rows.map((r2) => r2.map((c) => inlineRuns(c.tokens))),
+        ...(() => {
+          const header = token.header.map((c) => inlineRuns(c.tokens));
+          const rows = token.rows.map((r2) => r2.map((c) => inlineRuns(c.tokens)));
+          return { header, rows, ...drawnSizes(header, rows) };
+        })(),
         align: token.align.map((a) => a ?? null),
-        ...tableSizes(token),
         buttons: [
           { label: "md", text: raw.trim() },
           { label: "art", text: tableArt(token) },
@@ -102450,9 +102485,6 @@ function replyButtons(text) {
   return [{ label: "copy md", text: md }, { label: "copy html", text: md, html: x.parse(md, OPTIONS) }];
 }
 
-// src/shared/render/budget.js
-var BUDGET = 64 * 1024;
-
 // src/shared/render/pages.js
 var bytes2 = (s) => new TextEncoder().encode(String(s ?? "")).length;
 function groups(items, size, room) {
@@ -102474,13 +102506,13 @@ function groups(items, size, room) {
 function split(b, budget) {
   if (b.kind === "code") {
     const lines = b.buttons[0].text.split("\n");
-    const room = budget - bytes2(b.lang) - 16;
+    const room = Math.floor(budget / COST_WEIGHT.code) - bytes2(b.lang) - 16;
     return groups(lines, (l3) => bytes2(l3) + 1, room).flatMap((g) => toBlocks(fenced(g.join("\n"), b.lang ?? "")));
   }
   if (b.kind === "table") {
     const lines = b.md.split("\n");
     const head = lines.slice(0, 2);
-    const room = budget - bytes2(head.join("\n")) - 2;
+    const room = Math.floor(budget / COST_WEIGHT.table) - bytes2(head.join("\n")) - 2;
     return groups(lines.slice(2), (l3) => bytes2(l3) + 1, room).flatMap((g) => toBlocks([...head, ...g].join("\n")));
   }
   if (b.kind === "text") {
@@ -102490,14 +102522,11 @@ function split(b, budget) {
   return [b];
 }
 function paginate(blocks2, budget = BUDGET) {
-  const pieces = blocks2.flatMap((b) => (b.bytes ?? 0) > budget ? split(b, budget) : [b]);
-  const pages = groups(pieces, (b) => b.bytes ?? 0, budget);
+  const cost = (b) => b.cost ?? b.bytes ?? 0;
+  const pieces2 = blocks2.flatMap((b) => cost(b) > budget ? split(b, budget) : [b]);
+  const pages = groups(pieces2, cost, budget);
   return pages.length ? pages : [[]];
 }
-
-// src/shared/render/view.js
-var OPEN_NEWEST = 3;
-var HTML_LIMIT = 512 * 1024;
 
 // src/app/clipboard.js
 import { spawnSync } from "node:child_process";
@@ -103043,6 +103072,23 @@ function fold(events, running) {
   return { exchanges: exchanges.slice(-MAX_EXCHANGES).reverse(), diagrams: [...diagrams.values()].reverse() };
 }
 var replyText = (ex) => ex.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n\n");
+function costOf(text) {
+  const enc = new TextEncoder();
+  let fence = null, n = 0;
+  const lines = String(text ?? "").split("\n");
+  for (const [i, line] of lines.entries()) {
+    const b = enc.encode(line).length + (i < lines.length - 1 ? 1 : 0);
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      n += b * 2;
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+    } else if (m) {
+      fence = m[1];
+      n += b * 2;
+    } else n += /^\s*\|/.test(line) ? b * 3 : b;
+  }
+  return n;
+}
 function exchangeRow(ex) {
   const reply = replyText(ex);
   let fence = null;
@@ -103059,7 +103105,6 @@ function exchangeRow(ex) {
     return true;
   });
   const preview = prose.join(" ").replace(/[#*_>|`]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
-  const bytes3 = (s) => new TextEncoder().encode(String(s ?? "")).length;
   return {
     id: ex.id,
     by: ex.by,
@@ -103067,7 +103112,7 @@ function exchangeRow(ex) {
     text: ex.text,
     at: ex.at,
     preview,
-    size: bytes3(ex.text) + bytes3(reply),
+    size: costOf(ex.text) + costOf(reply),
     state: reply.trim() ? "reply" : ex.running ? "working" : "none",
     replyAt: ex.parts.at(-1)?.at ?? null
   };
