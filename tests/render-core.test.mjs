@@ -225,3 +225,36 @@ test("exchangeRow: size weighs fenced code double and table lines triple", () =>
   const row = exchangeRow(ex);
   assert.ok(row.size > Buffer.byteLength("hi") + Buffer.byteLength(ex.parts[0].text));
 });
+
+// ---- hintReach: whether a session's last typed prompts got Render's hint ----
+import { hintReach } from "../src/shared/render/transcript.js";
+import { HINT_PHRASE } from "../src/shared/render/hints.js";
+
+let seq = 0;
+const P = (text) => JSON.stringify({ type: "user", uuid: `u${++seq}`, message: { role: "user", content: text } });
+const H = (phrase = true, asString = false) => {
+  const text = phrase ? `The ${HINT_PHRASE} draws diagrams.` : "Some other hook's context.";
+  return JSON.stringify({ type: "attachment", uuid: `a${++seq}`, attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: asString ? text : [text] } });
+};
+const Q = (text) => JSON.stringify({ type: "attachment", uuid: `q${++seq}`, attachment: { type: "queued_command", prompt: text } });
+const C = (cmd) => P(`<command-name>${cmd}</command-name>\n<command-message>${cmd.slice(1)}</command-message>`);
+
+test("hintReach: ok when the newest prompt got the hint", () => assert.deepEqual(hintReach([P("a"), H(), P("b"), H()]), { state: "ok", checked: 2 }));
+test("hintReach: silent when the newest two got none", () => assert.equal(hintReach([P("a"), H(), P("b"), P("c")]).state, "silent"));
+test("hintReach: one prompt with no hint is unknown", () => assert.deepEqual(hintReach([P("a")]), { state: "unknown", checked: 1 }));
+test("hintReach: newest missed but the one before got it is unknown", () => assert.equal(hintReach([P("a"), H(), P("b")]).state, "unknown"));
+test("hintReach: slash commands, ! commands, queued messages and task notifications aren't prompts", () => {
+  assert.equal(hintReach([P("a"), H(), P("b"), H(), C("/clear"), P("<bash-input>ls</bash-input>"), Q("typed mid-turn"), P("<task-notification>x</task-notification>")]).state, "ok");
+});
+test("hintReach: a hint given as a plain string counts; other hooks' context doesn't", () => {
+  assert.equal(hintReach([P("a"), H(true, true)]).state, "ok");
+  assert.equal(hintReach([P("a"), H(false), P("b"), H(false)]).state, "silent");
+});
+test("hintReach: stops after 3 prompts", () => assert.equal(hintReach([P("x"), H(), P("a"), P("b"), P("c")]).checked, 3));
+test("hintReach: meta, sidechain and tool-result lines aren't prompts; an empty or broken log is unknown", () => {
+  const meta = JSON.stringify({ type: "user", isMeta: true, message: { content: "skill text" } });
+  const side = JSON.stringify({ type: "user", isSidechain: true, message: { content: "agent prompt" } });
+  const tool = JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: "out" }] } });
+  assert.equal(hintReach([P("a"), H(), meta, side, tool, "{ broken"]).state, "ok");
+  assert.deepEqual(hintReach([]), { state: "unknown", checked: 0 });
+});

@@ -7,6 +7,7 @@
 //              { type: "marker", by, event, text, at }
 //   running    only the newest can be: Claude hasn't ended its turn
 import { blockId, pictureBlocks } from "./markdown.js";
+import { HINT_PHRASE } from "./hints.js";
 
 const parse = (line) => { try { return JSON.parse(line); } catch { return null; } };
 const time = (s) => { const t = Date.parse(s ?? ""); return Number.isFinite(t) ? t : null; };
@@ -155,6 +156,34 @@ export function readClaude(lines) {
     }
   });
   return fold(events, () => lastStop !== "end_turn" || openTools.size > 0);
+}
+
+// Whether a Claude Code session's last typed prompts got Render's hint: Claude Code logs each hint it hands Claude as
+// a hook_additional_context attachment after the prompt. Read from the log's end, at most REACH_PROMPTS prompts.
+// "ok": the newest got it; "silent": the newest 2 both didn't; else "unknown" (too few prompts, or a single miss).
+// Slash and ! commands may not run prompt hooks, and queued messages and task notifications don't: none counts.
+const REACH_PROMPTS = 3;
+const NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
+const hintIn = (content) => (Array.isArray(content) ? content : [content]).some((c) => typeof c === "string" && c.includes(HINT_PHRASE));
+
+export function hintReach(lines) {
+  const got = []; // newest first
+  let hinted = false; // a hint after the line being read, before the next typed prompt
+  for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
+    const o = parse(lines[i]);
+    if (!o || o.isSidechain) continue;
+    if (o.type === "attachment") {
+      if (o.attachment?.type === "hook_additional_context" && hintIn(o.attachment.content)) hinted = true;
+      continue;
+    }
+    if (o.type !== "user" || o.isMeta) continue;
+    const text = userText(o.message?.content);
+    if (text == null || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
+    got.push(hinted);
+    hinted = false;
+  }
+  const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
+  return { state, checked: got.length };
 }
 
 // A Codex rollout (~/.codex/sessions/**/rollout-*.jsonl). Codex adds its own context as user messages
