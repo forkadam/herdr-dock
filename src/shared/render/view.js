@@ -116,14 +116,31 @@ export function openWithin(rows, toggled, budget = BUDGET) {
 export const CHAR_PX = 7.2;
 const CELL_PAD = 16;
 
+// ---- Code folding and line numbers, side by side (prismantis 0.20.0's thresholds, MIT) ----
+
+export const NUMBER_FROM = 10; // a code block this long or longer gets line numbers
+export const FOLD_OVER = 30; // one longer than this folds...
+export const FOLD_TO = 20; // ...to its first this many lines
+
+// How much of a code block shows: { shown, more (lines folded away), numbered }.
+export function codeFold(lineCount, open) {
+  const folded = lineCount > FOLD_OVER && !open;
+  return { shown: folded ? FOLD_TO : lineCount, more: folded ? lineCount - FOLD_TO : 0, numbered: lineCount >= NUMBER_FROM };
+}
+
+// Whether consecutive tables, diagrams and figures (their widths in px) share a row: two or more that all fit.
+export function sideBySide(widths, panelPx, gap = 12) {
+  return widths.length >= 2 && widths.reduce((a, w) => a + w, 0) + gap * (widths.length - 1) <= panelPx;
+}
+
 // A table's column widths in px for a panel `panelPx` wide: columnWidths in characters, never below a column's longest
 // word (a table that can't fit then scrolls sideways). A table that fits is stretched to the panel's width, the spare
 // width shared by the columns' natural widths (Adam's call: stretched, as the Markdown view drew tables).
-export function tableWidths(natural, words, panelPx) {
+export function tableWidths(natural, words, panelPx, stretch = true) {
   const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
   const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
   const used = fitted.reduce((a, w) => a + w, 0);
-  if (used >= panelPx) return fitted;
+  if (!stretch || used >= panelPx) return fitted;
   const weight = natural.reduce((a, n) => a + Math.max(1, n), 0);
   const out = fitted.map((w, c) => Math.floor(w + ((panelPx - used) * Math.max(1, natural[c])) / weight));
   out[out.length - 1] += panelPx - out.reduce((a, w) => a + w, 0);

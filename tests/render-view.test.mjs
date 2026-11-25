@@ -87,3 +87,25 @@ test("tableWidths: a table that fits is stretched to the panel, columns sharing 
   assert.equal(w.reduce((a, b) => a + b), 400);
   assert.ok(w[1] > w[0] * 2);
 });
+
+// ---- Folding, line numbers, side by side ----
+import { codeFold, sideBySide } from "../src/shared/render/view.js";
+
+test("codeFold: numbers from 10 lines; over 30 folds to 20 until opened", () => {
+  assert.deepEqual(codeFold(9, false), { shown: 9, more: 0, numbered: false });
+  assert.deepEqual(codeFold(10, false), { shown: 10, more: 0, numbered: true });
+  assert.deepEqual(codeFold(30, false), { shown: 30, more: 0, numbered: true });
+  assert.deepEqual(codeFold(31, false), { shown: 20, more: 11, numbered: true });
+  assert.deepEqual(codeFold(31, true), { shown: 31, more: 0, numbered: true });
+});
+
+test("sideBySide: two or more that fit in one row with gaps; otherwise stacked", () => {
+  assert.equal(sideBySide([200, 150], 400), true);
+  assert.equal(sideBySide([200, 200], 400), false);
+  assert.equal(sideBySide([300], 400), false);
+});
+
+test("tableWidths: not stretched when sharing a row", () => {
+  const fitted = tableWidths([4, 6], [4, 6], 400, false);
+  assert.ok(fitted.reduce((a, b) => a + b) < 400);
+});
