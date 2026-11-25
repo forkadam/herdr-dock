@@ -103502,35 +103502,57 @@ function reach(lines, transcript, runsDir) {
   return r2;
 }
 var RUNS_MAX_AGE_MS = 14 * 864e5;
+var PRUNE_EVERY_MS = 6e4;
+var PRUNE_MARK = ".pruned";
+var RECORD = /\.json(\.\d+\.tmp)?$/;
 function pruneRuns(runsDir) {
-  let sessions;
+  const mark = join(runsDir, PRUNE_MARK);
+  const now = Date.now();
   try {
-    sessions = readdirSync(runsDir);
+    if (now - statSync(mark).mtimeMs < PRUNE_EVERY_MS) return;
+  } catch {
+  }
+  let entries;
+  try {
+    entries = readdirSync(runsDir);
   } catch {
     return;
   }
-  const now = Date.now();
-  for (const s of sessions) {
+  try {
+    writeFileSync(mark, "");
+  } catch {
+  }
+  const stale = (path, name) => {
+    if (!RECORD.test(name)) return false;
+    try {
+      if (now - statSync(path).mtimeMs <= (name.endsWith(".tmp") ? 36e5 : RUNS_MAX_AGE_MS)) return false;
+      rmSync(path, { force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const s of entries) {
+    if (s === PRUNE_MARK) continue;
     const dir = join(runsDir, s);
+    let isDir;
+    try {
+      isDir = statSync(dir).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) {
+      stale(dir, s);
+      continue;
+    }
     let names;
     try {
-      if (!statSync(dir).isDirectory()) continue;
       names = readdirSync(dir);
     } catch {
       continue;
     }
     let left = names.length;
-    for (const name of names) {
-      if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
-      try {
-        const age = now - statSync(join(dir, name)).mtimeMs;
-        if (age > (name.endsWith(".tmp") ? 36e5 : RUNS_MAX_AGE_MS)) {
-          rmSync(join(dir, name), { force: true });
-          left--;
-        }
-      } catch {
-      }
-    }
+    for (const name of names) if (stale(join(dir, name), name)) left--;
     if (left === 0) try {
       rmdirSync(dir);
     } catch {

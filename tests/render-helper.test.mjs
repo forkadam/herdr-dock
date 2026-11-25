@@ -299,7 +299,42 @@ test("claude: hook runs untouched for 14 days and temp files over an hour old ar
     put("mixed/p-fresh.json.456.tmp", 60e3);
     put("mixed/notes.txt", 15 * DAY);
     run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir });
-    assert.deepEqual(readdirSync(runsDir).sort(), ["mixed"]);
+    assert.deepEqual(readdirSync(runsDir).filter((n) => n !== ".pruned").sort(), ["mixed"]);
     assert.deepEqual(readdirSync(join(runsDir, "mixed")).sort(), ["notes.txt", "p-fresh.json.456.tmp", "p-new.json"]);
+  } finally { x.done(); }
+});
+
+test("claude: records from the earlier one-file-per-session layout go after 14 days too; other top-level files stay", () => {
+  const x = home();
+  try {
+    const runsDir = join(x.h, "herdr-dock", "hint-runs");
+    mkdirSync(runsDir, { recursive: true });
+    const old = new Date(Date.now() - 15 * 86400e3);
+    for (const name of ["s-old.json", "s-old.json.9.tmp", "readme.txt"]) { writeFileSync(join(runsDir, name), "{}"); utimesSync(join(runsDir, name), old, old); }
+    writeFileSync(join(runsDir, "s-new.json"), "{}");
+    run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir });
+    assert.deepEqual(readdirSync(runsDir).filter((n) => !n.startsWith(".")).sort(), ["readme.txt", "s-new.json"]);
+  } finally { x.done(); }
+});
+
+test("claude: the hook records are tidied at most once a minute (a marker file says when)", () => {
+  const x = home();
+  try {
+    const runsDir = join(x.h, "herdr-dock", "hint-runs");
+    const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir };
+    const old = new Date(Date.now() - 15 * 86400e3);
+    const stale = (name) => { mkdirSync(join(runsDir, "s"), { recursive: true }); writeFileSync(join(runsDir, "s", name), "{}"); utimesSync(join(runsDir, "s", name), old, old); };
+    stale("p-1.json");
+    run(req);
+    assert.equal(existsSync(join(runsDir, "s", "p-1.json")), false, "the first read tidies");
+    stale("p-2.json");
+    run(req);
+    assert.equal(existsSync(join(runsDir, "s", "p-2.json")), true, "a read within the minute doesn't");
+    const mark = readdirSync(runsDir).find((n) => n.startsWith("."));
+    assert.ok(mark, "a marker file");
+    const ago = new Date(Date.now() - 61e3);
+    utimesSync(join(runsDir, mark), ago, ago);
+    run(req);
+    assert.equal(existsSync(join(runsDir, "s", "p-2.json")), false, "a read after the minute tidies again");
   } finally { x.done(); }
 });

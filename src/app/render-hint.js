@@ -13,12 +13,13 @@
 // = { at, decision } (hints.js, hintDecision). App home: two folders up from this script (<app home>/mods/dock-render/),
 // or $DOCK_APP_HOME. No usable ids, no record. Input is waited for at most STDIN_WAIT_MS (Claude Code closes it at
 // once; a hand run might not), after the hint is printed.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hintDecision } from "../shared/render/hints.js";
 import { HINT_RUNS } from "../shared/render/hint-phrase.js";
+import { writeRecord } from "../shared/render/hint-record.js";
 
 const ID = /^[A-Za-z0-9-]{1,128}$/;
 const STDIN_WAIT_MS = 2000;
@@ -29,12 +30,7 @@ function record(input, decision) {
   const session = ids?.session_id, prompt = ids?.prompt_id;
   if (typeof session !== "string" || !ID.test(session) || typeof prompt !== "string" || !ID.test(prompt)) return;
   const home = process.env.DOCK_APP_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const dir = join(home, ...HINT_RUNS.split("/"), session);
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${prompt}.json`);
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ at: Date.now(), decision }));
-  renameSync(tmp, file);
+  writeRecord(join(home, ...HINT_RUNS.split("/"), session), `${prompt}.json`, JSON.stringify({ at: Date.now(), decision }));
 }
 
 // stdin as text, or "" when it's a terminal, fails, or hasn't ended within STDIN_WAIT_MS.

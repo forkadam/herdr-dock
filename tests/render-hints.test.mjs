@@ -84,7 +84,7 @@ test("hintsPlan: a BOM-prefixed file reads; invalid JSON is left alone", () => {
 
 // ---- The hook script (src/app/render-hint.js; bundled as mods/dock-render/herdr-hint.mjs) ----
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -222,6 +222,27 @@ test("the script doesn't wait long for input that never ends: the hint is printe
   const code = await new Promise((done) => { const t = setTimeout(() => { child.kill(); done("hung"); }, 8000); child.on("exit", (c) => { clearTimeout(t); done(c); }); });
   rmSync(claude, { recursive: true, force: true });
   assert.equal(code, 0);
-  assert.ok(Date.now() - start < 6000);
+  // It lets stdin go after STDIN_WAIT_MS (2 s): well before the 5 s fallback that only guards against a stuck handle.
+  assert.ok(Date.now() - start < 4000, `took ${Date.now() - start} ms`);
   assert.equal(JSON.parse(stdout).hookSpecificOutput.additionalContext, REMINDER);
+});
+
+// ---- Writing a record (src/shared/render/hint-record.js) ----
+import { writeRecord } from "../src/shared/render/hint-record.js";
+
+test("writeRecord: makes the folder, writes through a temp file, and tries once more if the folder vanished meanwhile", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hint-rec-"));
+  try {
+    writeRecord(join(dir, "s-1"), "p-1.json", '{"a":1}');
+    assert.equal(readFileSync(join(dir, "s-1", "p-1.json"), "utf8"), '{"a":1}');
+    assert.deepEqual(readdirSync(join(dir, "s-1")), ["p-1.json"]);
+    // The Render helper's tidy-up removed the empty session folder between mkdir and write.
+    let first = true;
+    const real = { mkdirSync, writeFileSync, renameSync: (a, b) => renameSync(a, b) };
+    const racy = { ...real, writeFileSync: (p, t) => { if (first) { first = false; const e = new Error("gone"); e.code = "ENOENT"; throw e; } return writeFileSync(p, t); } };
+    writeRecord(join(dir, "s-2"), "p-2.json", '{"b":2}', racy);
+    assert.equal(readFileSync(join(dir, "s-2", "p-2.json"), "utf8"), '{"b":2}');
+    const always = { ...real, writeFileSync: () => { const e = new Error("gone"); e.code = "ENOENT"; throw e; } };
+    assert.throws(() => writeRecord(join(dir, "s-3"), "p-3.json", "{}", always), /gone/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

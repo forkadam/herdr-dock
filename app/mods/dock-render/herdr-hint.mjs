@@ -1,7 +1,7 @@
 // src/app/render-hint.js
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join as join2, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/shared/render/figure-limits.js
@@ -68,6 +68,26 @@ function hintDecision(event, { env, settingsText }) {
   return { decision: "spoke", output: JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } }) };
 }
 
+// src/shared/render/hint-record.js
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+var FS = { mkdirSync, renameSync, writeFileSync };
+function writeRecord(dir, name, text, fsx = FS) {
+  const file = join(dir, name);
+  const tmp = `${file}.${process.pid}.tmp`;
+  const attempt = () => {
+    fsx.mkdirSync(dir, { recursive: true });
+    fsx.writeFileSync(tmp, text);
+    fsx.renameSync(tmp, file);
+  };
+  try {
+    attempt();
+  } catch (e) {
+    if (e?.code !== "ENOENT") throw e;
+    attempt();
+  }
+}
+
 // src/app/render-hint.js
 var ID = /^[A-Za-z0-9-]{1,128}$/;
 var STDIN_WAIT_MS = 2e3;
@@ -81,12 +101,7 @@ function record(input, decision) {
   const session = ids?.session_id, prompt = ids?.prompt_id;
   if (typeof session !== "string" || !ID.test(session) || typeof prompt !== "string" || !ID.test(prompt)) return;
   const home = process.env.DOCK_APP_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const dir = join(home, ...HINT_RUNS.split("/"), session);
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${prompt}.json`);
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ at: Date.now(), decision }));
-  renameSync(tmp, file);
+  writeRecord(join2(home, ...HINT_RUNS.split("/"), session), `${prompt}.json`, JSON.stringify({ at: Date.now(), decision }));
 }
 function readInput() {
   if (process.stdin.isTTY) return Promise.resolve("");
@@ -109,10 +124,10 @@ function readInput() {
 }
 async function main() {
   const event = process.argv[2];
-  const dir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const dir = process.env.CLAUDE_CONFIG_DIR || join2(homedir(), ".claude");
   let settingsText = null;
   try {
-    settingsText = readFileSync(join(dir, "settings.json"), "utf8");
+    settingsText = readFileSync(join2(dir, "settings.json"), "utf8");
   } catch (e) {
     if (e?.code !== "ENOENT") throw e;
   }

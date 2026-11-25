@@ -197,24 +197,38 @@ function reach(lines, transcript, runsDir) {
 }
 
 // The hook's records not written for RUNS_MAX_AGE_MS (their sessions are over) and temp files an interrupted write
-// left (after an hour) deleted; a session folder left empty goes too. Other files are left alone.
+// left (after an hour) deleted, in session folders and, from the earlier one-file-per-session layout, at the top; a
+// session folder left empty goes too. Other files are left alone. At most once a PRUNE_EVERY_MS (a marker file's date
+// says when), so a refresh doesn't list every record each time.
 const RUNS_MAX_AGE_MS = 14 * 86400e3;
+const PRUNE_EVERY_MS = 60e3;
+const PRUNE_MARK = ".pruned";
+const RECORD = /\.json(\.\d+\.tmp)?$/;
 function pruneRuns(runsDir) {
-  let sessions;
-  try { sessions = readdirSync(runsDir); } catch { return; }
+  const mark = join(runsDir, PRUNE_MARK);
   const now = Date.now();
-  for (const s of sessions) {
+  try { if (now - statSync(mark).mtimeMs < PRUNE_EVERY_MS) return; } catch {}
+  let entries;
+  try { entries = readdirSync(runsDir); } catch { return; }
+  try { writeFileSync(mark, ""); } catch {}
+  const stale = (path, name) => {
+    if (!RECORD.test(name)) return false;
+    try {
+      if (now - statSync(path).mtimeMs <= (name.endsWith(".tmp") ? 3600e3 : RUNS_MAX_AGE_MS)) return false;
+      rmSync(path, { force: true });
+      return true;
+    } catch { return false; }
+  };
+  for (const s of entries) {
+    if (s === PRUNE_MARK) continue;
     const dir = join(runsDir, s);
+    let isDir;
+    try { isDir = statSync(dir).isDirectory(); } catch { continue; }
+    if (!isDir) { stale(dir, s); continue; }
     let names;
-    try { if (!statSync(dir).isDirectory()) continue; names = readdirSync(dir); } catch { continue; }
+    try { names = readdirSync(dir); } catch { continue; }
     let left = names.length;
-    for (const name of names) {
-      if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
-      try {
-        const age = now - statSync(join(dir, name)).mtimeMs;
-        if (age > (name.endsWith(".tmp") ? 3600e3 : RUNS_MAX_AGE_MS)) { rmSync(join(dir, name), { force: true }); left--; }
-      } catch {}
-    }
+    for (const name of names) if (stale(join(dir, name), name)) left--;
     if (left === 0) try { rmdirSync(dir); } catch {}
   }
 }
