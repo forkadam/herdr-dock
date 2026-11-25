@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { hashText, mermaidBlocks, splitSegments } from "../src/shared/render/markdown.js";
-import { claudeSlug, readClaude, readCodex, codexCwd } from "../src/shared/render/transcript.js";
+import { claudeSlug, exchangeRow, readClaude, readCodex, codexCwd, replyText } from "../src/shared/render/transcript.js";
 import { flattenSvg } from "../src/shared/render/flatten.js";
 
 const lines = (name) => readFileSync(new URL(`./fixtures/render/${name}`, import.meta.url), "utf8").split("\n");
@@ -33,22 +33,66 @@ test("claudeSlug: Claude Code's project folder name for a cwd", () => {
   assert.equal(claudeSlug("C:\\Users\\a\\my.proj"), "C--Users-a-my-proj");
 });
 
-test("readClaude: the latest answer is the assistant text after the last real user message; tool results don't count", () => {
+test("readClaude: the last exchange is the last real user message and the assistant text after it; tool results don't count", () => {
   const r = readClaude(lines("claude.jsonl"));
-  assert.equal(r.answer.text, "Let me look.\n\n## Sequence\n\n~~~Mermaid\nsequenceDiagram\n  U->>S: login\n~~~\n\n```js\nconst x = 1;\n```");
-  assert.equal(r.answer.at, Date.parse("2026-11-22T10:01:03.000Z"));
-  assert.equal(r.prompt, "Now the sequence, and check the code");
+  const last = r.exchanges[0];
+  assert.equal(replyText(last), "Let me look.\n\n## Sequence\n\n~~~Mermaid\nsequenceDiagram\n  U->>S: login\n~~~\n\n```js\nconst x = 1;\n```");
+  assert.equal(exchangeRow(last).replyAt, Date.parse("2026-11-22T10:01:03.000Z"));
+  assert.equal(last.text, "Now the sequence, and check the code");
+  assert.equal(last.by, "you");
+  assert.equal(last.id, "line-3");
   // Every diagram the agent wrote, newest first; none from tool results or the user.
   assert.deepEqual(r.diagrams.map((d) => [d.source.split("\n")[0], d.at]),
     [["sequenceDiagram", Date.parse("2026-11-22T10:01:03.000Z")], ["flowchart LR", Date.parse("2026-11-22T10:00:02.000Z")]]);
-  assert.deepEqual(readClaude([]), { answer: null, prompt: null, diagrams: [] });
+  assert.deepEqual(readClaude([]), { exchanges: [], diagrams: [] });
+});
+
+test("readClaude: exchanges newest first; who started each; hidden lines start nothing", () => {
+  const { exchanges: x } = readClaude(lines("claude-conversation.jsonl"));
+  assert.deepEqual(x.map((e) => [e.id, e.by, e.event, e.text]), [
+    ["u7", "you", null, "And one more"],
+    ["u6", "you", null, "Now the table"],
+    ["u5", "event", "compaction", ""],
+    ["u4", "event", "task-notification", "Old style event"],
+    ["u3", "you", null, "/clear"],
+    ["u2", "event", "task-notification", "Deploy finished (exit 0)"],
+    ["u1", "you", null, "Draw the login flow"],
+  ]);
+});
+
+test("readClaude: what's sent while Claude works is a marker inside the running reply", () => {
+  const ex = readClaude(lines("claude-conversation.jsonl")).exchanges.find((e) => e.id === "u6");
+  assert.deepEqual(ex.parts.map((p) => [p.type, p.by ?? null, p.event ?? null, p.text]), [
+    ["text", null, null, "Part one."],
+    ["marker", "you", null, "also add a chart"],
+    ["marker", "event", "task-notification", "Lint passed"],
+    ["text", null, null, "Part two."],
+  ]);
+  assert.equal(replyText(ex), "Part one.\n\nPart two.");
+});
+
+test("exchangeRow: working only for the newest while Claude goes on; otherwise no reply text", () => {
+  const x = readClaude(lines("claude-conversation.jsonl")).exchanges;
+  assert.equal(exchangeRow(x[0]).state, "working");
+  assert.equal(exchangeRow(x.find((e) => e.id === "u3")).state, "none");
+  const u1 = exchangeRow(x.find((e) => e.id === "u1"));
+  assert.equal(u1.state, "reply");
+  assert.equal(u1.preview, "Here:");
+});
+
+test("readClaude: at most 200 exchanges, the newest", () => {
+  const many = Array.from({ length: 250 }, (_, i) => JSON.stringify({ type: "user", uuid: `m${i}`, origin: { kind: "human" }, message: { content: `p${i}` } }));
+  const x = readClaude(many).exchanges;
+  assert.equal(x.length, 200);
+  assert.equal(x[0].id, "m249");
 });
 
 test("readCodex: the same from a Codex rollout, and its cwd", () => {
   const l = lines("codex.jsonl");
   const r = readCodex(l);
-  assert.equal(r.answer.text, "Sure:\n```mermaid\ngraph TD\n  P-->Q\n```");
-  assert.equal(r.prompt, "diagram please");
+  assert.equal(replyText(r.exchanges[0]), "Sure:\n```mermaid\ngraph TD\n  P-->Q\n```");
+  assert.equal(r.exchanges[0].text, "diagram please");
+  assert.equal(exchangeRow(r.exchanges[0]).state, "reply");
   assert.deepEqual(r.diagrams.map((d) => d.source), ["graph TD\n  P-->Q"]);
   assert.equal(codexCwd(l), "/home/u/proj");
   assert.equal(codexCwd(["junk"]), null);

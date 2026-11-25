@@ -1,71 +1,151 @@
-// Agents' session logs -> the latest answer and every diagram (pure; no host imports). Lines are the log's JSONL lines;
-// a line that isn't JSON is skipped (a log being written can end mid-line).
+// Agents' session logs -> the conversation (exchanges, newest first) and every diagram (pure; no host imports). Lines
+// are the log's JSONL lines; a line that isn't JSON is skipped (a log being written can end mid-line).
+//
+// Exchange: { id, by: "you" | "event", event, text, at, parts, running }
+//   by/event   who started it: you, or an event of that kind ("task-notification", "compaction", …)
+//   parts      Claude's reply: { type: "text", text, at } and, for what arrived while Claude worked,
+//              { type: "marker", by, event, text, at }
+//   running    only the newest can be: Claude hasn't ended its turn
 import { blockId, pictureBlocks } from "./markdown.js";
 
 const parse = (line) => { try { return JSON.parse(line); } catch { return null; } };
 const time = (s) => { const t = Date.parse(s ?? ""); return Number.isFinite(t) ? t : null; };
 
+export const MAX_EXCHANGES = 200;
+const EVENT_TEXT = 140;
+
 // Claude Code's project folder for a working folder: ~/.claude/projects/<this>/<sessionId>.jsonl.
 export const claudeSlug = (cwd) => String(cwd ?? "").replace(/[^A-Za-z0-9]/g, "-");
 
-// The shared fold: a real user message starts a new turn; assistant text since then is the answer.
-function fold(events) {
-  let parts = [];
-  let prompt = null;
+// An event's one line: its <summary> when it has one, else its first line without tags; at most 140 characters.
+function eventText(text) {
+  const s = /<summary>([\s\S]*?)<\/summary>/.exec(text)?.[1]
+    ?? String(text).replace(/<[^>]+>/g, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > EVENT_TEXT ? `${one.slice(0, EVENT_TEXT - 1)}…` : one;
+}
+
+// A slash command's line: "/clear", plus its arguments.
+function commandText(text) {
+  const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(text)?.[1]?.trim() ?? "";
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? "";
+  return args ? `${name} ${args}` : name;
+}
+
+// Who a user line (or a queued message) comes from: { by, event, text }, or null when it isn't shown.
+function speaker(text, originKind, mode) {
+  if (originKind === "human" || mode === "prompt") return { by: "you", event: null, text: /<command-name>/.test(text) ? commandText(text) : text };
+  if (originKind) return { by: "event", event: originKind, text: eventText(text) };
+  if (mode) return { by: "event", event: mode, text: eventText(text) };
+  const s = text.trimStart();
+  if (s.startsWith("<task-notification>")) return { by: "event", event: "task-notification", text: eventText(text) };
+  if (/<command-name>/.test(text)) return { by: "you", event: null, text: commandText(text) };
+  if (/^<(local-command-caveat|local-command-stdout|system-reminder)>/.test(s)) return null;
+  return { by: "you", event: null, text };
+}
+
+// The shared fold. Events: { role: "user", id, by, event, text, at } | { role: "marker", by, event, text, at }
+// | { role: "assistant", text, at }. `running` says whether the log's last turn is still going.
+function fold(events, running) {
+  const exchanges = [];
   const diagrams = new Map(); // id -> { kind, source, id, at } (newest kept): Mermaid diagrams and figures
+  const start = (e) => exchanges.push({ id: e.id, by: e.by, event: e.event, text: e.text, at: e.at, parts: [], running: false });
   for (const e of events) {
-    if (e.role === "user") { parts = []; prompt = e.text; continue; }
-    parts.push(e);
+    if (e.role === "user") { start(e); continue; }
+    if (e.role === "marker") {
+      if (!exchanges.length) start({ ...e, id: e.id ?? "marker-0" });
+      else exchanges.at(-1).parts.push({ type: "marker", by: e.by, event: e.event, text: e.text, at: e.at });
+      continue;
+    }
+    if (!exchanges.length) start({ id: "start", by: "you", event: null, text: "", at: e.at });
+    exchanges.at(-1).parts.push({ type: "text", text: e.text, at: e.at });
     for (const { kind, source } of pictureBlocks(e.text)) {
       const id = blockId(kind, source);
       diagrams.delete(id);
       diagrams.set(id, { kind, source, id, at: e.at });
     }
   }
+  if (exchanges.length) exchanges.at(-1).running = running(exchanges.at(-1));
+  return { exchanges: exchanges.slice(-MAX_EXCHANGES).reverse(), diagrams: [...diagrams.values()].reverse() };
+}
+
+// Claude's reply as written: its text parts, joined.
+export const replyText = (ex) => ex.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n\n");
+
+// An exchange as the panel's row: preview (the reply's first words), state ("reply" | "working" | "none"), replyAt.
+export function exchangeRow(ex) {
+  const reply = replyText(ex);
+  let fence = null; // the open fence's marker while inside a fenced block (its lines are left out)
+  const prose = reply.split("\n").filter((line) => {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) { if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !line.slice(m[0].length).trim()) fence = null; return false; }
+    if (m) { fence = m[1]; return false; }
+    return true;
+  });
+  const preview = prose.join(" ").replace(/[#*_>|`]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
   return {
-    answer: parts.length ? { text: parts.map((p) => p.text).join("\n\n"), at: parts.at(-1).at } : null,
-    prompt,
-    diagrams: [...diagrams.values()].reverse(),
+    id: ex.id, by: ex.by, event: ex.event, text: ex.text, at: ex.at, preview,
+    state: reply.trim() ? "reply" : ex.running ? "working" : "none",
+    replyAt: ex.parts.at(-1)?.at ?? null,
   };
 }
 
-// A Claude Code transcript. User lines that are only tool results, meta lines (system reminders) and side chains
-// (sub-agents) don't start a turn; assistant thinking and tool calls aren't text.
+const userText = (content) => (typeof content === "string" ? content
+  : Array.isArray(content) && content.some((c) => c?.type === "text") && !content.some((c) => c?.type === "tool_result")
+    ? content.filter((c) => c?.type === "text").map((c) => c.text).join("\n") : null);
+
+// A Claude Code transcript. Tool results, meta lines (system reminders) and side chains (sub-agents) start nothing;
+// assistant thinking and tool calls aren't text. A turn is still going while Claude's last line didn't end it or a
+// tool call has no result.
 export function readClaude(lines) {
   const events = [];
-  for (const line of lines ?? []) {
+  const openTools = new Set();
+  let lastStop = null;
+  (lines ?? []).forEach((line, i) => {
     const o = parse(line);
-    if (!o || o.isSidechain) continue;
+    if (!o || o.isSidechain) return;
     const content = o.message?.content;
-    if (o.type === "user" && !o.isMeta) {
-      const text = typeof content === "string" ? content
-        : Array.isArray(content) && content.some((c) => c?.type === "text") && !content.some((c) => c?.type === "tool_result")
-          ? content.filter((c) => c?.type === "text").map((c) => c.text).join("\n") : null;
-      if (text != null) events.push({ role: "user", text, at: time(o.timestamp) });
+    const at = time(o.timestamp);
+    if (o.type === "user") {
+      if (Array.isArray(content)) for (const c of content) if (c?.type === "tool_result") openTools.delete(c.tool_use_id);
+      if (o.isMeta) return;
+      const id = o.uuid ?? `line-${i}`;
+      if (o.isCompactSummary) { events.push({ role: "user", id, by: "event", event: "compaction", text: "", at }); return; }
+      const text = userText(content);
+      if (text == null) return;
+      const who = speaker(text, o.origin?.kind ?? null, null);
+      if (who) events.push({ role: "user", id, ...who, at });
+    } else if (o.type === "attachment" && o.attachment?.type === "queued_command") {
+      const a = o.attachment;
+      const who = speaker(String(a.prompt ?? ""), a.origin?.kind ?? null, a.commandMode ?? null);
+      if (who) events.push({ role: "marker", id: o.uuid ?? `line-${i}`, ...who, at });
     } else if (o.type === "assistant" && Array.isArray(content)) {
+      for (const c of content) if (c?.type === "tool_use" && c.id) openTools.add(c.id);
+      if (o.message?.stop_reason !== undefined) lastStop = o.message.stop_reason;
       const text = content.filter((c) => c?.type === "text" && c.text).map((c) => c.text).join("\n\n");
-      if (text) events.push({ role: "assistant", text, at: time(o.timestamp) });
+      if (text) events.push({ role: "assistant", text, at });
     }
-  }
-  return fold(events);
+  });
+  return fold(events, () => lastStop !== "end_turn" || openTools.size > 0);
 }
 
 // A Codex rollout (~/.codex/sessions/**/rollout-*.jsonl). Codex adds its own context as user messages
-// (<environment_context>, <user_instructions>): those don't start a turn.
+// (<environment_context>, <user_instructions>): those start nothing. The newest exchange is still going until its
+// reply has text.
 export function readCodex(lines) {
   const events = [];
-  for (const line of lines ?? []) {
+  (lines ?? []).forEach((line, i) => {
     const o = parse(line);
     const p = o?.payload;
-    if (o?.type !== "response_item" || p?.type !== "message" || !Array.isArray(p.content)) continue;
+    if (o?.type !== "response_item" || p?.type !== "message" || !Array.isArray(p.content)) return;
     const text = p.content.filter((c) => (c?.type === "input_text" || c?.type === "output_text") && c.text).map((c) => c.text).join("\n\n");
-    if (!text) continue;
+    if (!text) return;
     if (p.role === "user") {
-      if (/^\s*<(environment_context|user_instructions)>/.test(text)) continue;
-      events.push({ role: "user", text, at: time(o.timestamp) });
+      if (/^\s*<(environment_context|user_instructions)>/.test(text)) return;
+      events.push({ role: "user", id: `line-${i}`, by: "you", event: null, text, at: time(o.timestamp) });
     } else if (p.role === "assistant") events.push({ role: "assistant", text, at: time(o.timestamp) });
-  }
-  return fold(events);
+  });
+  return fold(events, (ex) => !ex.parts.some((pt) => pt.type === "text"));
 }
 
 // The working folder a Codex rollout was started in.
