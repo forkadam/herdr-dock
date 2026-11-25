@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { HINT, REMINDER, hintCommand, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
 
-const IN = { HERDR_PANE_ID: "p1" };
+const IN = { HC_TERMINAL_ID: "t1" };
 const PRISM = (options = {}) => JSON.stringify({ enabledPlugins: { "prismantis@prismantis": true }, pluginConfigs: { "prismantis@prismantis": { options } } });
 const SCRIPT = "/Users/a/.config/herdr-app/mods/dock-render/herdr-hint.mjs";
 
@@ -21,7 +21,7 @@ test("hintOutput: in Herdr, the note at session start and the reminder on a prom
 
 test("hintOutput: quiet outside Herdr, while prismantis's hints are on, with broken settings, for an unknown event", () => {
   assert.equal(hintOutput("session", { env: {}, settingsText: null }), "");
-  assert.equal(hintOutput("session", { env: { HERDR_PANE_ID: "" }, settingsText: null }), "");
+  assert.equal(hintOutput("session", { env: { HC_TERMINAL_ID: "" }, settingsText: null }), "");
   assert.equal(hintOutput("session", { env: IN, settingsText: PRISM() }), "");
   assert.equal(hintOutput("session", { env: IN, settingsText: "{ not json" }), "");
   assert.equal(hintOutput("other", { env: IN, settingsText: null }), "");
@@ -73,13 +73,13 @@ const hook = (event, env, settings) => {
   const dir = mkdtempSync(join(tmpdir(), "hint-"));
   try {
     if (settings != null) writeFileSync(join(dir, "settings.json"), settings);
-    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "HERDR_PANE_ID"));
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "HC_TERMINAL_ID"));
     return spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", env: { ...clean, CLAUDE_CONFIG_DIR: dir, ...env } });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 };
 
 test("the script: prints the hook JSON in Herdr; nothing outside it; exit 0 either way", () => {
-  const r = hook("session", { HERDR_PANE_ID: "p1" }, "{}");
+  const r = hook("session", { HC_TERMINAL_ID: "t1" }, "{}");
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, HINT);
   const out = hook("prompt", {}, "{}");
@@ -88,9 +88,9 @@ test("the script: prints the hook JSON in Herdr; nothing outside it; exit 0 eith
 });
 
 test("the script: broken settings print nothing; prismantis on prints nothing", () => {
-  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, "{ broken").stdout, "");
-  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM()).stdout, "");
-  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM({ diagramHints: false })).status, 0);
+  assert.equal(hook("session", { HC_TERMINAL_ID: "t1" }, "{ broken").stdout, "");
+  assert.equal(hook("session", { HC_TERMINAL_ID: "t1" }, PRISM()).stdout, "");
+  assert.equal(hook("session", { HC_TERMINAL_ID: "t1" }, PRISM({ diagramHints: false })).status, 0);
 });
 
 // ---- The setup command (src/app/hints-setup.js; bundled as mods/dock-render/herdr-hints-setup.mjs) ----

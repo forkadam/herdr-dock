@@ -55,7 +55,7 @@ function prismantisHints(settings) {
 var EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
 function hintOutput(event, { env, settingsText }) {
   const name = EVENTS[event];
-  if (!name || !env?.HERDR_PANE_ID) return "";
+  if (!name || !env?.HC_TERMINAL_ID) return "";
   const r = readSettings(settingsText);
   if (!r.ok || prismantisHints(r.settings)) return "";
   return JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } });

@@ -1,8 +1,8 @@
 // The Render panel's diagram hints for Claude Code (pure; no Node built-ins): the note telling Claude what the panel
 // draws, given once per session (Claude Code's SessionStart hook: start, /clear, compaction), and a one-line reminder
-// on each prompt (UserPromptSubmit). Both are quiet outside Herdr (no HERDR_PANE_ID) and while prismantis's own
-// hints are on, so there's never a plain-terminal note nor two notes at once. The wording is adapted from prismantis
-// 0.20.0's HINT and FIGURE_HINT (hooks/register.tsx, hooks/figure.tsx): https://github.com/NahumLitvin/prismantis (MIT).
+// on each prompt (UserPromptSubmit). Both are quiet outside Herdr (no HC_TERMINAL_ID, which Herdr sets in each of its
+// terminals) and while prismantis's own hints are on, so there's never a plain-terminal note nor two notes at once.
+// The wording is adapted from prismantis 0.20.0's HINT and FIGURE_HINT (hooks/register.tsx, hooks/figure.tsx): https://github.com/NahumLitvin/prismantis (MIT).
 import { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES } from "./figure-limits.js";
 import { readSettings } from "../statusline.js";
 
@@ -50,7 +50,7 @@ const EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
 // settings.json (null when missing); one that doesn't parse keeps it quiet, as prismantis may be on.
 export function hintOutput(event, { env, settingsText }) {
   const name = EVENTS[event];
-  if (!name || !env?.HERDR_PANE_ID) return "";
+  if (!name || !env?.HC_TERMINAL_ID) return "";
   const r = readSettings(settingsText);
   if (!r.ok || prismantisHints(r.settings)) return "";
   return JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } });
