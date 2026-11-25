@@ -64,14 +64,35 @@ export function viewOf(stored) {
 }
 
 // The Render panel's row about the diagram-hint hooks, from what the check found in ~/.claude/settings.json
-// ("present" | "missing" | "moved" | "invalid" | "no-claude" | null), or null when there's nothing to say.
-export function hintsNotice(state, { dismissed, error }) {
+// ("present" | "missing" | "moved" | "invalid" | "no-claude" | null), or null when there's nothing to say. With the
+// hooks present, `reach` (the shown Claude session's hintReach state) "silent" says the hints aren't arriving, unless
+// prismantis's own hints are on (ours stay quiet then) or × hid it for that session. `dismissed` (the set-up row's
+// "don't ask again") doesn't hide it: that's a fault, not a reminder.
+export function hintsNotice(state, { dismissed, error, reach, prismantis, reachDismissed }) {
+  if (state === "present" && reach === "silent" && !prismantis && !reachDismissed) {
+    return { text: "Diagram hints aren't reaching Claude in this session", action: "why" };
+  }
   if (dismissed) return null;
   if (error) return { text: `Set up failed: ${error}`, action: "setup" };
   if (state === "missing") return { text: "Diagram hints for Claude aren't set up", action: "setup" };
   if (state === "moved") return { text: "Diagram hints point at another install", action: "setup" };
   if (state === "invalid") return { text: "~/.claude/settings.json can't be read: diagram hints aren't set up", action: null };
   return null;
+}
+
+// What the reach row's Why shows.
+export const HINTS_WHY = "Your last 2 prompts reached Claude without Render's note, though the hooks are set up. If this session started before the hints were set up, start a new Claude session. If a new session shows this too, the hint hook is staying silent: copy the details and report it.";
+
+// The reach row's "copy details": what a bug report needs, one fact a line.
+export function hintsDetails({ platform, commands, transcript, checked }) {
+  return [
+    "herdr-dock Render: diagram hints aren't reaching Claude",
+    `platform: ${platform ?? "unknown"}`,
+    `hook commands in ~/.claude/settings.json: ${commands?.length ? "" : "none found"}`,
+    ...(commands ?? []).map((c) => `  ${c}`),
+    `session log: ${transcript ?? "unknown"}`,
+    `typed prompts checked: ${checked ?? 0}, none got the hint (the newest 2)`,
+  ].join("\n");
 }
 
 // ---- Colour ----

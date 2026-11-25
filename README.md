@@ -499,8 +499,12 @@ terminal, so you keep Claude Code's own terminal UI:
   Herdr-way install, the install or Render's **Set up**) adds two hooks to `~/.claude/settings.json` (copied to `settings.json.bak-herdr-dock` first; your own hooks are kept) that run
   `mods/dock-render/herdr-hint.mjs`: once per session (at start, after `/clear` and after compaction) a note on what
   the panel draws and how to write a ```` ```figure ````, and on each prompt a one-line reminder (about 40 tokens).
-  They're quiet outside Herdr (no `HC_TERMINAL_ID`) and while [prismantis](https://github.com/NahumLitvin/prismantis)'s
-  own diagram hints are on, so you never get two notes. `npm run deploy -- --no-hints` leaves them out. Deleting the
+  They're quiet outside Herdr (none of `HC_TERMINAL_ID`, `HC_SCOPE`, `HERDR_PANE_ID`) and while
+  [prismantis](https://github.com/NahumLitvin/prismantis)'s own diagram hints are on, so you never get two notes.
+  Render checks that the hints arrive: when the hooks are set up but the last two prompts of the Claude session it
+  shows reached Claude without one (Claude Code logs each hint in the session), it says **Diagram hints aren't
+  reaching Claude in this session**, with **Why** (what to do, and details to copy for a report) and × to hide it for
+  that session. `npm run deploy -- --no-hints` leaves them out. Deleting the
   two `herdr-hint` entries from `hooks` in `~/.claude/settings.json` removes them only until the next deploy or update
   (`npm run update` and the Dock layout dialog's Update run deploy), which adds them back. The note's wording is
   adapted from prismantis (MIT).

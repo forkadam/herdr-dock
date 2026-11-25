@@ -69,6 +69,14 @@ var HINT = [
   ].join(" ")
 ].join("\n");
 var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function prismantisHints(settings) {
+  const plugins = isObj2(settings?.enabledPlugins) ? settings.enabledPlugins : {};
+  return Object.entries(plugins).some(([key, on]) => {
+    if (!key.startsWith("prismantis@") || on !== true) return false;
+    const o = settings.pluginConfigs?.[key]?.options;
+    return !(isObj2(o) && (o.enabled === false || o.mermaid === false || o.diagramHints === false));
+  });
+}
 var EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
 var hintCommand = (script, event) => `node "${String(script).replace(/\\/g, "/")}" ${event}`;
 function hintsPlan(settingsText, script) {
@@ -260,13 +268,27 @@ var replyNote = (row) => row.state === "working" ? "working\u2026" : row.state =
 function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
 }
-function hintsNotice(state, { dismissed, error }) {
+function hintsNotice(state, { dismissed, error, reach, prismantis, reachDismissed }) {
+  if (state === "present" && reach === "silent" && !prismantis && !reachDismissed) {
+    return { text: "Diagram hints aren't reaching Claude in this session", action: "why" };
+  }
   if (dismissed) return null;
   if (error) return { text: `Set up failed: ${error}`, action: "setup" };
   if (state === "missing") return { text: "Diagram hints for Claude aren't set up", action: "setup" };
   if (state === "moved") return { text: "Diagram hints point at another install", action: "setup" };
   if (state === "invalid") return { text: "~/.claude/settings.json can't be read: diagram hints aren't set up", action: null };
   return null;
+}
+var HINTS_WHY = "Your last 2 prompts reached Claude without Render's note, though the hooks are set up. If this session started before the hints were set up, start a new Claude session. If a new session shows this too, the hint hook is staying silent: copy the details and report it.";
+function hintsDetails({ platform, commands, transcript, checked }) {
+  return [
+    "herdr-dock Render: diagram hints aren't reaching Claude",
+    `platform: ${platform ?? "unknown"}`,
+    `hook commands in ~/.claude/settings.json: ${commands?.length ? "" : "none found"}`,
+    ...(commands ?? []).map((c) => `  ${c}`),
+    `session log: ${transcript ?? "unknown"}`,
+    `typed prompts checked: ${checked ?? 0}, none got the hint (the newest 2)`
+  ].join("\n");
 }
 var COLOURS = {
   heading: "ansi6",
@@ -371,7 +393,9 @@ var Render = class extends View {
     this.unfolded = /* @__PURE__ */ new Set();
     this.opening = /* @__PURE__ */ new Set();
     this.copied = null;
-    this.hints = { state: null, busy: false, error: null, checked: false };
+    this.hints = { state: null, busy: false, error: null, checked: false, prismantis: false, commands: [] };
+    this.reachWhy = false;
+    this.reachDismissed = /* @__PURE__ */ new Set();
     this.files = null;
     this.file = null;
     this.problem = null;
@@ -626,7 +650,12 @@ var Render = class extends View {
         const probe = listDirCommand(window()?.platform, dir);
         const r = await exec(probe.command, probe.args).catch(() => null);
         this.hints.state = r && r.code === 0 ? "missing" : "no-claude";
-      } else this.hints.state = hintsPlan(text, this.hintScript()).state;
+      } else {
+        this.hints.state = hintsPlan(text, this.hintScript()).state;
+        const r = readSettings(text);
+        this.hints.prismantis = r.ok && prismantisHints(r.settings);
+        this.hints.commands = r.ok ? Object.values(r.settings?.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).map((h) => h?.command).filter((c) => typeof c === "string" && c.includes(HINT_MARK)) : [];
+      }
     } catch (e) {
       this.hints.state = null;
       console.log(`dock-render: diagram hints check failed: ${e?.message ?? e}`);
@@ -651,14 +680,35 @@ var Render = class extends View {
       }
     });
   }
-  // One line under the header while the hooks are missing: Set up, and × to never ask again.
+  // One line under the header while the hooks are missing (Set up, and × to never ask again), or while they're set up
+  // but the Claude session shown got no hint on its last prompts (Why, and × for that session).
   hintsRow(t) {
-    const n = hintsNotice(this.hints.state, { dismissed: shared(HINTS_KEY) === true, error: this.hints.error });
+    const transcript = this.target?.kind === "claude" ? this.target.transcript : null;
+    const n = hintsNotice(this.hints.state, {
+      dismissed: shared(HINTS_KEY) === true,
+      error: this.hints.error,
+      prismantis: this.hints.prismantis,
+      reach: transcript && this.data?.file === transcript ? this.data.hints?.state : void 0,
+      reachDismissed: this.reachDismissed.has(transcript)
+    });
     if (!n) return null;
+    if (n.action === "why") return this.reachRow(t, n, transcript);
     return h_flex().id("render-hints").px(PAD).py(4).gap(8).flex_none().items_center().border_b(1).border_color(t.border).child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.hints.error ? t.blocked ?? t.ansi1 : t.muted).child(n.text)).when(n.action === "setup", (el) => el.child(h_flex().id("render-hints-setup").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).when(!this.hints.busy, (b) => b.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runHintsSetup(cx))).child(this.hints.busy ? "Setting up\u2026" : "Set up"))).child(div().id("render-hints-dismiss").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover)).tooltip("Don't ask again").on_click((_e, cx) => {
       setShared(HINTS_KEY, true);
       cx.notify();
     }).child(svg("mods/workspace-chrome/x.svg").size(12)));
+  }
+  // The hints are set up but don't reach Claude: the row, Why (what it means, what to do, details to copy), ×.
+  reachRow(t, n, transcript) {
+    const details = hintsDetails({ platform: window()?.platform ?? null, commands: this.hints.commands, transcript, checked: this.data?.hints?.checked });
+    return v_flex().id("render-hints").px(PAD).py(4).gap(6).flex_none().border_b(1).border_color(t.border).child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked ?? t.ansi3).child(n.text)).child(h_flex().id("render-hints-why").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border).text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => {
+      this.reachWhy = !this.reachWhy;
+      cx.notify();
+    }).child(this.reachWhy ? "Hide" : "Why")).child(div().id("render-hints-dismiss").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover)).tooltip("Hide for this session").on_click((_e, cx) => {
+      this.reachDismissed.add(transcript);
+      this.reachWhy = false;
+      cx.notify();
+    }).child(svg("mods/workspace-chrome/x.svg").size(12)))).when(this.reachWhy, (el) => el.child(div().text_size(12).text_color(t.muted).child(HINTS_WHY)).child(this.buttons(t, [{ label: "copy details", text: details }], "render-hints-details", false, false)));
   }
   // ---- copying ----
   // A row of copy buttons; `key` names the row, so the one pressed can say "copied".

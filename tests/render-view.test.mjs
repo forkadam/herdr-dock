@@ -1,7 +1,7 @@
 // The Render panel's Conversation view model (src/shared/render/view.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { copyPlan, hintsNotice, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf } from "../src/shared/render/view.js";
+import { HINTS_WHY, copyPlan, hintsDetails, hintsNotice, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf } from "../src/shared/render/view.js";
 
 const rows = ["a", "b", "c", "d", "e"].map((id) => ({ id }));
 
@@ -51,6 +51,25 @@ test("hintsNotice: missing or moved offers Set up; unreadable says so; present, 
   for (const s of ["present", "no-claude", null]) assert.equal(n(s), null, String(s));
   assert.equal(n("missing", { dismissed: true }), null);
   assert.deepEqual(n("missing", { error: "Cannot write" }), { text: "Set up failed: Cannot write", action: "setup" });
+});
+
+test("hintsNotice: hooks present but the session's prompts got none -> the reach row; not for prismantis, unknown, ok or after ×", () => {
+  const n = (o) => hintsNotice("present", { dismissed: false, error: null, reach: "silent", prismantis: false, reachDismissed: false, ...o });
+  assert.deepEqual(n({}), { text: "Diagram hints aren't reaching Claude in this session", action: "why" });
+  assert.deepEqual(n({ dismissed: true }), { text: "Diagram hints aren't reaching Claude in this session", action: "why" });
+  for (const o of [{ prismantis: true }, { reach: "unknown" }, { reach: "ok" }, { reach: undefined }, { reachDismissed: true }]) assert.equal(n(o), null, JSON.stringify(o));
+  assert.equal(hintsNotice("missing", { dismissed: false, error: null, reach: "silent" }).action, "setup");
+  assert.equal(hintsNotice("moved", { dismissed: false, error: null, reach: "silent" }).action, "setup");
+});
+
+test("HINTS_WHY says what happened and what to do", () => {
+  assert.equal(HINTS_WHY, "Your last 2 prompts reached Claude without Render's note, though the hooks are set up. If this session started before the hints were set up, start a new Claude session. If a new session shows this too, the hint hook is staying silent: copy the details and report it.");
+});
+
+test("hintsDetails: platform, hook commands, transcript, prompts checked", () => {
+  const d = hintsDetails({ platform: "linux", commands: ['node "/a/herdr-hint.mjs" prompt'], transcript: "/t.jsonl", checked: 3 });
+  for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl", "3"]) assert.ok(d.includes(s), s);
+  assert.match(hintsDetails({ platform: null, commands: [], transcript: null, checked: 0 }), /none found/);
 });
 
 // ---- Colour ----
