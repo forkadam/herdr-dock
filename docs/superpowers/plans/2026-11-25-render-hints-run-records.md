@@ -41,3 +41,13 @@ record; hintsNotice texts; hintsWhy per verdict; details include the decision.
 ### Task 3: Prove it
 Deploy; this session's record appears with `spoke`; Render shows no row. Replay all transcripts. Suite on Windows and
 WSL. Fresh review; fix every finding in the same round.
+
+## Revision after the fourth review (2026-11-25)
+Peer messages run UserPromptSubmit too and overwrote the per-session record (false row). Records are now one per
+prompt: `<app home>/herdr-dock/hint-runs/<session id>/<prompt id>.json` = `{ at, decision }`, prompt runs only (the
+hook input's `prompt_id`; each transcript prompt line carries its own `promptId`, peer messages a different one).
+`hintReach` returns the newest typed prompt's `promptId` and `settled` (an assistant line follows it, so its hint has
+had time to land); `reachVerdict(hints, run)` needs `settled`, a run for that prompt, decision spoke / not-herdr. The
+folder name is one constant (`HINT_RUNS`, hint-phrase.js) used by the hook and the panel. The hook waits at most 2 s
+for stdin. Times are checked finite before use. Prune walks session folders (14 days; temp files 1 hour; empty
+folders removed).

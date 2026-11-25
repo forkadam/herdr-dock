@@ -24,6 +24,9 @@ function readSettings(text) {
   return { ok: true, settings, command };
 }
 
+// src/shared/render/hint-phrase.js
+var HINT_RUNS = "herdr-dock/hint-runs";
+
 // src/shared/render/hints.js
 var inHerdr = (env) => ["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].some((k) => typeof env?.[k] === "string" && env[k] !== "");
 var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
@@ -66,24 +69,45 @@ function hintDecision(event, { env, settingsText }) {
 }
 
 // src/app/render-hint.js
-var SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
-function record(input, event, decision) {
-  let id;
+var ID = /^[A-Za-z0-9-]{1,128}$/;
+var STDIN_WAIT_MS = 2e3;
+function record(input, decision) {
+  let ids;
   try {
-    id = JSON.parse(input)?.session_id;
+    ids = JSON.parse(input);
   } catch {
     return;
   }
-  if (typeof id !== "string" || !SESSION_ID.test(id)) return;
+  const session = ids?.session_id, prompt = ids?.prompt_id;
+  if (typeof session !== "string" || !ID.test(session) || typeof prompt !== "string" || !ID.test(prompt)) return;
   const home = process.env.DOCK_APP_HOME || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const dir = join(home, "herdr-dock", "hint-runs");
+  const dir = join(home, ...HINT_RUNS.split("/"), session);
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, `${id}.json`);
+  const file = join(dir, `${prompt}.json`);
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ at: Date.now(), event, decision }));
+  writeFileSync(tmp, JSON.stringify({ at: Date.now(), decision }));
   renameSync(tmp, file);
 }
-try {
+function readInput() {
+  if (process.stdin.isTTY) return Promise.resolve("");
+  return new Promise((done) => {
+    let text = "";
+    const timer = setTimeout(() => done(""), STDIN_WAIT_MS);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (d) => {
+      text += d;
+    });
+    process.stdin.on("end", () => {
+      clearTimeout(timer);
+      done(text);
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timer);
+      done("");
+    });
+  });
+}
+async function main() {
   const event = process.argv[2];
   const dir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
   let settingsText = null;
@@ -94,16 +118,20 @@ try {
   }
   const d = hintDecision(event, { env: process.env, settingsText });
   if (d?.output) process.stdout.write(d.output + "\n");
-  if (d) {
-    let input = "";
+  if (d && event === "prompt") {
+    const input = await readInput();
     try {
-      if (!process.stdin.isTTY) input = readFileSync(0, "utf8");
-    } catch {
-    }
-    try {
-      record(input, event, d.decision);
+      record(input, d.decision);
     } catch {
     }
   }
-} catch {
 }
+process.exitCode = 0;
+setTimeout(() => process.exit(0), STDIN_WAIT_MS + 3e3).unref();
+main().catch(() => {
+}).finally(() => {
+  try {
+    process.stdin.destroy();
+  } catch {
+  }
+});

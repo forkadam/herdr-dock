@@ -5565,7 +5565,7 @@ var require_elk_bundled = __commonJS({
               return Rde(a.c, a.b, b);
             }
             function RD(a, b) {
-              return a != null && ID(a, b);
+              return a != null && ID2(a, b);
             }
             function fXd(a, b) {
               uJd(a);
@@ -7532,7 +7532,7 @@ var require_elk_bundled = __commonJS({
               return b;
             }
             function JD(a, b) {
-              SDb(a == null || ID(a, b));
+              SDb(a == null || ID2(a, b));
               return a;
             }
             function Qwb(a, b, c) {
@@ -21618,7 +21618,7 @@ var require_elk_bundled = __commonJS({
               }
               lIb(EKb(a, e, d), b);
             }
-            function ID(a, b) {
+            function ID2(a, b) {
               if (VD(a)) {
                 return !!HD[b];
               } else if (a.Qm) {
@@ -40628,11 +40628,11 @@ var require_elk_bundled = __commonJS({
                 case 12:
                   return b != null && (typeof b === gte || typeof b == kte);
                 case 0:
-                  return ID(b, a.__elementTypeId$);
+                  return ID2(b, a.__elementTypeId$);
                 case 2:
                   return WD(b) && !(b.Rm === rdb);
                 case 1:
-                  return WD(b) && !(b.Rm === rdb) || ID(b, a.__elementTypeId$);
+                  return WD(b) && !(b.Rm === rdb) || ID2(b, a.__elementTypeId$);
                 default:
                   return true;
               }
@@ -93529,7 +93529,7 @@ var require_prism = __commonJS({
 });
 
 // src/app/render-helper.js
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 
@@ -103258,10 +103258,17 @@ var hintIn = (a) => JSON.stringify(a ?? null).includes(HINT_PHRASE);
 function hintReach(lines) {
   const got = [];
   let hinted = false;
+  let settled = false;
   let at2 = null;
+  let promptId = null;
+  let answered = false;
   for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
+    if (o.type === "assistant" && !got.length) {
+      answered = true;
+      continue;
+    }
     if (o.type === "attachment") {
       if (o.attachment?.type === "queued_command") hinted = false;
       else if (hintIn(o.attachment)) hinted = true;
@@ -103278,12 +103285,16 @@ function hintReach(lines) {
       hinted = false;
       continue;
     }
-    if (!got.length) at2 = time(o.timestamp);
+    if (!got.length) {
+      at2 = time(o.timestamp);
+      promptId = typeof o.promptId === "string" ? o.promptId : null;
+      settled = answered;
+    }
     got.push(hinted);
     hinted = false;
   }
   const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
-  return { state, checked: got.length, ...at2 != null ? { at: at2 } : {} };
+  return { state, checked: got.length, ...at2 != null ? { at: at2 } : {}, ...promptId ? { promptId } : {}, ...settled ? { settled } : {} };
 }
 function readCodex(lines) {
   const events = [];
@@ -103478,13 +103489,13 @@ function prune(cacheDir, options) {
   }
   return n;
 }
-var SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
+var ID = /^[A-Za-z0-9-]{1,128}$/;
 function reach(lines, transcript, runsDir) {
   const r2 = hintReach(lines);
   const id = basename(String(transcript)).replace(/\.jsonl$/, "");
-  if (!runsDir || !SESSION_ID.test(id)) return r2;
+  if (!runsDir || !ID.test(id) || !ID.test(r2.promptId ?? "")) return r2;
   try {
-    const run3 = JSON.parse(readFileSync(join(runsDir, `${id}.json`), "utf8"));
+    const run3 = JSON.parse(readFileSync(join(runsDir, id, `${r2.promptId}.json`), "utf8"));
     if (run3 && typeof run3 === "object" && !Array.isArray(run3)) return { ...r2, run: run3 };
   } catch {
   }
@@ -103492,18 +103503,36 @@ function reach(lines, transcript, runsDir) {
 }
 var RUNS_MAX_AGE_MS = 14 * 864e5;
 function pruneRuns(runsDir) {
-  let names;
+  let sessions;
   try {
-    names = readdirSync(runsDir);
+    sessions = readdirSync(runsDir);
   } catch {
     return;
   }
   const now = Date.now();
-  for (const name of names) {
-    if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
+  for (const s of sessions) {
+    const dir = join(runsDir, s);
+    let names;
     try {
-      const age = now - statSync(join(runsDir, name)).mtimeMs;
-      if (age > (name.endsWith(".tmp") ? 36e5 : RUNS_MAX_AGE_MS)) rmSync(join(runsDir, name), { force: true });
+      if (!statSync(dir).isDirectory()) continue;
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    let left = names.length;
+    for (const name of names) {
+      if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
+      try {
+        const age = now - statSync(join(dir, name)).mtimeMs;
+        if (age > (name.endsWith(".tmp") ? 36e5 : RUNS_MAX_AGE_MS)) {
+          rmSync(join(dir, name), { force: true });
+          left--;
+        }
+      } catch {
+      }
+    }
+    if (left === 0) try {
+      rmdirSync(dir);
     } catch {
     }
   }

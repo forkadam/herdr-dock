@@ -63,19 +63,15 @@ export function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
 }
 
-// How far a hook record may be from the newest prompt and still be that prompt's run (both clocks are this PC's).
-export const RUN_SLACK_MS = 5000;
-
-// Why the shown Claude session's hints aren't arriving, from its log (hintReach: { state, at }) and the hook's record of
-// its last run there ({ at, event, decision }): "spoke" (the hook sent the hint; Claude Code didn't pass it on) or
-// "not-herdr" (the hook ran but saw none of Herdr's variables), when the newest 2 prompts got no hint and the record
-// is that of the newest prompt's run. Otherwise null: hints arrive, too few prompts, the hook is quiet by design
-// (prismantis, settings that don't parse: the set-up row says so), or it never ran (hooks switched off anywhere, a
-// session started before set up) — nothing a row could fix.
+// Why the shown Claude session's hints aren't arriving, from its log (hintReach: { state, promptId, settled }) and the
+// hint hook's record of its run for that newest prompt ({ at, decision }): "spoke" (the hook sent the hint; Claude Code
+// didn't pass it on) or "not-herdr" (the hook ran but saw none of Herdr's variables), when the newest 2 prompts got no
+// hint and Claude has answered the newest (its hint had time to land). Otherwise null: hints arrive, too few prompts,
+// too soon, the hook is quiet by design (prismantis; settings that don't parse — the set-up row says so), or it didn't
+// run for that prompt (hooks switched off anywhere, a session started before set up): nothing a row could fix.
 export function reachVerdict(hints, run) {
-  if (hints?.state !== "silent" || typeof hints.at !== "number" || run?.event !== "prompt") return null;
-  if (!(typeof run.at === "number" && run.at >= hints.at - RUN_SLACK_MS)) return null;
-  return run.decision === "spoke" || run.decision === "not-herdr" ? run.decision : null;
+  if (hints?.state !== "silent" || hints.settled !== true || typeof hints.promptId !== "string") return null;
+  return run?.decision === "spoke" || run?.decision === "not-herdr" ? run.decision : null;
 }
 
 const REACH_TEXT = {
@@ -106,7 +102,8 @@ export const hintsWhy = (verdict) => WHY[verdict] ?? "";
 
 // The reach row's "copy details": what a bug report needs, one fact a line.
 export function hintsDetails({ platform, commands, transcript, checked, run }) {
-  const last = run && typeof run.at === "number" ? `${new Date(run.at).toISOString()}, ${run.event}, decided "${run.decision}"` : "none recorded";
+  const when = Number.isFinite(run?.at) && Math.abs(run.at) <= 8.64e15 ? new Date(run.at).toISOString() : "time unknown";
+  const last = run ? `${when}, decided "${run.decision}"` : "none recorded";
   return [
     "herdr-dock Render: diagram hints aren't reaching Claude",
     `platform: ${platform ?? "unknown"}`,
@@ -114,7 +111,7 @@ export function hintsDetails({ platform, commands, transcript, checked, run }) {
     ...(commands ?? []).map((c) => `  ${c}`),
     `session log: ${transcript ?? "unknown"}`,
     `typed prompts checked: ${checked ?? 0} (the newest 2 got no hint)`,
-    `the hook's last run: ${last}`,
+    `the hook's run for the newest prompt: ${last}`,
   ].join("\n");
 }
 

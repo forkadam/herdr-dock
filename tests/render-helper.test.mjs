@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const HELPER = join(import.meta.dirname, "..", "src", "app", "render-helper.js");
@@ -243,25 +243,35 @@ test("claude: footnotes across a mid-turn marker are numbered once and noted at 
   } finally { x.done(); }
 });
 
-test("claude: whether the last prompts got Render's hint, with the hook's record of its last run here; codex answers don't", () => {
+test("claude: whether the last prompts got Render's hint, with the hook's run for the newest prompt; codex answers don't", () => {
   const x = home();
   try {
     const runsDir = join(x.h, "herdr-dock", "hint-runs");
-    mkdirSync(runsDir, { recursive: true });
-    const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir };
+    const prompt = (text, promptId) => JSON.stringify({ type: "user", promptId, origin: { kind: "human" }, timestamp: "2026-11-25T14:29:25.000Z", message: { role: "user", content: text } });
+    const answer = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
+    const transcript = join(x.h, "s-1.jsonl");
+    writeFileSync(transcript, [prompt("one", "p-1"), answer, prompt("two", "p-2"), answer].join("\n") + "\n");
+    const req = { ...x.base, mode: "claude", transcript, runsDir };
     const plain = run(req);
-    assert.equal(plain.hints.state, "silent");
-    assert.equal(plain.hints.checked, 3);
-    assert.equal(typeof plain.hints.at, "number");
+    assert.deepEqual([plain.hints.state, plain.hints.checked, plain.hints.promptId, plain.hints.settled], ["silent", 2, "p-2", true]);
     assert.equal(plain.hints.run, undefined);
-    // The record is the transcript's own: <session id>.json, the id being the transcript's file name.
-    const rec = { at: 1764080000000, event: "prompt", decision: "spoke" };
-    writeFileSync(join(runsDir, "claude-conversation.json"), JSON.stringify(rec));
+    // The run is the newest prompt's own: <runsDir>/<session id>/<prompt id>.json, the session id being the file name.
+    mkdirSync(join(runsDir, "s-1"), { recursive: true });
+    writeFileSync(join(runsDir, "s-1", "p-1.json"), JSON.stringify({ at: 1, decision: "prismantis" }));
+    assert.equal(run(req).hints.run, undefined, "an older prompt's run isn't the newest's");
+    const rec = { at: 1764080965100, decision: "spoke" };
+    writeFileSync(join(runsDir, "s-1", "p-2.json"), JSON.stringify(rec));
     assert.deepEqual(run(req).hints.run, rec);
-    writeFileSync(join(runsDir, "claude-conversation.json"), "{ nope");
+    writeFileSync(join(runsDir, "s-1", "p-2.json"), "{ nope");
     assert.equal(run(req).hints.run, undefined);
+    // A transcript whose name isn't a session id reads no run.
+    const odd = join(x.h, "not a session.jsonl");
+    writeFileSync(odd, [prompt("one", "p-1"), answer, prompt("two", "p-2"), answer].join("\n") + "\n");
+    mkdirSync(join(runsDir, "not a session"), { recursive: true });
+    writeFileSync(join(runsDir, "not a session", "p-2.json"), JSON.stringify(rec));
+    assert.equal(run({ ...req, transcript: odd }).hints.run, undefined);
     const p = (uuid, text) => JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } });
-    const hint = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: ["The Render panel beside this terminal draws ```mermaid."] } });
+    const hint = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: ["The Render panel beside this terminal draws diagrams."] } });
     const file = join(x.h, "hinted.jsonl");
     writeFileSync(file, [p("u1", "first"), hint, p("u2", "second"), hint].join("\n") + "\n");
     assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }).hints, { state: "ok", checked: 2 });
@@ -270,15 +280,26 @@ test("claude: whether the last prompts got Render's hint, with the hook's record
   } finally { x.done(); }
 });
 
-test("claude: hook records untouched for 14 days are deleted after a read; newer ones and other files stay", () => {
+test("claude: hook runs untouched for 14 days and temp files over an hour old are deleted after a read; empty session folders go", () => {
   const x = home();
   try {
     const runsDir = join(x.h, "herdr-dock", "hint-runs");
-    mkdirSync(runsDir, { recursive: true });
-    const old = new Date(Date.now() - 15 * 86400e3);
-    for (const name of ["old-session.json", "notes.txt"]) { writeFileSync(join(runsDir, name), "{}"); utimesSync(join(runsDir, name), old, old); }
-    writeFileSync(join(runsDir, "fresh-session.json"), "{}");
+    const put = (rel, ageMs) => {
+      const file = join(runsDir, ...rel.split("/"));
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "{}");
+      const t = new Date(Date.now() - ageMs);
+      utimesSync(file, t, t);
+    };
+    const DAY = 86400e3;
+    put("old-session/p-1.json", 15 * DAY);
+    put("mixed/p-old.json", 15 * DAY);
+    put("mixed/p-new.json", 0);
+    put("mixed/p-new.json.123.tmp", 2 * 3600e3);
+    put("mixed/p-fresh.json.456.tmp", 60e3);
+    put("mixed/notes.txt", 15 * DAY);
     run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir });
-    assert.deepEqual(readdirSync(runsDir).sort(), ["fresh-session.json", "notes.txt"]);
+    assert.deepEqual(readdirSync(runsDir).sort(), ["mixed"]);
+    assert.deepEqual(readdirSync(join(runsDir, "mixed")).sort(), ["notes.txt", "p-fresh.json.456.tmp", "p-new.json"]);
   } finally { x.done(); }
 });

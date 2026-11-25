@@ -17,7 +17,7 @@
 // Each picture (a Mermaid diagram, painted after rendering, or a ```figure) is drawn once:
 // <cacheDir>/<its id>-<hash of theme and look version>.svg, shown by the mod as image("<relBase>/<that file>"). One that
 // doesn't draw gives { error, source } instead (a figure's error is why, as prismantis words it).
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
@@ -182,33 +182,40 @@ function prune(cacheDir, options) {
   return n;
 }
 
-// hintReach, plus the hint hook's record of its last run in this session (render-hint.js:
-// <runsDir>/<session id>.json, the id being the transcript's file name), when there is one that reads.
-const SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
+// hintReach, plus the hint hook's record of its run for the newest typed prompt (render-hint.js:
+// <runsDir>/<session id>/<prompt id>.json, the session id being the transcript's file name), when one reads.
+const ID = /^[A-Za-z0-9-]{1,128}$/;
 function reach(lines, transcript, runsDir) {
   const r = hintReach(lines);
   const id = basename(String(transcript)).replace(/\.jsonl$/, "");
-  if (!runsDir || !SESSION_ID.test(id)) return r;
+  if (!runsDir || !ID.test(id) || !ID.test(r.promptId ?? "")) return r;
   try {
-    const run = JSON.parse(readFileSync(join(runsDir, `${id}.json`), "utf8"));
+    const run = JSON.parse(readFileSync(join(runsDir, id, `${r.promptId}.json`), "utf8"));
     if (run && typeof run === "object" && !Array.isArray(run)) return { ...r, run };
   } catch {}
   return r;
 }
 
-// The hook's records not written for RUNS_MAX_AGE_MS (their sessions are over), and temp files an interrupted write
-// left, deleted. Other files are left alone.
+// The hook's records not written for RUNS_MAX_AGE_MS (their sessions are over) and temp files an interrupted write
+// left (after an hour) deleted; a session folder left empty goes too. Other files are left alone.
 const RUNS_MAX_AGE_MS = 14 * 86400e3;
 function pruneRuns(runsDir) {
-  let names;
-  try { names = readdirSync(runsDir); } catch { return; }
+  let sessions;
+  try { sessions = readdirSync(runsDir); } catch { return; }
   const now = Date.now();
-  for (const name of names) {
-    if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
-    try {
-      const age = now - statSync(join(runsDir, name)).mtimeMs;
-      if (age > (name.endsWith(".tmp") ? 3600e3 : RUNS_MAX_AGE_MS)) rmSync(join(runsDir, name), { force: true });
-    } catch {}
+  for (const s of sessions) {
+    const dir = join(runsDir, s);
+    let names;
+    try { if (!statSync(dir).isDirectory()) continue; names = readdirSync(dir); } catch { continue; }
+    let left = names.length;
+    for (const name of names) {
+      if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
+      try {
+        const age = now - statSync(join(dir, name)).mtimeMs;
+        if (age > (name.endsWith(".tmp") ? 3600e3 : RUNS_MAX_AGE_MS)) { rmSync(join(dir, name), { force: true }); left--; }
+      } catch {}
+    }
+    if (left === 0) try { rmdirSync(dir); } catch {}
   }
 }
 

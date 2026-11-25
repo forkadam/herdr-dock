@@ -48,6 +48,9 @@ function readSettings(text) {
   return { ok: true, settings, command };
 }
 
+// src/shared/render/hint-phrase.js
+var HINT_RUNS = "herdr-dock/hint-runs";
+
 // src/shared/render/hints.js
 var HINT_MARK = "herdr-hint";
 var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
@@ -260,11 +263,9 @@ var replyNote = (row) => row.state === "working" ? "working\u2026" : row.state =
 function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
 }
-var RUN_SLACK_MS = 5e3;
 function reachVerdict(hints, run) {
-  if (hints?.state !== "silent" || typeof hints.at !== "number" || run?.event !== "prompt") return null;
-  if (!(typeof run.at === "number" && run.at >= hints.at - RUN_SLACK_MS)) return null;
-  return run.decision === "spoke" || run.decision === "not-herdr" ? run.decision : null;
+  if (hints?.state !== "silent" || hints.settled !== true || typeof hints.promptId !== "string") return null;
+  return run?.decision === "spoke" || run?.decision === "not-herdr" ? run.decision : null;
 }
 var REACH_TEXT = {
   spoke: "Diagram hints aren't reaching Claude in this session",
@@ -285,7 +286,8 @@ var WHY = {
 };
 var hintsWhy = (verdict) => WHY[verdict] ?? "";
 function hintsDetails({ platform, commands, transcript, checked, run }) {
-  const last = run && typeof run.at === "number" ? `${new Date(run.at).toISOString()}, ${run.event}, decided "${run.decision}"` : "none recorded";
+  const when = Number.isFinite(run?.at) && Math.abs(run.at) <= 864e13 ? new Date(run.at).toISOString() : "time unknown";
+  const last = run ? `${when}, decided "${run.decision}"` : "none recorded";
   return [
     "herdr-dock Render: diagram hints aren't reaching Claude",
     `platform: ${platform ?? "unknown"}`,
@@ -293,7 +295,7 @@ function hintsDetails({ platform, commands, transcript, checked, run }) {
     ...(commands ?? []).map((c) => `  ${c}`),
     `session log: ${transcript ?? "unknown"}`,
     `typed prompts checked: ${checked ?? 0} (the newest 2 got no hint)`,
-    `the hook's last run: ${last}`
+    `the hook's run for the newest prompt: ${last}`
   ].join("\n");
 }
 var COLOURS = {
@@ -593,7 +595,7 @@ var Render = class extends View {
         const t = this.target;
         const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id);
         const more = { open, full: [...this.full], pages: Object.fromEntries(this.pages) };
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, runsDir: `${slashPath(appHome())}/herdr-dock/hint-runs`, ...more }) : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, runsDir: `${slashPath(appHome())}/${HINT_RUNS}`, ...more }) : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
         if (this.target !== t) return;
         if (out.ok) {
           this.data = out;

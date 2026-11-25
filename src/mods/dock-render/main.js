@@ -15,6 +15,7 @@ import {
 } from "herdr";
 import { listDirCommand } from "../../shared/platform.js";
 import { HINT_MARK, hintsPlan } from "../../shared/render/hints.js";
+import { HINT_RUNS } from "../../shared/render/hint-phrase.js";
 import { readSettings } from "../../shared/statusline.js";
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
@@ -201,7 +202,7 @@ export default class Render extends View {
         const t = this.target;
         const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id); // the newest three come anyway
         const more = { open, full: [...this.full], pages: Object.fromEntries(this.pages) };
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, runsDir: `${slashPath(appHome())}/herdr-dock/hint-runs`, ...more })
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, runsDir: `${slashPath(appHome())}/${HINT_RUNS}`, ...more })
           : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
         if (this.target !== t) return;
         if (out.ok) { this.data = out; this.problem = null; } else this.problem = out.error ?? "Couldn't read the session.";

@@ -164,44 +164,64 @@ test("the setup command runs when reached through a symlink", { skip: process.pl
   }
 });
 
-// ---- The hook's record of each run (<app home>/herdr-dock/hint-runs/<session id>.json) ----
+// ---- The hook's record of each prompt run (<app home>/herdr-dock/hint-runs/<session id>/<prompt id>.json) ----
 import { existsSync, readdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { HINT_RUNS } from "../src/shared/render/hint-phrase.js";
 
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].includes(k)));
 const runHook = (event, { env = {}, input = "", settings = "{}" } = {}) => {
   const app = mkdtempSync(join(tmpdir(), "hint-app-"));
   const claude = mkdtempSync(join(tmpdir(), "hint-cfg-"));
   writeFileSync(join(claude, "settings.json"), settings);
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].includes(k)));
   const before = Date.now();
-  const r = spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", input, env: { ...clean, CLAUDE_CONFIG_DIR: claude, DOCK_APP_HOME: app, ...env } });
-  const dir = join(app, "herdr-dock", "hint-runs");
-  const files = existsSync(dir) ? readdirSync(dir) : [];
-  const record = (id) => JSON.parse(readFileSync(join(dir, `${id}.json`), "utf8"));
-  const out = { r, files, before, after: Date.now(), record: files.length ? record(files[0].replace(/.json$/, "")) : null };
+  const r = spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", input, env: { ...cleanEnv(), CLAUDE_CONFIG_DIR: claude, DOCK_APP_HOME: app, ...env } });
+  const root = join(app, ...HINT_RUNS.split("/"));
+  const files = [];
+  if (existsSync(root)) for (const s of readdirSync(root)) for (const p of readdirSync(join(root, s))) files.push(`${s}/${p}`);
+  const out = { r, files, before, after: Date.now(), record: files.length ? JSON.parse(readFileSync(join(root, ...files[0].split("/")), "utf8")) : null };
   rmSync(app, { recursive: true, force: true });
   rmSync(claude, { recursive: true, force: true });
   return out;
 };
+const IDS = { session_id: "s-1", prompt_id: "p-1", hook_event_name: "UserPromptSubmit", prompt: "hi" };
 
-test("the script records each run for its session: when, which event, what it decided", () => {
-  const spoke = runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify({ session_id: "s-1", hook_event_name: "UserPromptSubmit" }) });
+test("HINT_RUNS: where the hook's records go, under the app home", () => assert.equal(HINT_RUNS, "herdr-dock/hint-runs"));
+
+test("the script records each prompt run under its session and prompt: when, and what it decided", () => {
+  const spoke = runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify(IDS) });
   assert.equal(spoke.r.status, 0);
   assert.equal(JSON.parse(spoke.r.stdout).hookSpecificOutput.additionalContext, REMINDER);
-  assert.deepEqual(spoke.files, ["s-1.json"]);
-  assert.equal(spoke.record.event, "prompt");
+  assert.deepEqual(spoke.files, ["s-1/p-1.json"]);
   assert.equal(spoke.record.decision, "spoke");
   assert.ok(spoke.record.at >= spoke.before && spoke.record.at <= spoke.after);
-  const quiet = runHook("session", { input: JSON.stringify({ session_id: "s-2" }) });
-  assert.equal(quiet.r.stdout, "");
-  assert.deepEqual([quiet.record.event, quiet.record.decision], ["session", "not-herdr"]);
-  assert.equal(runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify({ session_id: "s-3" }), settings: PRISM() }).record.decision, "prismantis");
+  assert.equal(runHook("prompt", { input: JSON.stringify(IDS) }).record.decision, "not-herdr");
+  assert.equal(runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify(IDS), settings: PRISM() }).record.decision, "prismantis");
 });
 
-test("the script writes no record for a bad or missing session id or input that isn't JSON; its output and exit stay the same", () => {
-  for (const input of [JSON.stringify({ session_id: "../x" }), JSON.stringify({ session_id: "a/b" }), JSON.stringify({ session_id: "a\b" }), JSON.stringify({ session_id: "" }), "{}", "not json", ""]) {
+test("the script records no session-start run, and nothing for a bad or missing session or prompt id or input that isn't JSON", () => {
+  assert.deepEqual(runHook("session", { env: { HC_TERMINAL_ID: "t1" }, input: JSON.stringify(IDS) }).files, []);
+  const bad = [{ ...IDS, session_id: "../x" }, { ...IDS, session_id: "a/b" }, { ...IDS, session_id: "a\b" }, { ...IDS, session_id: "" },
+    { ...IDS, prompt_id: "../p" }, { ...IDS, prompt_id: undefined }, {}];
+  for (const input of [...bad.map((o) => JSON.stringify(o)), "not json", ""]) {
     const x = runHook("prompt", { env: { HC_TERMINAL_ID: "t1" }, input });
     assert.equal(x.r.status, 0, input);
     assert.deepEqual(x.files, [], input);
     assert.equal(JSON.parse(x.r.stdout).hookSpecificOutput.additionalContext, REMINDER, input);
   }
+});
+
+test("the script doesn't wait long for input that never ends: the hint is printed, it exits 0 within a few seconds", async () => {
+  const claude = mkdtempSync(join(tmpdir(), "hint-cfg-"));
+  writeFileSync(join(claude, "settings.json"), "{}");
+  const start = Date.now();
+  const child = spawn(process.execPath, [HINT_JS, "prompt"], { env: { ...cleanEnv(), CLAUDE_CONFIG_DIR: claude, DOCK_APP_HOME: claude, HC_TERMINAL_ID: "t1" } });
+  let stdout = "";
+  child.stdout.on("data", (d) => { stdout += d; });
+  child.stdin.write('{"session_id":"s-1"'); // and never closed
+  const code = await new Promise((done) => { const t = setTimeout(() => { child.kill(); done("hung"); }, 8000); child.on("exit", (c) => { clearTimeout(t); done(c); }); });
+  rmSync(claude, { recursive: true, force: true });
+  assert.equal(code, 0);
+  assert.ok(Date.now() - start < 6000);
+  assert.equal(JSON.parse(stdout).hookSpecificOutput.additionalContext, REMINDER);
 });

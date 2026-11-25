@@ -161,7 +161,8 @@ export function readClaude(lines) {
 // Whether a Claude Code session's last typed prompts got Render's hint: Claude Code logs each hint it hands Claude as
 // a hook_additional_context attachment after the prompt. Read from the log's end, at most REACH_PROMPTS prompts.
 // "ok": the newest got it; "silent": the newest 2 both didn't; else "unknown" (too few prompts, or a single miss).
-// `at`: when the newest was typed (ms), when the log says.
+// `at`: when the newest was typed (ms), when the log says; `promptId`: its id (the hint hook records its run under it);
+// `settled`: Claude has answered after it, so its hint (logged right after the prompt) has had time to land.
 // Slash and ! commands may not run prompt hooks, and queued messages, task notifications, interruptions and compaction
 // summaries aren't typed: none counts, and a hint after one is its own (Claude Code logs a prompt's hint right after
 // it), not the prompt's before. A hint is the phrase in any attachment but a queued message (not tied to one shape or name, so a
@@ -175,10 +176,14 @@ const hintIn = (a) => JSON.stringify(a ?? null).includes(HINT_PHRASE);
 export function hintReach(lines) {
   const got = []; // newest first
   let hinted = false; // a hint after the line being read, before the next typed prompt
+  let settled = false;
   let at = null;
+  let promptId = null;
+  let answered = false; // an assistant line after the line being read (only looked at until the newest prompt)
   for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
+    if (o.type === "assistant" && !got.length) { answered = true; continue; }
     if (o.type === "attachment") {
       if (o.attachment?.type === "queued_command") hinted = false;
       else if (hintIn(o.attachment)) hinted = true;
@@ -193,12 +198,16 @@ export function hintReach(lines) {
       hinted = false;
       continue;
     }
-    if (!got.length) at = time(o.timestamp);
+    if (!got.length) {
+      at = time(o.timestamp);
+      promptId = typeof o.promptId === "string" ? o.promptId : null;
+      settled = answered;
+    }
     got.push(hinted);
     hinted = false;
   }
   const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
-  return { state, checked: got.length, ...(at != null ? { at } : {}) };
+  return { state, checked: got.length, ...(at != null ? { at } : {}), ...(promptId ? { promptId } : {}), ...(settled ? { settled } : {}) };
 }
 
 // A Codex rollout (~/.codex/sessions/**/rollout-*.jsonl). Codex adds its own context as user messages

@@ -53,22 +53,20 @@ test("hintsNotice: missing or moved offers Set up; unreadable says so; present, 
   assert.deepEqual(n("missing", { error: "Cannot write" }), { text: "Set up failed: Cannot write", action: "setup" });
 });
 
-test("reachVerdict: silent, and the hook ran for the newest prompt (5 s slack) and spoke or didn't see Herdr; else null", () => {
-  const at = Date.parse("2026-11-25T14:29:25.000Z");
-  const silent = { state: "silent", checked: 3, at };
-  const run = (decision, dt = 50, event = "prompt") => ({ at: at + dt, event, decision });
+test("reachVerdict: silent and settled, and the hook's run for that prompt spoke or didn't see Herdr; else null", () => {
+  const silent = { state: "silent", checked: 3, at: 1764080965000, promptId: "p-2", settled: true };
+  const run = (decision) => ({ at: 1764080965100, decision });
   assert.equal(reachVerdict(silent, run("spoke")), "spoke");
   assert.equal(reachVerdict(silent, run("not-herdr")), "not-herdr");
-  assert.equal(reachVerdict(silent, run("spoke", -4000)), "spoke");
   for (const [h, r, why] of [
     [silent, run("prismantis"), "prismantis on: quiet by design"],
-    [silent, run("settings-invalid"), "settings row covers it"],
-    [silent, undefined, "no record: the hook never ran"],
-    [silent, run("spoke", -60000), "the record is from before the newest prompt: the hook stopped running"],
-    [silent, run("spoke", 50, "session"), "a session-start run says nothing about prompts"],
-    [{ state: "unknown", checked: 1, at }, run("spoke"), "too early"],
-    [{ state: "ok", checked: 3, at }, run("spoke"), "hints arrive"],
-    [{ state: "silent", checked: 3 }, run("spoke"), "no prompt time to compare"],
+    [silent, run("settings-invalid"), "the settings row covers it"],
+    [silent, undefined, "no run for this prompt: the hook didn't run (hooks off anywhere)"],
+    [silent, null, "no run"],
+    [{ ...silent, settled: undefined }, run("spoke"), "Claude hasn't answered yet: the hint may still land"],
+    [{ ...silent, promptId: undefined }, run("spoke"), "no prompt id to tie the run to"],
+    [{ ...silent, state: "unknown" }, run("spoke"), "too early"],
+    [{ ...silent, state: "ok" }, run("spoke"), "hints arrive"],
   ]) assert.equal(reachVerdict(h, r), null, why);
 });
 
@@ -88,15 +86,17 @@ test("hintsWhy: what happened and what to do, per verdict", () => {
   assert.equal(hintsWhy(null), "");
 });
 
-test("hintsDetails: platform, hook commands, transcript, prompts checked, the hook's last run", () => {
-  const run = { at: Date.parse("2026-11-25T14:29:25.050Z"), event: "prompt", decision: "spoke" };
+test("hintsDetails: platform, hook commands, transcript, prompts checked, the hook's run for the newest prompt", () => {
+  const run = { at: Date.parse("2026-11-25T14:29:25.050Z"), decision: "spoke" };
   const d = hintsDetails({ platform: "linux", commands: ['node "/a/herdr-hint.mjs" prompt'], transcript: "/t.jsonl", checked: 3, run });
-  for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl", "2026-11-25T14:29:25.050Z", "prompt", "spoke"]) assert.ok(d.includes(s), s);
+  for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl"]) assert.ok(d.includes(s), s);
   assert.match(d, /^typed prompts checked: 3 \(the newest 2 got no hint\)$/m);
+  assert.match(d, /^the hook's run for the newest prompt: 2026-11-25T14:29:25\.050Z, decided "spoke"$/m);
   assert.ok(d.split("\n").every((l) => !/ $/.test(l)), "no line ends in a space");
   const none = hintsDetails({ platform: null, commands: [], transcript: null, checked: 0, run: null });
   assert.match(none, /none found/);
-  assert.match(none, /^the hook's last run: none recorded$/m);
+  assert.match(none, /^the hook's run for the newest prompt: none recorded$/m);
+  for (const at of [1e300, NaN, "x", undefined]) assert.match(hintsDetails({ checked: 3, run: { at, decision: "spoke" } }), /^the hook's run for the newest prompt: time unknown, decided "spoke"$/m, String(at));
 });
 
 // ---- Colour ----

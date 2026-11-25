@@ -303,3 +303,15 @@ test("hintReach: a meta line from a person, or with no origin, keeps the pending
   assert.equal(hintReach([P("a"), META("human"), H()]).state, "ok");
   assert.equal(hintReach([P("a"), META(null), H()]).state, "ok");
 });
+
+test("hintReach: the newest typed prompt's promptId, and settled once Claude has answered after it", () => {
+  const PI = (text, promptId) => JSON.stringify({ type: "user", promptId, message: { role: "user", content: text } });
+  const PEER = JSON.stringify({ type: "user", isMeta: true, origin: { kind: "peer" }, promptId: "peer-1", message: { content: "from another session" } });
+  const ANS = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } });
+  assert.equal(hintReach([PI("a", "p-1"), PI("b", "p-2")]).promptId, "p-2");
+  assert.equal(hintReach([PI("a", "p-1"), PI("b", "p-2"), PEER]).promptId, "p-2", "a peer message isn't the newest typed prompt");
+  assert.equal("settled" in hintReach([PI("a", "p-1"), PI("b", "p-2")]), false);
+  assert.equal(hintReach([PI("a", "p-1"), PI("b", "p-2"), ANS]).settled, true);
+  assert.equal(hintReach([PI("a", "p-1"), ANS, PI("b", "p-2")]).settled, undefined, "an answer to an older prompt doesn't settle the newest");
+  assert.equal("promptId" in hintReach([P("a")]), false);
+});
