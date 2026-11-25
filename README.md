@@ -68,6 +68,9 @@ Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/for
 - **Needs `gh` logged in and set up for git** while the repo is private (`gh auth status`, then `gh auth setup-git`).
 - **One install per machine.** If a `dock-*` mod or `layouts/herdr-dock.json` already exists, the agent stops and
   asks; a clone install updates with `npm run update`.
+- **Diagram hints.** Set up for you: the install runs `mods/dock-render/herdr-hints-setup.mjs` (the two Claude Code
+  hooks described under Render), and if it didn't, Render shows "Diagram hints for Claude aren't set up" with a
+  **Set up** button; its **×** hides the row for good.
 - **Status line.** Set up for you: the install runs `mods/dock-quotas/herdr-statusline-setup.mjs`, and if it
   didn't, Quotas says "Claude: status line not set up" with a **Set up** button. See "Where the quota and context
   numbers come from".
@@ -467,8 +470,8 @@ terminal, so you keep Claude Code's own terminal UI:
   long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
   invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
   drawn longer, one layer per extra character, as in Mermaid.
-- **Diagram hints**: Claude writes diagrams, figures and tables when it knows they'll be drawn. Deploy adds two hooks
-  to `~/.claude/settings.json` (copied to `settings.json.bak-herdr-dock` first; your own hooks are kept) that run
+- **Diagram hints**: Claude writes diagrams, figures and tables when it knows they'll be drawn. Deploy (or, for a
+  Herdr-way install, the install or Render's **Set up**) adds two hooks to `~/.claude/settings.json` (copied to `settings.json.bak-herdr-dock` first; your own hooks are kept) that run
   `mods/dock-render/herdr-hint.mjs`: once per session (at start, after `/clear` and after compaction) a note on what
   the panel draws and how to write a ```` ```figure ````, and on each prompt a one-line reminder (about 40 tokens).
   They're quiet outside Herdr (no `HERDR_PANE_ID`) and while [prismantis](https://github.com/NahumLitvin/prismantis)'s
