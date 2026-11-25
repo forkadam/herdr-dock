@@ -1,12 +1,15 @@
-// The Render panel's helper: an agent's session log (or a Markdown file) in, Markdown segments and rendered Mermaid
-// diagrams out, for dock-render. Bundled with beautiful-mermaid (MIT) into mods/dock-render/herdr-render.mjs, so
-// nothing needs installing. Run with one JSON argument; prints one JSON line.
+// The Render panel's helper: an agent's session log (or a Markdown file) in, the conversation, reply blocks with their
+// copies and rendered Mermaid diagrams out, for dock-render. Bundled with beautiful-mermaid and marked (MIT) into
+// mods/dock-render/herdr-render.mjs, so nothing needs installing. Run with one JSON argument; prints one JSON line.
 //
-//   { mode: "claude", transcript, cacheDir, relBase, theme }        Claude Code's session transcript
-//   { mode: "codex", cwd, codexHome?, now?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
-//   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file
+//   { mode: "claude", transcript, open?, cacheDir, relBase, theme }   Claude Code's session transcript
+//   { mode: "codex", cwd, codexHome?, now?, open?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
+//       -> { exchanges: rows (newest first), open: { [id]: { reply: blocks, buttons } }, diagrams, canHtml }
+//          open: the exchanges whose blocks to send (default: the newest three); ids not there are ignored
+//   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file -> { blocks, buttons, canHtml }
 //   { mode: "list", cwd }                                           the Markdown files under cwd
 //   { mode: "clear", cacheDir }                                     delete every rendered diagram
+//   { mode: "clip", html, text }                                    HTML and its plain text onto the macOS clipboard
 // After each read the cache is tidied: diagrams not shown for 14 days go, and past the 300 most recently used.
 //
 // Each picture (a Mermaid diagram, painted after rendering, or a ```figure) is drawn once:
@@ -17,11 +20,13 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { flattenSvg } from "../shared/render/flatten.js";
-import { splitSegments } from "../shared/render/markdown.js";
+import { toBlocks, replyButtons } from "../shared/render/blocks.js";
+import { OPEN_NEWEST } from "../shared/render/view.js";
+import { copyHtml } from "./clipboard.js";
 import { cacheToPrune, themeKey } from "../shared/render/cache.js";
 import { mermaidColors, paintDiagram } from "../shared/render/paint.js";
 import { decideFigure, figureSvg } from "../shared/render/figure.js";
-import { codexCwd, readClaude, readCodex } from "../shared/render/transcript.js";
+import { codexCwd, exchangeRow, readClaude, readCodex, replyText } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
 
 const MAX_LOG = 64 * 1024 * 1024; // a session log bigger than this is read from its last 64 MB
@@ -72,16 +77,39 @@ function render(seg, req, themeId) {
   }
 }
 
-function segments(text, req, themeId) {
-  return splitSegments(text).map((s) => (s.kind === "md" ? s : { ...s, ...render(s, req, themeId) }));
+// Formatted copies work through macOS's pasteboard only; elsewhere the panel hides the html buttons.
+const CAN_HTML = process.platform === "darwin";
+
+// Text -> blocks, pictures rendered.
+function blocks(text, req, themeId) {
+  return toBlocks(text).map((b) => (b.kind === "mermaid" || b.kind === "figure" ? { ...b, ...render(b, req, themeId) } : b));
+}
+
+// An exchange's reply: runs of text as blocks, with what arrived while Claude worked as markers between them.
+function replyBlocks(ex, req, themeId) {
+  const out = [];
+  let run = [];
+  const flush = () => { if (run.length) out.push(...blocks(run.join("\n\n"), req, themeId)); run = []; };
+  for (const p of ex.parts) {
+    if (p.type === "text") { run.push(p.text); continue; }
+    flush();
+    out.push({ kind: "marker", by: p.by, event: p.event, text: p.text });
+  }
+  flush();
+  return out;
 }
 
 function fromLog(read, lines, req, extra) {
   const themeId = themeKey(req.theme);
   const r = read(lines);
+  const wanted = new Set(Array.isArray(req.open) ? req.open : r.exchanges.slice(0, OPEN_NEWEST).map((e) => e.id));
+  const open = {};
+  for (const ex of r.exchanges) {
+    if (wanted.has(ex.id)) open[ex.id] = { reply: replyBlocks(ex, req, themeId), buttons: replyButtons(replyText(ex)) };
+  }
   return {
-    ok: true, ...extra, prompt: r.prompt,
-    answer: r.answer ? { at: r.answer.at, segments: segments(r.answer.text, req, themeId) } : null,
+    ok: true, ...extra, canHtml: CAN_HTML,
+    exchanges: r.exchanges.map(exchangeRow), open,
     diagrams: r.diagrams.slice(0, MAX_DIAGRAMS).map((d) => ({ ...d, ...render(d, req, themeId) })),
   };
 }
@@ -147,9 +175,12 @@ function run(req) {
       return { ok: false, error: "no Codex session started in this folder in the last two weeks" };
     }
     case "file": {
-      const themeId = themeKey(req.theme);
-      return { ok: true, path: req.path, segments: segments(readText(req.path, MAX_FILE), req, themeId) };
+      const text = readText(req.path, MAX_FILE);
+      return { ok: true, path: req.path, canHtml: CAN_HTML, blocks: blocks(text, req, themeKey(req.theme)), buttons: replyButtons(text) };
     }
+    case "clip":
+      if (typeof req.html !== "string" || typeof req.text !== "string") return { ok: false, error: "clip needs html and text" };
+      return copyHtml(req);
     case "list":
       return { ok: true, files: listMarkdown(req.cwd).sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 80) };
     default:

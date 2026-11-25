@@ -21,14 +21,15 @@ const home = () => {
   return { h, cacheDir, base: { cacheDir, relBase: "herdr-dock/render", theme: THEME }, done: () => rmSync(h, { recursive: true, force: true }) };
 };
 
-test("claude: the latest answer as segments with its diagrams drawn, and the session's diagrams", () => {
+test("claude: the newest exchange's reply as blocks with its diagrams drawn, and the session's diagrams", () => {
   const x = home();
   try {
     const out = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude.jsonl") });
     assert.equal(out.ok, true);
-    assert.equal(out.prompt, "Now the sequence, and check the code");
-    assert.deepEqual(out.answer.segments.map((s) => s.kind), ["md", "mermaid", "md"]);
-    const d = out.answer.segments[1];
+    assert.equal(out.exchanges[0].text, "Now the sequence, and check the code");
+    const reply = out.open[out.exchanges[0].id].reply;
+    assert.deepEqual(reply.map((s) => s.kind), ["text", "mermaid", "code"]);
+    const d = reply[1];
     assert.match(d.svg, /^herdr-dock\/render\/[0-9a-f]{8}-[0-9a-f]{8}\.svg$/);
     assert.ok(d.w > 0 && d.h > 0, "the diagram's own size, to scale it to the panel");
     const svg = readFileSync(join(x.h, d.svg), "utf8");
@@ -50,7 +51,7 @@ test("a diagram that doesn't parse gives its error, and the rest still renders",
     writeFileSync(f, "# Doc\n\n```mermaid\nthis is not mermaid at all ((\n```\n\n```mermaid\npie\n  \"a\": 1\n```\n");
     const out = run({ ...x.base, mode: "file", path: f });
     assert.equal(out.ok, true);
-    const ds = out.segments.filter((s) => s.kind === "mermaid");
+    const ds = out.blocks.filter((s) => s.kind === "mermaid");
     assert.equal(ds.length, 2);
     assert.ok(ds[0].error && !ds[0].svg);
     assert.equal(ds[0].source, "this is not mermaid at all ((");
@@ -70,7 +71,7 @@ test("codex: the newest rollout started in this folder", () => {
     const out = run({ ...x.base, mode: "codex", cwd: "/home/u/proj", codexHome: join(x.h, "codex"), now: Date.parse("2026-11-22T12:00:00Z") });
     assert.equal(out.ok, true);
     assert.equal(out.file, mine);
-    assert.equal(out.prompt, "diagram please");
+    assert.equal(out.exchanges[0].text, "diagram please");
     assert.equal(out.diagrams.length, 1);
     const none = run({ ...x.base, mode: "codex", cwd: "/nowhere", codexHome: join(x.h, "codex"), now: Date.parse("2026-11-22T12:00:00Z") });
     assert.equal(none.ok, false);
@@ -106,7 +107,7 @@ test("cache: a reused diagram's date is refreshed, old ones are pruned after a r
   try {
     const f = join(x.h, "doc.md");
     writeFileSync(f, "```mermaid\nflowchart LR\n A-->B\n```\n");
-    const first = run({ ...x.base, mode: "file", path: f }).segments[0].svg;
+    const first = run({ ...x.base, mode: "file", path: f }).blocks[0].svg;
     const file = join(x.h, first);
     const old = new Date(Date.now() - 20 * 86400e3);
     utimesSync(file, old, old); // looks unused for 20 days...
@@ -138,7 +139,7 @@ test("figures and painted diagrams: kinds, files named with the look version, a 
     const f = join(x.h, "look.md");
     writeFileSync(f, "```figure\nA {ok:██} B\n```\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```figure\nbad\tline\n```\n\n```mermaid\nA {ok:██} B\n```\n");
     const out = run({ ...x.base, mode: "file", path: f });
-    const s = out.segments;
+    const s = out.blocks;
     assert.deepEqual(s.map((g) => g.kind), ["figure", "mermaid", "figure", "mermaid"]);
     assert.ok(s[0].svg.endsWith(`-${themeKey(THEME)}.svg`) && s[0].w > 0 && s[0].h > 0);
     assert.match(readFileSync(join(x.h, s[0].svg), "utf8"), /^<svg/);
@@ -149,4 +150,43 @@ test("figures and painted diagrams: kinds, files named with the look version, a 
     assert.ok(!s[2].svg);
     assert.notEqual(s[0].id, s[3].id);
   } finally { x.done(); }
+});
+
+test("claude: rows for every exchange, blocks for the newest three, canHtml", () => {
+  const x = home();
+  try {
+    const out = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") });
+    assert.equal(out.ok, true);
+    assert.equal(out.canHtml, process.platform === "darwin");
+    assert.deepEqual(out.exchanges.map((r) => r.id), ["u7", "u6", "u5", "u4", "u3", "u2", "u1"]);
+    assert.deepEqual(Object.keys(out.open).sort(), ["u5", "u6", "u7"]);
+    assert.deepEqual(out.open.u6.reply.map((b) => b.kind), ["text", "marker", "marker", "text"]);
+    assert.deepEqual(out.open.u6.buttons.map((b) => b.label), ["copy md", "copy html"]);
+  } finally { x.done(); }
+});
+
+test("claude: open ids choose the blocks sent; ids that aren't there are ignored; pictures are drawn", () => {
+  const x = home();
+  try {
+    const out = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), open: ["u1", "gone"] });
+    assert.deepEqual(Object.keys(out.open), ["u1"]);
+    const pic = out.open.u1.reply.find((b) => b.kind === "mermaid");
+    assert.match(pic.svg, /^herdr-dock\/render\/.+\.svg$/);
+  } finally { x.done(); }
+});
+
+test("file: blocks with their buttons and the whole file's copy md / copy html", () => {
+  const x = home();
+  try {
+    const path = join(x.h, "plan.md");
+    writeFileSync(path, "# Plan\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```sh\nnpm test\n```\n");
+    const out = run({ ...x.base, mode: "file", path });
+    assert.deepEqual(out.blocks.map((b) => b.kind), ["text", "table", "code"]);
+    assert.deepEqual(out.buttons.map((b) => b.label), ["copy md", "copy html"]);
+    assert.equal(out.canHtml, process.platform === "darwin");
+  } finally { x.done(); }
+});
+
+test("clip: a request without html and text is refused without touching the clipboard", () => {
+  assert.deepEqual(run({ mode: "clip" }), { ok: false, error: "clip needs html and text" });
 });
