@@ -195,10 +195,45 @@ function ago(ms, now) {
   return `${Math.floor(s / (30 * 86400))}mo`;
 }
 
+// src/shared/render/budget.js
+var BUDGET = 64 * 1024;
+
+// src/shared/render/columns.js
+function columnWidths(natural, available, gap, words = []) {
+  const room = Math.max(natural.length, available - gap * (natural.length - 1));
+  const total = natural.reduce((a, b) => a + b, 0);
+  if (total <= room) return natural;
+  const minimum = natural.map((w, c) => Math.min(w, Math.max(1, words[c] ?? 1)));
+  const widths = natural.map(() => 0);
+  let open = natural.map((_, c) => c);
+  let left = room;
+  for (let fixed = [-1]; fixed.length; ) {
+    const share = Math.floor(left / open.length);
+    const claim = (c) => natural[c] <= share ? natural[c] : minimum[c];
+    const minimumsFit = open.reduce((a, c) => a + minimum[c], 0) <= left;
+    const needed = open.reduce((a, c) => a + claim(c), 0);
+    fixed = open.filter((c) => natural[c] <= share);
+    if (minimumsFit && (!fixed.length || needed > left)) fixed = open.filter((c) => minimum[c] > share);
+    fixed.forEach((c) => {
+      widths[c] = claim(c);
+      left -= widths[c];
+    });
+    open = open.filter((c) => !fixed.includes(c));
+  }
+  open.forEach((c, i) => {
+    widths[c] = Math.max(1, Math.floor(left / open.length) + (i < left % open.length ? 1 : 0));
+  });
+  while (widths.reduce((a, b) => a + b, 0) > room) {
+    const widest = widths.indexOf(Math.max(...widths));
+    if (widths[widest] <= 1) break;
+    widths[widest]--;
+  }
+  return widths;
+}
+
 // src/shared/render/view.js
 var OPEN_NEWEST = 3;
 var HTML_LIMIT = 512 * 1024;
-var PROMPT_LINES = 12;
 var ROLE_COLOR = { you: "ansi4", claude: "ansi5", event: "ansi3" };
 var ALERTS = {
   note: { title: "Note", color: "ansi4" },
@@ -207,9 +242,6 @@ var ALERTS = {
   warning: { title: "Warning", color: "ansi3" },
   caution: { title: "Caution", color: "ansi1" }
 };
-function openIds(rows, toggled) {
-  return rows.filter((r, i) => toggled.get(r.id) ?? i < OPEN_NEWEST).map((r) => r.id);
-}
 var EVENTS2 = { "task-notification": "BACKGROUND TASK", compaction: "CONTEXT COMPACTED" };
 function speakerLabel(role, event = null) {
   if (role === "you") return "YOU";
@@ -224,11 +256,6 @@ function copyPlan(button, canHtml) {
   if (button.html.length + button.text.length > HTML_LIMIT) return { how: "plain", note: "too large for a formatted copy" };
   return { how: "html" };
 }
-function promptView(text, showAll) {
-  const lines = String(text ?? "").split("\n");
-  if (showAll || lines.length <= PROMPT_LINES) return { text: String(text ?? ""), more: false };
-  return { text: lines.slice(0, PROMPT_LINES).join("\n"), more: true };
-}
 var replyNote = (row) => row.state === "working" ? "working\u2026" : row.state === "none" ? "no reply text" : null;
 function viewOf(stored) {
   return stored === "diagrams" || stored === "files" ? stored : "conversation";
@@ -240,6 +267,63 @@ function hintsNotice(state, { dismissed, error }) {
   if (state === "moved") return { text: "Diagram hints point at another install", action: "setup" };
   if (state === "invalid") return { text: "~/.claude/settings.json can't be read: diagram hints aren't set up", action: null };
   return null;
+}
+var COLOURS = {
+  heading: "ansi6",
+  strong: "foreground",
+  em: "ansi5",
+  del: "dim",
+  code: "ansi6",
+  link: "ansi4",
+  number: "ansi5",
+  path: "ansi6",
+  bullet: "ansi6",
+  quote: "ansi4",
+  tableHeader: "ansi3",
+  rule: "border",
+  codeText: "foreground",
+  codeBg: "surface",
+  inlineCodeBg: "raised",
+  comment: "dim",
+  string: "ansi2",
+  keyword: "ansi4",
+  function: "ansi6",
+  property: "ansi4",
+  attr: "ansi5",
+  regex: "ansi6"
+};
+function pieces(runs) {
+  const out = [];
+  for (const r of runs ?? []) {
+    if (r.text === "\n" || r.role === "code") {
+      out.push(r);
+      continue;
+    }
+    for (const w of r.text.match(/\S+\s*|\s+/g) ?? []) out.push({ ...r, text: w });
+  }
+  return out;
+}
+function openWithin(rows, toggled, budget = BUDGET) {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const hand = [...toggled].filter(([id, on]) => on && byId.has(id)).map(([id]) => id).reverse();
+  const defaults = rows.slice(0, OPEN_NEWEST).map((r) => r.id).filter((id) => !toggled.has(id));
+  const keep = /* @__PURE__ */ new Set();
+  let total = 0;
+  for (const id of [...hand, ...defaults]) {
+    if (keep.has(id)) continue;
+    const size = byId.get(id).size ?? 0;
+    if (!keep.size || total + size <= budget) {
+      keep.add(id);
+      total += size;
+    }
+  }
+  return rows.filter((r) => keep.has(r.id)).map((r) => r.id);
+}
+var CHAR_PX = 7.2;
+var CELL_PAD = 16;
+function tableWidths(natural, words, panelPx) {
+  const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
+  return columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
 }
 
 // src/mods/dock-render/main.js
@@ -265,7 +349,8 @@ var Render = class extends View {
     this.target = null;
     this.data = null;
     this.toggled = /* @__PURE__ */ new Map();
-    this.showAll = /* @__PURE__ */ new Set();
+    this.full = /* @__PURE__ */ new Set();
+    this.pages = /* @__PURE__ */ new Map();
     this.opening = /* @__PURE__ */ new Set();
     this.copied = null;
     this.hints = { state: null, busy: false, error: null, checked: false };
@@ -377,7 +462,8 @@ var Render = class extends View {
     this.watch = null;
     Object.assign(this, { target: null, data: null, files: null, file: null, problem: null, copied: null });
     this.toggled = /* @__PURE__ */ new Map();
-    this.showAll = /* @__PURE__ */ new Set();
+    this.full = /* @__PURE__ */ new Set();
+    this.pages = /* @__PURE__ */ new Map();
     this.opening = /* @__PURE__ */ new Set();
     if (!agent) return;
     const kind = agentKind(agent);
@@ -457,7 +543,8 @@ var Render = class extends View {
         this.again = false;
         const t = this.target;
         const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id);
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, open }) : await this.helper({ mode: "codex", cwd: t.cwd, open });
+        const more = { open, full: [...this.full], pages: Object.fromEntries(this.pages) };
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, ...more }) : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
         if (this.target !== t) return;
         if (out.ok) {
           this.data = out;
@@ -483,9 +570,9 @@ var Render = class extends View {
     this.files = out.ok ? out.files : [];
     if (this.file) await this.openFile(this.file.path);
   }
-  async openFile(path) {
-    const out = await this.helper({ mode: "file", path });
-    this.file = out.ok ? { path, blocks: out.blocks, buttons: out.buttons, canHtml: out.canHtml } : { path, blocks: [{ kind: "text", md: `Couldn't read it: ${out.error}`, buttons: [] }], buttons: [], canHtml: false };
+  async openFile(path, page = 0) {
+    const out = await this.helper({ mode: "file", path, page });
+    this.file = out.ok ? { path, blocks: out.blocks, buttons: out.buttons, canHtml: out.canHtml, page: out.page ?? 0, pageCount: out.pageCount ?? 1 } : { path, blocks: [{ kind: "text", md: "", parts: [{ type: "para", runs: [{ text: `Couldn't read it: ${out.error}` }] }], buttons: [] }], buttons: [], canHtml: false, page: 0, pageCount: 1 };
   }
   setView(v, cx) {
     setShared(VIEW_KEY, v);
@@ -593,10 +680,33 @@ var Render = class extends View {
       done(out.ok ? null : `copied as plain text: ${out.error}`, cx2);
     });
   }
-  // ---- blocks ----
-  block(t, b, id, maxW, canHtml) {
-    const md = (text) => TextView.markdown(`${id}-md`, text).selectable(true);
+  // ---- blocks, drawn in colour ----
+  // One piece of prose (a word with its spaces) in its run's colour and style.
+  piece(t, p, id) {
+    if (p.text === "\n") return div().w_full().h(0);
+    let el = div().text_color(t[COLOURS[p.role] ?? "foreground"] ?? t.foreground);
+    if (p.bold) el = el.font_bold();
+    if (p.italic) el = el.italic();
+    if (p.strike) el = el.line_through();
+    if (p.role === "code") el = el.font_family("Menlo").text_size(12).px(4).rounded(4).bg(t[COLOURS.inlineCodeBg]);
+    if (p.role === "link" && p.href) el = el.id(id).underline().cursor_pointer().on_click((_e, cx) => cx.open_url(p.href));
+    return el.child(p.text);
+  }
+  // Prose: runs as word pieces, wrapping between words.
+  prose(t, runs, id, style = {}) {
+    const { size = 13, justify = null, over = null } = style;
+    const list = pieces(over ? runs.map(over) : runs);
+    return h_flex().id(id).w_full().flex_wrap().text_size(size).when(justify === "right", (el) => el.justify_end()).when(justify === "center", (el) => el.justify_center()).children(list.map((p, i) => this.piece(t, p, `${id}-${i}`)));
+  }
+  // A pager: "Part 2 of 5" with Prev and Next.
+  pager(t, id, label, page, count, go) {
+    const btn = (k, text, to) => div().id(`${id}-${k}`).h(20).px(8).flex().items_center().rounded(5).border_1().border_color(t.border).text_size(11).when(to >= 0 && to < count, (el) => el.cursor_pointer().text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click((_e, cx) => go(to, cx))).when(!(to >= 0 && to < count), (el) => el.text_color(t.dim)).child(text);
+    return h_flex().id(id).gap(6).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(`${label} ${page + 1} of ${count}`)).child(btn("prev", "Prev", page - 1)).child(btn("next", "Next", page + 1));
+  }
+  // A block in colour. `inner`: inside a list item, quote or alert, where the outer block's copy covers its text.
+  block(t, b, id, maxW, canHtml, inner = false) {
     const note = this.copyNote(t, id);
+    const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-${j}`, w, canHtml, true));
     switch (b.kind) {
       case "mermaid":
       case "figure":
@@ -604,7 +714,33 @@ var Render = class extends View {
       case "code":
         return v_flex().id(id).w_full().gap(2).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(b.lang || "code")).child(this.buttons(t, b.buttons, id, canHtml)),
-          div().w_full().text_size(13).child(md(b.md)),
+          div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().rounded(5).bg(t[COLOURS.codeBg]).p(8).child(v_flex().flex_none().font_family("Menlo").text_size(12).children((b.lines ?? []).map((line) => h_flex().whitespace_nowrap().children(line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")])))),
+          note
+        ].filter(Boolean));
+      case "table": {
+        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2);
+        const total = widths.reduce((a, w) => a + w, 0) + 2;
+        const cell = (runs, c, r) => div().w(widths[c]).flex_none().px(8).py(4).when(c > 0, (el) => el.border_l(1).border_color(t.border)).child(this.prose(t, runs, `${id}-c${r}-${c}`, {
+          justify: b.align?.[c],
+          over: r < 0 ? (x) => ({ ...x, bold: true, role: x.role ?? "tableHeader" }) : null
+        }));
+        const grid = v_flex().w(total).flex_none().border_1().border_color(t.border).rounded(6).overflow_hidden().child(h_flex().bg(t[COLOURS.tableHeader] + "12").children(b.header.map((h, c) => cell(h, c, -1)))).children(b.rows.map((row, r) => h_flex().border_t(1).border_color(t.border).children(row.map((cl, c) => cell(cl, c, r)))));
+        return v_flex().id(id).w_full().gap(4).children([
+          this.buttons(t, b.buttons, id, canHtml),
+          total > maxW ? div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().child(grid) : grid,
+          note
+        ].filter(Boolean));
+      }
+      case "list":
+        return v_flex().id(id).w_full().gap(4).children([
+          inner ? null : this.buttons(t, b.buttons, id, canHtml),
+          ...(b.items ?? []).map((it, i) => h_flex().w_full().items_start().child(div().w(22).flex_none().text_size(13).text_color(t[COLOURS.bullet]).child(it.marker)).child(v_flex().flex_1().min_w(0).gap(4).children(it.blocks.map((x, j) => this.block(t, x, `${id}-${i}-${j}`, maxW - 22, canHtml, true))))),
+          note
+        ].filter(Boolean));
+      case "quote":
+        return v_flex().id(id).w_full().gap(4).children([
+          inner ? null : this.buttons(t, b.buttons, id, canHtml),
+          v_flex().w_full().gap(4).pl(10).border_l(3).border_color(t[COLOURS.quote]).children(sub(b.blocks ?? [], maxW - 13)),
           note
         ].filter(Boolean));
       case "alert": {
@@ -612,7 +748,7 @@ var Render = class extends View {
         const c = t[a.color];
         return v_flex().id(id).w_full().gap(4).p(8).border_l(3).border_color(c).bg(c + "14").rounded(4).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11.5).font_semibold().text_color(c).child(a.title)).child(this.buttons(t, b.buttons, id, canHtml)),
-          div().w_full().text_size(13).child(md(b.md)),
+          ...sub(b.blocks ?? [], maxW - 19),
           note
         ].filter(Boolean));
       }
@@ -621,14 +757,22 @@ var Render = class extends View {
         const c = t[ROLE_COLOR[role]];
         return div().id(id).w_full().pl(8).py(2).border_l(3).border_color(c).bg(c + "14").text_size(12).text_color(c).child(role === "you" ? `YOU, while Claude worked: ${b.text}` : `${speakerLabel("event", b.event)} \xB7 ${b.text}`);
       }
-      case "text":
-        return div().id(id).w_full().text_size(13).child(md(b.md));
-      default:
-        return v_flex().id(id).w_full().gap(4).children([this.buttons(t, b.buttons, id, canHtml), div().w_full().text_size(13).child(md(b.md)), note].filter(Boolean));
+      default: {
+        const SIZE = { 1: 17, 2: 15 };
+        const parts = (b.parts ?? []).map((part, i) => {
+          const pid = `${id}-p${i}`;
+          if (part.type === "heading") return this.prose(t, part.runs, pid, { size: SIZE[part.level] ?? 13.5, over: (r) => ({ ...r, bold: true, role: r.role ?? "heading" }) });
+          if (part.type === "rule") return div().w_full().h(1).bg(t[COLOURS.rule]);
+          if (part.type === "html") return div().w_full().text_size(12.5).text_color(t.muted).child(part.text);
+          return this.prose(t, part.runs, pid);
+        });
+        return v_flex().id(id).w_full().gap(6).children([inner ? null : this.buttons(t, b.buttons, id, canHtml), ...parts, note].filter(Boolean));
+      }
     }
   }
   // ---- the conversation ----
   toggle(id, open, cx) {
+    this.toggled.delete(id);
     this.toggled.set(id, open);
     if (open && !this.data?.open?.[id]) {
       this.opening.add(id);
@@ -642,21 +786,29 @@ var Render = class extends View {
     const c = t[ROLE_COLOR[role]], claude = t[ROLE_COLOR.claude];
     const x = `render-x-${row.id}`;
     const when = row.at ? ` \xB7 ${ago(row.at, Date.now())} ago` : "";
-    const p = promptView(row.text, this.showAll.has(row.id));
+    const canHtml = Boolean(this.data?.canHtml);
     const turn = v_flex().id(`${x}-turn`).w_full().gap(4).pl(10).py(4).border_l(3).border_color(c).bg(c + "14").children([
       div().id(`${x}-head`).text_size(11).font_semibold().text_color(c).cursor_pointer().tooltip("Fold").on_click((_e, cx) => this.toggle(row.id, false, cx)).child(`${speakerLabel(role, row.event)}${when}`),
-      p.text ? div().w_full().text_size(13).child(TextView.markdown(`${x}-text`, p.text).selectable(true)) : null,
-      p.more ? div().id(`${x}-all`).text_size(11.5).text_color(t.accent).cursor_pointer().on_click((_e, cx) => {
-        this.showAll.add(row.id);
+      ...(data.turn ?? []).map((b, i) => this.block(t, b, `${x}-t${i}`, maxW - 13, canHtml, true)),
+      data.turnMore ? div().id(`${x}-all`).text_size(11.5).text_color(t.accent).cursor_pointer().on_click((_e, cx) => {
+        this.full.add(row.id);
+        cx.spawn(async (cx2) => this.load(cx2));
         cx.notify();
       }).child("show all") : null
     ].filter(Boolean));
     const note = replyNote(row);
-    const canHtml = Boolean(this.data?.canHtml);
+    const go = (page, cx) => {
+      this.pages.set(row.id, page);
+      cx.spawn(async (cx2) => this.load(cx2));
+      cx.notify();
+    };
+    const pager = (k) => (data.pageCount ?? 1) > 1 ? this.pager(t, `${x}-pg${k}`, "Part", data.page ?? 0, data.pageCount, go) : null;
     const reply = v_flex().id(`${x}-reply`).w_full().gap(8).pl(10).py(4).border_l(3).border_color(claude).children([
       div().text_size(11).font_semibold().text_color(claude).child("CLAUDE"),
       ...note ? [div().text_size(12.5).text_color(t.dim).child(note)] : [
-        ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW, canHtml)),
+        pager("a"),
+        ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW - 13, canHtml)),
+        pager("b"),
         this.buttons(t, data.buttons, `${x}-copy`, canHtml),
         this.copyNote(t, `${x}-copy`)
       ]
@@ -674,7 +826,7 @@ var Render = class extends View {
     const rows = this.data?.exchanges;
     if (!rows) return [this.note(t, "Reading\u2026")];
     if (!rows.length) return [this.note(t, "No conversation yet in this session.")];
-    const open = new Set(openIds(rows, this.toggled));
+    const open = new Set(openWithin(rows, this.toggled));
     const maxW = Math.max(120, this.width - PAD * 2 - 13);
     return rows.flatMap((row, i) => [
       ...i ? [div().id(`render-sep-${i}`).w_full().h(0).border_b(1).border_dashed().border_color(t.border)] : [],
@@ -710,7 +862,15 @@ var Render = class extends View {
           cx.notify();
         }).child(svg("mods/workspace-chrome/chevron-left.svg").size(12)).child(f.path.split("/").pop())).children([this.buttons(t, f.buttons, "render-file-copy", f.canHtml)].filter(Boolean)),
         ...[this.copyNote(t, "render-file-copy")].filter(Boolean),
-        ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml))
+        ...f.pageCount > 1 ? [this.pager(t, "render-file-pga", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx2) => {
+          await this.openFile(f.path, page);
+          cx2.notify();
+        }))] : [],
+        ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml)),
+        ...f.pageCount > 1 ? [this.pager(t, "render-file-pgb", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx2) => {
+          await this.openFile(f.path, page);
+          cx2.notify();
+        }))] : []
       ];
     }
     if (this.files === null) return [this.note(t, "Reading\u2026")];

@@ -21,7 +21,7 @@ import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.
 import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 import {
-  ALERTS, ROLE_COLOR, copyPlan, hintsNotice, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf,
+  ALERTS, COLOURS, ROLE_COLOR, copyPlan, hintsNotice, openWithin, pieces, replyNote, shownButtons, speakerLabel, tableWidths, viewOf,
 } from "../../shared/render/view.js";
 
 const MOD = "dock-render";
@@ -48,7 +48,8 @@ export default class Render extends View {
     this.target = null; // { kind, agent, transcript?, cwd } of the agent followed
     this.data = null; // the helper's answer for the agent (exchanges, open, diagrams, canHtml)
     this.toggled = new Map(); // exchange id -> opened (true) or folded (false) by hand
-    this.showAll = new Set(); // exchange ids whose long turn text is shown in full
+    this.full = new Set(); // exchange ids whose long turn text is shown in full (sent to the helper as `full`)
+    this.pages = new Map(); // exchange id -> the page of its reply shown (sent as `pages`)
     this.opening = new Set(); // exchange ids opened by hand whose blocks are being read
     this.copied = null; // { key, note } of the copy button just pressed
     this.hints = { state: null, busy: false, error: null, checked: false }; // the diagram-hint hooks in Claude's settings
@@ -135,7 +136,8 @@ export default class Render extends View {
     this.watch = null;
     Object.assign(this, { target: null, data: null, files: null, file: null, problem: null, copied: null });
     this.toggled = new Map();
-    this.showAll = new Set();
+    this.full = new Set();
+    this.pages = new Map();
     this.opening = new Set();
     if (!agent) return;
     const kind = agentKind(agent);
@@ -191,8 +193,9 @@ export default class Render extends View {
         this.again = false;
         const t = this.target;
         const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id); // the newest three come anyway
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, open })
-          : await this.helper({ mode: "codex", cwd: t.cwd, open });
+        const more = { open, full: [...this.full], pages: Object.fromEntries(this.pages) };
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, ...more })
+          : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
         if (this.target !== t) return;
         if (out.ok) { this.data = out; this.problem = null; } else this.problem = out.error ?? "Couldn't read the session.";
         if (this.view() === "files") await this.loadFiles();
@@ -214,10 +217,10 @@ export default class Render extends View {
     if (this.file) await this.openFile(this.file.path);
   }
 
-  async openFile(path) {
-    const out = await this.helper({ mode: "file", path });
-    this.file = out.ok ? { path, blocks: out.blocks, buttons: out.buttons, canHtml: out.canHtml }
-      : { path, blocks: [{ kind: "text", md: `Couldn't read it: ${out.error}`, buttons: [] }], buttons: [], canHtml: false };
+  async openFile(path, page = 0) {
+    const out = await this.helper({ mode: "file", path, page });
+    this.file = out.ok ? { path, blocks: out.blocks, buttons: out.buttons, canHtml: out.canHtml, page: out.page ?? 0, pageCount: out.pageCount ?? 1 }
+      : { path, blocks: [{ kind: "text", md: "", parts: [{ type: "para", runs: [{ text: `Couldn't read it: ${out.error}` }] }], buttons: [] }], buttons: [], canHtml: false, page: 0, pageCount: 1 };
   }
 
   setView(v, cx) {
@@ -342,11 +345,43 @@ export default class Render extends View {
     });
   }
 
-  // ---- blocks ----
+  // ---- blocks, drawn in colour ----
 
-  block(t, b, id, maxW, canHtml) {
-    const md = (text) => TextView.markdown(`${id}-md`, text).selectable(true);
+  // One piece of prose (a word with its spaces) in its run's colour and style.
+  piece(t, p, id) {
+    if (p.text === "\n") return div().w_full().h(0);
+    let el = div().text_color(t[COLOURS[p.role] ?? "foreground"] ?? t.foreground);
+    if (p.bold) el = el.font_bold();
+    if (p.italic) el = el.italic();
+    if (p.strike) el = el.line_through();
+    if (p.role === "code") el = el.font_family("Menlo").text_size(12).px(4).rounded(4).bg(t[COLOURS.inlineCodeBg]);
+    if (p.role === "link" && p.href) el = el.id(id).underline().cursor_pointer().on_click((_e, cx) => cx.open_url(p.href));
+    return el.child(p.text);
+  }
+
+  // Prose: runs as word pieces, wrapping between words.
+  prose(t, runs, id, style = {}) {
+    const { size = 13, justify = null, over = null } = style;
+    const list = pieces(over ? runs.map(over) : runs);
+    return h_flex().id(id).w_full().flex_wrap().text_size(size)
+      .when(justify === "right", (el) => el.justify_end()).when(justify === "center", (el) => el.justify_center())
+      .children(list.map((p, i) => this.piece(t, p, `${id}-${i}`)));
+  }
+
+  // A pager: "Part 2 of 5" with Prev and Next.
+  pager(t, id, label, page, count, go) {
+    const btn = (k, text, to) => div().id(`${id}-${k}`).h(20).px(8).flex().items_center().rounded(5).border_1().border_color(t.border)
+      .text_size(11).when(to >= 0 && to < count, (el) => el.cursor_pointer().text_color(t.foreground).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => go(to, cx)))
+      .when(!(to >= 0 && to < count), (el) => el.text_color(t.dim)).child(text);
+    return h_flex().id(id).gap(6).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(`${label} ${page + 1} of ${count}`))
+      .child(btn("prev", "Prev", page - 1)).child(btn("next", "Next", page + 1));
+  }
+
+  // A block in colour. `inner`: inside a list item, quote or alert, where the outer block's copy covers its text.
+  block(t, b, id, maxW, canHtml, inner = false) {
     const note = this.copyNote(t, id);
+    const sub = (list, w) => list.map((x, j) => this.block(t, x, `${id}-${j}`, w, canHtml, true));
     switch (b.kind) {
       case "mermaid":
       case "figure":
@@ -354,13 +389,44 @@ export default class Render extends View {
       case "code":
         return v_flex().id(id).w_full().gap(2).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(b.lang || "code")).child(this.buttons(t, b.buttons, id, canHtml)),
-          div().w_full().text_size(13).child(md(b.md)), note].filter(Boolean));
+          div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().rounded(5).bg(t[COLOURS.codeBg]).p(8)
+            .child(v_flex().flex_none().font_family("Menlo").text_size(12).children((b.lines ?? []).map((line) => h_flex().whitespace_nowrap()
+              .children(line.length ? line.map((r) => div().text_color(t[COLOURS[r.role] ?? COLOURS.codeText]).child(r.text)) : [div().child(" ")])))),
+          note].filter(Boolean));
+      case "table": {
+        const widths = tableWidths(b.natural ?? [], b.words ?? [], maxW - 2);
+        const total = widths.reduce((a, w) => a + w, 0) + 2;
+        const cell = (runs, c, r) => div().w(widths[c]).flex_none().px(8).py(4)
+          .when(c > 0, (el) => el.border_l(1).border_color(t.border))
+          .child(this.prose(t, runs, `${id}-c${r}-${c}`, {
+            justify: b.align?.[c], over: r < 0 ? (x) => ({ ...x, bold: true, role: x.role ?? "tableHeader" }) : null,
+          }));
+        const grid = v_flex().w(total).flex_none().border_1().border_color(t.border).rounded(6).overflow_hidden()
+          .child(h_flex().bg(t[COLOURS.tableHeader] + "12").children(b.header.map((h, c) => cell(h, c, -1))))
+          .children(b.rows.map((row, r) => h_flex().border_t(1).border_color(t.border).children(row.map((cl, c) => cell(cl, c, r)))));
+        return v_flex().id(id).w_full().gap(4).children([
+          this.buttons(t, b.buttons, id, canHtml),
+          total > maxW ? div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().child(grid) : grid,
+          note].filter(Boolean));
+      }
+      case "list":
+        return v_flex().id(id).w_full().gap(4).children([
+          inner ? null : this.buttons(t, b.buttons, id, canHtml),
+          ...(b.items ?? []).map((it, i) => h_flex().w_full().items_start()
+            .child(div().w(22).flex_none().text_size(13).text_color(t[COLOURS.bullet]).child(it.marker))
+            .child(v_flex().flex_1().min_w(0).gap(4).children(it.blocks.map((x, j) => this.block(t, x, `${id}-${i}-${j}`, maxW - 22, canHtml, true))))),
+          note].filter(Boolean));
+      case "quote":
+        return v_flex().id(id).w_full().gap(4).children([
+          inner ? null : this.buttons(t, b.buttons, id, canHtml),
+          v_flex().w_full().gap(4).pl(10).border_l(3).border_color(t[COLOURS.quote]).children(sub(b.blocks ?? [], maxW - 13)),
+          note].filter(Boolean));
       case "alert": {
         const a = ALERTS[b.alert] ?? ALERTS.note;
         const c = t[a.color];
         return v_flex().id(id).w_full().gap(4).p(8).border_l(3).border_color(c).bg(c + "14").rounded(4).children([
           h_flex().gap(8).items_center().child(div().flex_1().text_size(11.5).font_semibold().text_color(c).child(a.title)).child(this.buttons(t, b.buttons, id, canHtml)),
-          div().w_full().text_size(13).child(md(b.md)), note].filter(Boolean));
+          ...sub(b.blocks ?? [], maxW - 19), note].filter(Boolean));
       }
       case "marker": {
         const role = b.by === "you" ? "you" : "event";
@@ -368,16 +434,24 @@ export default class Render extends View {
         return div().id(id).w_full().pl(8).py(2).border_l(3).border_color(c).bg(c + "14").text_size(12).text_color(c)
           .child(role === "you" ? `YOU, while Claude worked: ${b.text}` : `${speakerLabel("event", b.event)} · ${b.text}`);
       }
-      case "text":
-        return div().id(id).w_full().text_size(13).child(md(b.md));
-      default: // table, list, quote: their buttons above, on the right
-        return v_flex().id(id).w_full().gap(4).children([this.buttons(t, b.buttons, id, canHtml), div().w_full().text_size(13).child(md(b.md)), note].filter(Boolean));
+      default: { // text: headings, paragraphs, rules, HTML
+        const SIZE = { 1: 17, 2: 15 };
+        const parts = (b.parts ?? []).map((part, i) => {
+          const pid = `${id}-p${i}`;
+          if (part.type === "heading") return this.prose(t, part.runs, pid, { size: SIZE[part.level] ?? 13.5, over: (r) => ({ ...r, bold: true, role: r.role ?? "heading" }) });
+          if (part.type === "rule") return div().w_full().h(1).bg(t[COLOURS.rule]);
+          if (part.type === "html") return div().w_full().text_size(12.5).text_color(t.muted).child(part.text);
+          return this.prose(t, part.runs, pid);
+        });
+        return v_flex().id(id).w_full().gap(6).children([inner ? null : this.buttons(t, b.buttons, id, canHtml), ...parts, note].filter(Boolean));
+      }
     }
   }
 
   // ---- the conversation ----
 
   toggle(id, open, cx) {
+    this.toggled.delete(id); // re-inserted, so the latest opened comes last (openWithin keeps it first)
     this.toggled.set(id, open);
     if (open && !this.data?.open?.[id]) { this.opening.add(id); cx.spawn(async (cx) => this.load(cx)); }
     cx.notify();
@@ -389,20 +463,21 @@ export default class Render extends View {
     const c = t[ROLE_COLOR[role]], claude = t[ROLE_COLOR.claude];
     const x = `render-x-${row.id}`;
     const when = row.at ? ` · ${ago(row.at, Date.now())} ago` : "";
-    const p = promptView(row.text, this.showAll.has(row.id));
+    const canHtml = Boolean(this.data?.canHtml);
     const turn = v_flex().id(`${x}-turn`).w_full().gap(4).pl(10).py(4).border_l(3).border_color(c).bg(c + "14").children([
       div().id(`${x}-head`).text_size(11).font_semibold().text_color(c).cursor_pointer().tooltip("Fold")
         .on_click((_e, cx) => this.toggle(row.id, false, cx)).child(`${speakerLabel(role, row.event)}${when}`),
-      p.text ? div().w_full().text_size(13).child(TextView.markdown(`${x}-text`, p.text).selectable(true)) : null,
-      p.more ? div().id(`${x}-all`).text_size(11.5).text_color(t.accent).cursor_pointer()
-        .on_click((_e, cx) => { this.showAll.add(row.id); cx.notify(); }).child("show all") : null,
+      ...(data.turn ?? []).map((b, i) => this.block(t, b, `${x}-t${i}`, maxW - 13, canHtml, true)),
+      data.turnMore ? div().id(`${x}-all`).text_size(11.5).text_color(t.accent).cursor_pointer()
+        .on_click((_e, cx) => { this.full.add(row.id); cx.spawn(async (cx) => this.load(cx)); cx.notify(); }).child("show all") : null,
     ].filter(Boolean));
     const note = replyNote(row);
-    const canHtml = Boolean(this.data?.canHtml);
+    const go = (page, cx) => { this.pages.set(row.id, page); cx.spawn(async (cx) => this.load(cx)); cx.notify(); };
+    const pager = (k) => ((data.pageCount ?? 1) > 1 ? this.pager(t, `${x}-pg${k}`, "Part", data.page ?? 0, data.pageCount, go) : null);
     const reply = v_flex().id(`${x}-reply`).w_full().gap(8).pl(10).py(4).border_l(3).border_color(claude).children([
       div().text_size(11).font_semibold().text_color(claude).child("CLAUDE"),
       ...(note ? [div().text_size(12.5).text_color(t.dim).child(note)]
-        : [...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW, canHtml)),
+        : [pager("a"), ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW - 13, canHtml)), pager("b"),
           this.buttons(t, data.buttons, `${x}-copy`, canHtml), this.copyNote(t, `${x}-copy`)]),
     ].filter(Boolean));
     return v_flex().id(x).w_full().gap(6).child(turn).child(reply);
@@ -423,7 +498,7 @@ export default class Render extends View {
     const rows = this.data?.exchanges;
     if (!rows) return [this.note(t, "Reading…")];
     if (!rows.length) return [this.note(t, "No conversation yet in this session.")];
-    const open = new Set(openIds(rows, this.toggled));
+    const open = new Set(openWithin(rows, this.toggled));
     const maxW = Math.max(120, this.width - PAD * 2 - 13);
     return rows.flatMap((row, i) => [
       ...(i ? [div().id(`render-sep-${i}`).w_full().h(0).border_b(1).border_dashed().border_color(t.border)] : []),
@@ -477,7 +552,9 @@ export default class Render extends View {
             .child(svg("mods/workspace-chrome/chevron-left.svg").size(12)).child(f.path.split("/").pop()))
           .children([this.buttons(t, f.buttons, "render-file-copy", f.canHtml)].filter(Boolean)),
         ...[this.copyNote(t, "render-file-copy")].filter(Boolean),
+        ...(f.pageCount > 1 ? [this.pager(t, "render-file-pga", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx) => { await this.openFile(f.path, page); cx.notify(); }))] : []),
         ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml)),
+        ...(f.pageCount > 1 ? [this.pager(t, "render-file-pgb", "Page", f.page, f.pageCount, (page, cx) => cx.spawn(async (cx) => { await this.openFile(f.path, page); cx.notify(); }))] : []),
       ];
     }
     if (this.files === null) return [this.note(t, "Reading…")];

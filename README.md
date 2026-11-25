@@ -444,8 +444,17 @@ terminal, so you keep Claude Code's own terminal UI:
   written), **art** (a boxed text table in a code fence, for Slack) and **html** (a formatted table plus
   tab-separated text, for Jira, Confluence and email); **copy** on code (without its fences), lists (as Markdown),
   quotes (without `>`) and alerts; **copy source** on a diagram or figure; **copy md** and **copy html** for a whole
-  reply (and for a whole file in Files). html copies work on macOS; elsewhere those buttons are hidden. Selecting text
-  works inside one block.
+  reply (and for a whole file in Files), and **copy** on each stretch of prose. html copies work on macOS; elsewhere
+  those buttons are hidden.
+- **In colour**, as prismantis draws replies, in your Herdr theme's colours: headings cyan, table headers yellow on
+  a ruled grid, numbers and italics magenta, paths, inline code and bullets cyan, links blue (click to open), bold
+  bright; code coloured by language (shell and unlabelled code as prismantis colours it, other languages by
+  [Prism](https://prismjs.com) 1.30.0, MIT, bundled into the helper). The panel draws the text itself, so it can't be
+  mouse-selected: use the copy buttons, or the terminal's own text. Number and path matching, the shell colouring and
+  the code colour mapping are ported from prismantis (MIT).
+- **A 64 KB budget**: the panel draws at most about 64 KB of Markdown at once (measured: more starts to lag). A longer
+  file in Files, or a longer reply, comes in pages ("Page 2 of 5", **Prev** / **Next**); opening an exchange that would
+  pass the budget folds older open ones. A long turn of yours shows its first 12 lines until **show all**.
 - **Diagrams**: every Mermaid diagram and figure of the session, newest first.
 - **Files**: the Markdown files under the agent's folder (plans, specs), newest first; one opens formatted, with its
   diagrams drawn and the same copy buttons.
