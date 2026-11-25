@@ -1,7 +1,7 @@
 // The Render panel's diagram hints for Claude Code (src/shared/render/hints.js, src/app/render-hint.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HINT, REMINDER, hintCommand, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
+import { HINT, HINT_PHRASE, REMINDER, hintCommand, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
 
 const IN = { HC_TERMINAL_ID: "t1" };
 const PRISM = (options = {}) => JSON.stringify({ enabledPlugins: { "prismantis@prismantis": true }, pluginConfigs: { "prismantis@prismantis": { options } } });
@@ -25,6 +25,16 @@ test("hintOutput: quiet outside Herdr, while prismantis's hints are on, with bro
   assert.equal(hintOutput("session", { env: IN, settingsText: PRISM() }), "");
   assert.equal(hintOutput("session", { env: IN, settingsText: "{ not json" }), "");
   assert.equal(hintOutput("other", { env: IN, settingsText: null }), "");
+});
+
+test("hintOutput: in Herdr by HC_TERMINAL_ID, HC_SCOPE or HERDR_PANE_ID; empty ones don't count", () => {
+  for (const env of [{ HC_TERMINAL_ID: "t1" }, { HC_SCOPE: "0-abc" }, { HERDR_PANE_ID: "p1" }])
+    assert.notEqual(hintOutput("prompt", { env, settingsText: null }), "", JSON.stringify(env));
+  assert.equal(hintOutput("prompt", { env: { HC_TERMINAL_ID: "", HC_SCOPE: "", HERDR_PANE_ID: "" }, settingsText: null }), "");
+});
+
+test("HINT_PHRASE is in both the note and the reminder", () => {
+  assert.ok(HINT_PHRASE && HINT.includes(HINT_PHRASE) && REMINDER.includes(HINT_PHRASE));
 });
 
 test("prismantisHints: on unless the plugin is off or its enabled, mermaid or diagramHints option is false", () => {
@@ -73,7 +83,7 @@ const hook = (event, env, settings) => {
   const dir = mkdtempSync(join(tmpdir(), "hint-"));
   try {
     if (settings != null) writeFileSync(join(dir, "settings.json"), settings);
-    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "HC_TERMINAL_ID"));
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].includes(k)));
     return spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", env: { ...clean, CLAUDE_CONFIG_DIR: dir, ...env } });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 };

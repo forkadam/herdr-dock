@@ -24,6 +24,7 @@ function readSettings(text) {
 }
 
 // src/shared/render/hints.js
+var inHerdr = (env) => ["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].some((k) => typeof env?.[k] === "string" && env[k] !== "");
 var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
 var HINT = [
   [
@@ -55,7 +56,7 @@ function prismantisHints(settings) {
 var EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
 function hintOutput(event, { env, settingsText }) {
   const name = EVENTS[event];
-  if (!name || !env?.HC_TERMINAL_ID) return "";
+  if (!name || !inHerdr(env)) return "";
   const r = readSettings(settingsText);
   if (!r.ok || prismantisHints(r.settings)) return "";
   return JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: event === "session" ? HINT : REMINDER } });
