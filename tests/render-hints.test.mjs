@@ -64,7 +64,7 @@ test("hintsPlan: a BOM-prefixed file reads; invalid JSON is left alone", () => {
 
 // ---- The hook script (src/app/render-hint.js; bundled as mods/dock-render/herdr-hint.mjs) ----
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -113,4 +113,33 @@ test("the setup command: adds the hooks; --check says what it would do and write
     writeFileSync(join(claude, "settings.json"), "{ nope");
     assert.equal(setupCli(["--script", "/x/herdr-hint.mjs"], claude).status, 1);
   } finally { rmSync(claude, { recursive: true, force: true }); }
+});
+
+test("the setup command: an unreadable settings.json fails (exit 1) and is left as it was", { skip: process.platform === "win32" || process.getuid?.() === 0 }, () => {
+  const claude = mkdtempSync(join(tmpdir(), "hint-claude-"));
+  const file = join(claude, "settings.json");
+  try {
+    writeFileSync(file, '{ "model": "opus" }');
+    chmodSync(file, 0o000);
+    const r = setupCli(["--script", "/x/herdr-hint.mjs"], claude);
+    chmodSync(file, 0o644);
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout, /^added/);
+    assert.equal(readFileSync(file, "utf8"), '{ "model": "opus" }');
+  } finally { rmSync(claude, { recursive: true, force: true }); }
+});
+
+test("the setup command runs when reached through a symlink", { skip: process.platform === "win32" }, () => {
+  const claude = mkdtempSync(join(tmpdir(), "hint-claude-"));
+  const links = mkdtempSync(join(tmpdir(), "hint-link-"));
+  try {
+    writeFileSync(join(claude, "settings.json"), "{}");
+    symlinkSync(SETUP_JS, join(links, "hints-setup.js"));
+    const r = spawnSync(process.execPath, [join(links, "hints-setup.js"), "--check", "--script", "/x/herdr-hint.mjs"], { encoding: "utf8", env: { ...process.env, DOCK_CLAUDE_HOME: claude } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^added: would add/);
+  } finally {
+    rmSync(claude, { recursive: true, force: true });
+    rmSync(links, { recursive: true, force: true });
+  }
 });

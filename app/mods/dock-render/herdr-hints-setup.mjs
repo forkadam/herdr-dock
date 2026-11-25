@@ -1,5 +1,5 @@
 // src/app/hints-setup.js
-import { copyFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,8 +85,9 @@ function slashPath(p) {
 var readOrNull = (p) => {
   try {
     return readFileSync(p, "utf8");
-  } catch {
-    return null;
+  } catch (e) {
+    if (e?.code === "ENOENT") return null;
+    throw e;
   }
 };
 function setupHints({ claudeHome, script, dry = false, backup = true }) {
@@ -121,7 +122,14 @@ function main(argv) {
   console.log(`${r.state}: ${r.message}`);
   return r.state === "invalid" ? 1 : 0;
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+var real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (e) {
