@@ -26,3 +26,15 @@ test("footnotesBlock: notes as runs (code and links coloured); marks past 9 supe
   const many = "x" + Array.from({ length: 12 }, (_, i) => `[^n${i}]`).join("") + "\n\n" + Array.from({ length: 12 }, (_, i) => `[^n${i}]: n${i}`).join("\n");
   assert.equal(collectFootnotes(many).marks.get("n11"), "¹²");
 });
+
+test("a note that starts like a list item keeps its text", () => {
+  const b = footnotesBlock([{ mark: "¹", md: "2024. Annual report." }, { mark: "²", md: "- see the docs" }]);
+  assert.deepEqual(b.notes.map((n) => n.runs.map((r) => r.text).join("")), ["2024. Annual report.", "- see the docs"]);
+});
+
+test("a fence indented inside a nested list is code too: its references are left alone", () => {
+  const text = "- a\n  - b\n\n    ```\n    x[^1]\n    ```\n\nSee[^1].\n\n[^1]: Note.";
+  const out = applyFootnotes(text, collectFootnotes(text).marks);
+  assert.match(out, /    x\[\^1\]/);
+  assert.match(out, /See¹\./);
+});

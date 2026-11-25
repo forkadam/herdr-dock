@@ -452,7 +452,8 @@ export default class Render extends View {
         const grid = v_flex().w(total).flex_none().border_1().border_color(t.border).rounded(6).overflow_hidden()
           .child(h_flex().bg(t[COLOURS.tableHeader] + "12").children(b.header.map((h, c) => cell(h, c, -1))))
           .children(b.rows.map((row, r) => h_flex().border_t(1).border_color(t.border).children(row.map((cl, c) => cell(cl, c, r)))));
-        return v_flex().id(id).w_full().gap(4).children([
+        // Fitted (sharing a row): exactly its slot's width, so the row's flex doesn't widen it and its buttons stay over it.
+        return v_flex().id(id).when(fitted, (el) => el.w(maxW).flex_none()).when(!fitted, (el) => el.w_full()).gap(4).children([
           this.buttons(t, b.buttons, id, canHtml),
           total > maxW ? div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().child(grid) : grid,
           note].filter(Boolean));

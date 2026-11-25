@@ -333,7 +333,7 @@ function sideBySide(widths, panelPx, gap = 12) {
   return widths.length >= 2 && widths.reduce((a, w) => a + w, 0) + gap * (widths.length - 1) <= panelPx;
 }
 function tableWidths(natural, words, panelPx, stretch = true) {
-  const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
+  const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX + 1e-9));
   const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
   const used = fitted.reduce((a, w) => a + w, 0);
   if (!stretch || used >= panelPx) return fitted;
@@ -789,7 +789,7 @@ var Render = class extends View {
           over: r < 0 ? (x) => ({ ...x, bold: true, role: x.role ?? "tableHeader" }) : null
         }));
         const grid = v_flex().w(total).flex_none().border_1().border_color(t.border).rounded(6).overflow_hidden().child(h_flex().bg(t[COLOURS.tableHeader] + "12").children(b.header.map((h, c) => cell(h, c, -1)))).children(b.rows.map((row, r) => h_flex().border_t(1).border_color(t.border).children(row.map((cl, c) => cell(cl, c, r)))));
-        return v_flex().id(id).w_full().gap(4).children([
+        return v_flex().id(id).when(fitted, (el) => el.w(maxW).flex_none()).when(!fitted, (el) => el.w_full()).gap(4).children([
           this.buttons(t, b.buttons, id, canHtml),
           total > maxW ? div().id(`${id}-scroll`).w(maxW).overflow_x_scrollbar().child(grid) : grid,
           note

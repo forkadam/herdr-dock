@@ -137,7 +137,8 @@ export function sideBySide(widths, panelPx, gap = 12) {
 // word (a table that can't fit then scrolls sideways). A table that fits is stretched to the panel's width, the spare
 // width shared by the columns' natural widths (Adam's call: stretched, as the Markdown view drew tables).
 export function tableWidths(natural, words, panelPx, stretch = true) {
-  const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX));
+  // + 1e-9: 115.2 / 7.2 is 15.999999…, and a lost character would wrap a fitted table measured again at its own width.
+  const chars = Math.max(natural.length, Math.floor((panelPx - CELL_PAD * natural.length) / CHAR_PX + 1e-9));
   const fitted = columnWidths(natural, chars, 0, words).map((w, c) => Math.max(w, words[c] ?? 1) * CHAR_PX + CELL_PAD);
   const used = fitted.reduce((a, w) => a + w, 0);
   if (!stretch || used >= panelPx) return fitted;

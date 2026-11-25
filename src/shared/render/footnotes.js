@@ -19,7 +19,7 @@ function scan(text) {
   let fence = null;
   let note = null; // the note being continued by indented lines
   for (const line of String(text ?? "").split("\n")) {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const f = /^\s*(`{3,}|~{3,})/.exec(line); // any indent: a fence inside a nested list item is code too (as prismantis)
     if (fence) {
       out.push({ line, code: true });
       if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
@@ -74,6 +74,7 @@ export function footnotesBlock(notes) {
   const n = bytes(md);
   return {
     kind: "footnotes", md, bytes: n, cost: n, buttons: [],
-    notes: notes.map((x) => ({ mark: x.mark, runs: inlineRuns(marked.lexer(x.md, { gfm: true })[0]?.tokens ?? []) })),
+    // Inline only: a note like "2024. Annual report." or "- see the docs" is text, not a list.
+    notes: notes.map((x) => ({ mark: x.mark, runs: inlineRuns(marked.Lexer.lexInline(x.md, { gfm: true })) })),
   };
 }

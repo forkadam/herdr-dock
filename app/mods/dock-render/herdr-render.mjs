@@ -102384,7 +102384,7 @@ function scan(text) {
   let fence = null;
   let note = null;
   for (const line of String(text ?? "").split("\n")) {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const f = /^\s*(`{3,}|~{3,})/.exec(line);
     if (fence) {
       out2.push({ line, code: true });
       if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
@@ -102449,7 +102449,8 @@ function footnotesBlock(notes) {
     bytes: n,
     cost: n,
     buttons: [],
-    notes: notes.map((x2) => ({ mark: x2.mark, runs: inlineRuns(x.lexer(x2.md, { gfm: true })[0]?.tokens ?? []) }))
+    // Inline only: a note like "2024. Annual report." or "- see the docs" is text, not a list.
+    notes: notes.map((x2) => ({ mark: x2.mark, runs: inlineRuns(x.Lexer.lexInline(x2.md, { gfm: true })) }))
   };
 }
 

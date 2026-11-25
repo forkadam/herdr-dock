@@ -109,3 +109,9 @@ test("tableWidths: not stretched when sharing a row", () => {
   const fitted = tableWidths([4, 6], [4, 6], 400, false);
   assert.ok(fitted.reduce((a, b) => a + b) < 400);
 });
+
+test("tableWidths: measuring a fitted table again at its own width gives the same columns (no lost character)", () => {
+  const fitted = tableWidths([5, 11], [5, 8], 560, false);   // | build | in progress |: [52, 95.2]
+  const total = fitted.reduce((a, b) => a + b, 0);
+  assert.deepEqual(tableWidths([5, 11], [5, 8], total, false), fitted);
+});
