@@ -11,7 +11,7 @@ import { readSettings } from "../statusline.js";
 export const HINT_MARK = "herdr-hint";
 
 // In both the note and the reminder: how Render finds them in a session's log (transcript.js, hintReach).
-export const HINT_PHRASE = "Render panel beside this terminal";
+export { HINT_PHRASE } from "./hint-phrase.js";
 
 // Whether a hook runs in a Herdr terminal: any of its variables set. One renamed variable can't silence the hints.
 const inHerdr = (env) => ["HC_TERMINAL_ID", "HC_SCOPE", "HERDR_PANE_ID"].some((k) => typeof env?.[k] === "string" && env[k] !== "");

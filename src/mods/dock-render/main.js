@@ -57,7 +57,7 @@ export default class Render extends View {
     this.copied = null; // { key, note } of the copy button just pressed
     // The diagram-hint hooks in Claude's settings; prismantis: its own hints are on; commands: ours found there.
     this.hints = { state: null, busy: false, error: null, checked: false, prismantis: false, commands: [] };
-    this.reachWhy = false; // the "aren't reaching Claude" row's Why is open
+    this.reachWhy = null; // the transcript whose "aren't reaching Claude" row has Why open
     this.reachDismissed = new Set(); // transcripts whose "aren't reaching Claude" row was closed with ×
     this.files = null; // [{ path, name, rel, mtimeMs }]
     this.file = null; // { path, blocks, buttons, canHtml } of the file opened
@@ -331,18 +331,19 @@ export default class Render extends View {
   // The hints are set up but don't reach Claude: the row, Why (what it means, what to do, details to copy), ×.
   reachRow(t, n, transcript) {
     const details = hintsDetails({ platform: window()?.platform ?? null, commands: this.hints.commands, transcript, checked: this.data?.hints?.checked });
+    const open = this.reachWhy === transcript;
     return v_flex().id("render-hints").px(PAD).py(4).gap(6).flex_none().border_b(1).border_color(t.border)
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked ?? t.ansi3).child(n.text))
         .child(h_flex().id("render-hints-why").h(22).px(8).flex_none().items_center().rounded(6).border_1().border_color(t.border)
           .text_size(11.5).text_color(t.foreground).cursor_pointer().hover((st) => st.bg(t.hover))
-          .on_click((_e, cx) => { this.reachWhy = !this.reachWhy; cx.notify(); })
-          .child(this.reachWhy ? "Hide" : "Why"))
+          .on_click((_e, cx) => { this.reachWhy = open ? null : transcript; cx.notify(); })
+          .child(open ? "Hide" : "Why"))
         .child(div().id("render-hints-dismiss").size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
           .text_color(t.dim).hover((s) => s.bg(t.hover)).tooltip("Hide for this session")
-          .on_click((_e, cx) => { this.reachDismissed.add(transcript); this.reachWhy = false; cx.notify(); })
+          .on_click((_e, cx) => { this.reachDismissed.add(transcript); this.reachWhy = null; cx.notify(); })
           .child(svg("mods/workspace-chrome/x.svg").size(12))))
-      .when(this.reachWhy, (el) => el
+      .when(open, (el) => el
         .child(div().text_size(12).text_color(t.muted).child(HINTS_WHY))
         .child(this.buttons(t, [{ label: "copy details", text: details }], "render-hints-details", false, false)));
   }

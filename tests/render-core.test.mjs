@@ -274,3 +274,17 @@ test("hintReach: the hint is found in any attachment shape or name; a queued mes
   assert.equal(hintReach([P("a"), renamed]).state, "ok");
   assert.equal(hintReach([P("a"), H(), P("b"), Q(phrase), P("c")]).state, "silent");
 });
+
+test("hintReach: a compaction summary isn't a prompt, and the note after it isn't the previous prompt's hint", () => {
+  const COMPACT = JSON.stringify({ type: "user", isCompactSummary: true, message: { content: "This session is being continued from a previous conversation." } });
+  assert.deepEqual(hintReach([P("a"), P("b"), COMPACT, H()]), { state: "silent", checked: 2 });
+});
+
+test("hintReach: a hint after a turn that isn't counted isn't credited to the prompt before it; a meta line between doesn't matter", () => {
+  const TN = JSON.stringify({ type: "user", origin: { kind: "task-notification" }, message: { content: "<task-notification>x</task-notification>" } });
+  assert.equal(hintReach([P("a"), P("b"), TN, H()]).state, "silent");
+  assert.equal(hintReach([P("a"), P("b"), C("/clear"), H()]).state, "silent");
+  assert.equal(hintReach([P("a"), P("b"), Q("typed mid-turn"), H()]).state, "silent");
+  const META = JSON.stringify({ type: "user", isMeta: true, message: { content: "skill text" } });
+  assert.equal(hintReach([P("a"), META, H()]).state, "ok");
+});

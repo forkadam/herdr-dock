@@ -88,10 +88,10 @@ export function hintsDetails({ platform, commands, transcript, checked }) {
   return [
     "herdr-dock Render: diagram hints aren't reaching Claude",
     `platform: ${platform ?? "unknown"}`,
-    `hook commands in ~/.claude/settings.json: ${commands?.length ? "" : "none found"}`,
+    `hook commands in ~/.claude/settings.json:${commands?.length ? "" : " none found"}`,
     ...(commands ?? []).map((c) => `  ${c}`),
     `session log: ${transcript ?? "unknown"}`,
-    `typed prompts checked: ${checked ?? 0}, none got the hint (the newest 2)`,
+    `typed prompts checked: ${checked ?? 0} (the newest 2 got no hint)`,
   ].join("\n");
 }
 

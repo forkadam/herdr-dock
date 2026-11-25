@@ -70,6 +70,8 @@ test("hintsDetails: platform, hook commands, transcript, prompts checked", () =>
   const d = hintsDetails({ platform: "linux", commands: ['node "/a/herdr-hint.mjs" prompt'], transcript: "/t.jsonl", checked: 3 });
   for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl", "3"]) assert.ok(d.includes(s), s);
   assert.match(hintsDetails({ platform: null, commands: [], transcript: null, checked: 0 }), /none found/);
+  assert.ok(d.split("\n").every((l) => !/ $/.test(l)), "no line ends in a space");
+  assert.match(d, /^typed prompts checked: 3 \(the newest 2 got no hint\)$/m);
 });
 
 // ---- Colour ----

@@ -103089,57 +103089,8 @@ ${parts.join("\n")}
   return { svg, w: w2, h: h2 };
 }
 
-// src/shared/statusline.js
-var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-function readSettings(text) {
-  if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
-  let settings;
-  try {
-    settings = JSON.parse(String(text).replace(/^﻿/, ""));
-  } catch (e) {
-    return { ok: false, error: `not valid JSON (${e.message})` };
-  }
-  if (!isObj(settings)) return { ok: false, error: "the root is not an object" };
-  const sl = settings.statusLine;
-  const command = isObj(sl) && typeof sl.command === "string" && sl.command.trim() ? sl.command : null;
-  return { ok: true, settings, command };
-}
-
-// src/shared/render/hints.js
-var HINT_MARK = "herdr-hint";
+// src/shared/render/hint-phrase.js
 var HINT_PHRASE = "Render panel beside this terminal";
-var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
-var HINT = [
-  [
-    "Replies in this session are also drawn in the Render panel beside this terminal (herdr-dock, in the Herdr app); it is not a command or tool to call.",
-    "Markdown tables, GitHub alerts (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION]), fenced code with a language tag, and ```mermaid blocks are drawn there:",
-    "flowchart, sequenceDiagram, stateDiagram-v2, classDiagram and erDiagram diagrams, and xychart-beta bar or line charts.",
-    "When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
-    "Skip diagrams and pictures for short or simple answers.",
-    "Put any command or snippet the user may run or copy in a fenced block with a language tag, never inline code: fenced blocks get a copy button, inline code does not."
-  ].join(" "),
-  [
-    "A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.",
-    "Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.",
-    "When the user asks you to explain, compare or plan something and pictures would make it easier to grasp, build the reply around them, with the core on the first screen as a picture or a sentence.",
-    "Color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
-    `At most ${FIGURE_MAX_COLUMNS} columns and ${FIGURE_MAX_LINES} lines, glyphs one column wide such as ${GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text. Draw a time axis with edge ticks like \u258F\u2500\u2500\u2500\u258F\u2500\u2500\u2500\u258F, not \u251C\u253C\u2524: \u2588 fills its cell, \u251C\u253C\u2524 sit mid-cell.`
-  ].join(" ")
-].join("\n");
-var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-function prismantisHints(settings) {
-  const plugins = isObj2(settings?.enabledPlugins) ? settings.enabledPlugins : {};
-  return Object.entries(plugins).some(([key, on]) => {
-    if (!key.startsWith("prismantis@") || on !== true) return false;
-    const o = settings.pluginConfigs?.[key]?.options;
-    return !(isObj2(o) && (o.enabled === false || o.mermaid === false || o.diagramHints === false));
-  });
-}
-function hooksSpeak(settingsText) {
-  const r2 = readSettings(settingsText);
-  if (!r2.ok || !r2.settings || prismantisHints(r2.settings)) return false;
-  return Object.values(r2.settings.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).some((h2) => typeof h2?.command === "string" && h2.command.includes(HINT_MARK));
-}
 
 // src/shared/render/transcript.js
 var parse = (line) => {
@@ -103303,7 +103254,7 @@ function readClaude(lines) {
 }
 var REACH_PROMPTS = 3;
 var NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
-var hintIn = (a) => a?.type !== "queued_command" && JSON.stringify(a ?? null).includes(HINT_PHRASE);
+var hintIn = (a) => JSON.stringify(a ?? null).includes(HINT_PHRASE);
 function hintReach(lines) {
   const got = [];
   let hinted = false;
@@ -103311,12 +103262,17 @@ function hintReach(lines) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
     if (o.type === "attachment") {
-      if (hintIn(o.attachment)) hinted = true;
+      if (o.attachment?.type === "queued_command") hinted = false;
+      else if (hintIn(o.attachment)) hinted = true;
       continue;
     }
     if (o.type !== "user" || o.isMeta) continue;
     const text = userText(o.message?.content);
-    if (text == null || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
+    if (text == null) continue;
+    if (o.isCompactSummary || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") {
+      hinted = false;
+      continue;
+    }
     got.push(hinted);
     hinted = false;
   }
@@ -103353,6 +103309,57 @@ function slashPath(p) {
   if (s.length > 1 && !/^[A-Z]:\/$/.test(s)) s = s.replace(/\/+$/, "");
   if (/^[A-Z]:$/.test(s)) s += "/";
   return s === "" ? "/" : s;
+}
+
+// src/shared/statusline.js
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function readSettings(text) {
+  if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
+  let settings;
+  try {
+    settings = JSON.parse(String(text).replace(/^﻿/, ""));
+  } catch (e) {
+    return { ok: false, error: `not valid JSON (${e.message})` };
+  }
+  if (!isObj(settings)) return { ok: false, error: "the root is not an object" };
+  const sl = settings.statusLine;
+  const command = isObj(sl) && typeof sl.command === "string" && sl.command.trim() ? sl.command : null;
+  return { ok: true, settings, command };
+}
+
+// src/shared/render/hints.js
+var HINT_MARK = "herdr-hint";
+var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
+var HINT = [
+  [
+    "Replies in this session are also drawn in the Render panel beside this terminal (herdr-dock, in the Herdr app); it is not a command or tool to call.",
+    "Markdown tables, GitHub alerts (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION]), fenced code with a language tag, and ```mermaid blocks are drawn there:",
+    "flowchart, sequenceDiagram, stateDiagram-v2, classDiagram and erDiagram diagrams, and xychart-beta bar or line charts.",
+    "When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
+    "Skip diagrams and pictures for short or simple answers.",
+    "Put any command or snippet the user may run or copy in a fenced block with a language tag, never inline code: fenced blocks get a copy button, inline code does not."
+  ].join(" "),
+  [
+    "A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.",
+    "Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.",
+    "When the user asks you to explain, compare or plan something and pictures would make it easier to grasp, build the reply around them, with the core on the first screen as a picture or a sentence.",
+    "Color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
+    `At most ${FIGURE_MAX_COLUMNS} columns and ${FIGURE_MAX_LINES} lines, glyphs one column wide such as ${GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text. Draw a time axis with edge ticks like \u258F\u2500\u2500\u2500\u258F\u2500\u2500\u2500\u258F, not \u251C\u253C\u2524: \u2588 fills its cell, \u251C\u253C\u2524 sit mid-cell.`
+  ].join(" ")
+].join("\n");
+var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function prismantisHints(settings) {
+  const plugins = isObj2(settings?.enabledPlugins) ? settings.enabledPlugins : {};
+  return Object.entries(plugins).some(([key, on]) => {
+    if (!key.startsWith("prismantis@") || on !== true) return false;
+    const o = settings.pluginConfigs?.[key]?.options;
+    return !(isObj2(o) && (o.enabled === false || o.mermaid === false || o.diagramHints === false));
+  });
+}
+function hooksSpeak(settingsText) {
+  const r2 = readSettings(settingsText);
+  if (!r2.ok || !r2.settings || prismantisHints(r2.settings)) return false;
+  return Object.values(r2.settings.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).some((h2) => typeof h2?.command === "string" && h2.command.includes(HINT_MARK));
 }
 
 // src/app/render-helper.js

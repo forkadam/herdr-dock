@@ -98,6 +98,12 @@ test("buildApp: each mod is a built dock-* mod; the bundled update-app imports o
   for (const s of specs) assert.match(s, /^node:/, `non-builtin import ${s}`);
 });
 
+test("buildApp: only Render's own bundles carry its hint note (the browser mod reads transcripts, not the note)", () => {
+  const NOTE = "Replies in this session are also drawn in the Render panel";
+  assert.ok(read(one, "mods/dock-render/herdr-hint.mjs").toString("utf8").includes(NOTE));
+  assert.ok(!read(one, "mods/dock-browser/main.js").toString("utf8").includes(NOTE));
+});
+
 test("buildApp: VERSION.json mods matches the mod folders", () => {
   const folders = readdirSync(join(one, "mods")).filter((n) => statSync(join(one, "mods", n)).isDirectory()).sort();
   assert.deepEqual(json(one, "VERSION.json").mods, folders);
