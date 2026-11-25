@@ -120,10 +120,50 @@ function ago(ms, now) {
   return `${Math.floor(s / (30 * 86400))}mo`;
 }
 
+// src/shared/render/view.js
+var OPEN_NEWEST = 3;
+var HTML_LIMIT = 512 * 1024;
+var PROMPT_LINES = 12;
+var ROLE_COLOR = { you: "ansi4", claude: "ansi5", event: "ansi3" };
+var ALERTS = {
+  note: { title: "Note", color: "ansi4" },
+  tip: { title: "Tip", color: "ansi2" },
+  important: { title: "Important", color: "ansi5" },
+  warning: { title: "Warning", color: "ansi3" },
+  caution: { title: "Caution", color: "ansi1" }
+};
+function openIds(rows, toggled) {
+  return rows.filter((r, i) => toggled.get(r.id) ?? i < OPEN_NEWEST).map((r) => r.id);
+}
+var EVENTS = { "task-notification": "BACKGROUND TASK", compaction: "CONTEXT COMPACTED" };
+function speakerLabel(role, event = null) {
+  if (role === "you") return "YOU";
+  if (role === "claude") return "CLAUDE";
+  if (!event) return "EVENT";
+  return EVENTS[event] ?? String(event).replace(/[-_]+/g, " ").trim().toUpperCase();
+}
+var shownButtons = (buttons, canHtml) => (buttons ?? []).filter((b) => canHtml || b.html === void 0);
+function copyPlan(button, canHtml) {
+  if (button.html === void 0) return { how: "plain" };
+  if (!canHtml) return { how: "plain", note: "formatted copy works on macOS only" };
+  if (button.html.length + button.text.length > HTML_LIMIT) return { how: "plain", note: "too large for a formatted copy" };
+  return { how: "html" };
+}
+function promptView(text, showAll) {
+  const lines = String(text ?? "").split("\n");
+  if (showAll || lines.length <= PROMPT_LINES) return { text: String(text ?? ""), more: false };
+  return { text: lines.slice(0, PROMPT_LINES).join("\n"), more: true };
+}
+var replyNote = (row) => row.state === "working" ? "working\u2026" : row.state === "none" ? "no reply text" : null;
+function viewOf(stored) {
+  return stored === "diagrams" || stored === "files" ? stored : "conversation";
+}
+
 // src/mods/dock-render/main.js
 var MOD = "dock-render";
 var VIEW_KEY = "dock.render.view";
-var VIEWS = [["answer", "Answer"], ["diagrams", "Diagrams"], ["files", "Files"]];
+var VIEWS = [["conversation", "Conversation"], ["diagrams", "Diagrams"], ["files", "Files"]];
+var COPIED_MS = 1500;
 var SETTLE_MS = 600;
 var CODEX_POLL_MS = 4e3;
 var PAD = 14;
@@ -140,6 +180,10 @@ var Render = class extends View {
     this.agentKey = null;
     this.target = null;
     this.data = null;
+    this.toggled = /* @__PURE__ */ new Map();
+    this.showAll = /* @__PURE__ */ new Set();
+    this.opening = /* @__PURE__ */ new Set();
+    this.copied = null;
     this.files = null;
     this.file = null;
     this.problem = null;
@@ -163,7 +207,7 @@ var Render = class extends View {
       if (this.shown() && this.target?.kind === "codex") this.load(cx2);
     });
   }
-  // Commands (keys.json can bind them: "dock-render.diagrams"): answer, diagrams, files, refresh, clear (empty the
+  // Commands (keys.json can bind them: "dock-render.diagrams"): conversation (or answer), diagrams, files, refresh, clear (empty the
   // diagram cache; what's on screen is drawn again); in Files: next, prev, open, back.
   command(c, cx) {
     if (c === "clear") {
@@ -176,7 +220,7 @@ var Render = class extends View {
       });
       return;
     }
-    if (c === "answer" || c === "diagrams" || c === "files") this.setView(c, cx);
+    if (c === "answer" || c === "conversation" || c === "diagrams" || c === "files") this.setView(viewOf(c), cx);
     else if (c === "refresh") cx.spawn(async (cx2) => this.load(cx2));
     else if (c === "back") this.file = null;
     else if ((c === "next" || c === "prev") && this.files?.length) this.cursor = Math.max(0, Math.min(this.files.length - 1, this.cursor + (c === "next" ? 1 : -1)));
@@ -195,8 +239,7 @@ var Render = class extends View {
     return rightShownOf(shared("dock.right.shown"), applied) && rightActiveOf(shared("dock.right.active"), applied?.right?.features ?? []) === MOD;
   }
   view() {
-    const v = shared(VIEW_KEY);
-    return VIEWS.some(([k]) => k === v) ? v : "answer";
+    return viewOf(shared(VIEW_KEY));
   }
   request(extra) {
     const t = theme();
@@ -247,7 +290,10 @@ var Render = class extends View {
     this.agentKey = key;
     this.watch?.cancel?.();
     this.watch = null;
-    Object.assign(this, { target: null, data: null, files: null, file: null, problem: null });
+    Object.assign(this, { target: null, data: null, files: null, file: null, problem: null, copied: null });
+    this.toggled = /* @__PURE__ */ new Map();
+    this.showAll = /* @__PURE__ */ new Set();
+    this.opening = /* @__PURE__ */ new Set();
     if (!agent) return;
     const kind = agentKind(agent);
     if (!kind) {
@@ -325,7 +371,8 @@ var Render = class extends View {
       do {
         this.again = false;
         const t = this.target;
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript }) : await this.helper({ mode: "codex", cwd: t.cwd });
+        const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id);
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, open }) : await this.helper({ mode: "codex", cwd: t.cwd, open });
         if (this.target !== t) return;
         if (out.ok) {
           this.data = out;
@@ -337,6 +384,7 @@ var Render = class extends View {
       this.problem = `Couldn't run the helper: ${e?.message ?? e}`;
     } finally {
       this.loading = false;
+      this.opening.clear();
       cx.notify();
     }
   }
@@ -352,7 +400,7 @@ var Render = class extends View {
   }
   async openFile(path) {
     const out = await this.helper({ mode: "file", path });
-    this.file = out.ok ? { path, segments: out.segments } : { path, segments: [{ kind: "md", text: `Couldn't read it: ${out.error}` }] };
+    this.file = out.ok ? { path, blocks: out.blocks, buttons: out.buttons, canHtml: out.canHtml } : { path, blocks: [{ kind: "text", md: `Couldn't read it: ${out.error}`, buttons: [] }], buttons: [], canHtml: false };
   }
   setView(v, cx) {
     setShared(VIEW_KEY, v);
@@ -373,9 +421,132 @@ var Render = class extends View {
     const card = div().id(id).flex_none().rounded(8).overflow_hidden().border_1().border_color(t.border).cursor_pointer().hover((st) => st.border_color(t.accent)).tooltip("Open large").on_click(() => openOverlay({ mod: MOD, kind: "dialog", width: 0.92, height: 0.9, props: { zoom: { svg: s.svg, w: s.w, h: s.h, title: this.target?.agent?.tab_name || "Diagram" } } })).child(image(s.svg).w(w).h(h));
     return scroll ? div().id(`${id}-scroll`).flex().flex_row().w(maxW).overflow_x_scrollbar().child(card) : card;
   }
-  segments(t, list, prefix) {
-    const maxW = Math.max(120, this.width - PAD * 2);
-    return list.map((s, i) => s.kind !== "md" ? this.diagram(t, s, `${prefix}-${i}`, maxW) : div().id(`${prefix}-${i}`).w_full().text_size(13).child(TextView.markdown(`${prefix}-md-${i}`, s.text).selectable(true)));
+  // ---- copying ----
+  // A row of copy buttons; `key` names the row, so the one pressed can say "copied".
+  buttons(t, list, key, canHtml, end = true) {
+    const shown = shownButtons(list, canHtml);
+    if (!shown.length) return null;
+    return h_flex().gap(5).flex_wrap().when(end, (el) => el.justify_end()).children(shown.map((b, i) => {
+      const k = `${key}-${i}`;
+      const on = this.copied?.key === k;
+      return div().id(k).h(18).px(6).flex().items_center().rounded(5).border_1().border_color(t.border).text_size(10.5).text_color(on ? t.ansi2 : t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.copy(b, k, canHtml, cx)).child(on ? "copied" : b.label);
+    }));
+  }
+  // Why a copy went as plain text, under the row whose button was pressed.
+  copyNote(t, key) {
+    return this.copied?.note && this.copied.key.startsWith(`${key}-`) ? div().text_size(11).text_color(t.dim).child(this.copied.note) : null;
+  }
+  copy(b, key, canHtml, cx) {
+    const done = (note, cx2) => {
+      this.copied = { key, note };
+      cx2.notify();
+      cx2.spawn(async (cx3) => {
+        await cx3.sleep(COPIED_MS);
+        if (this.copied?.key === key) {
+          this.copied = null;
+          cx3.notify();
+        }
+      });
+    };
+    const plan = copyPlan(b, canHtml);
+    if (plan.how !== "html") {
+      cx.write_to_clipboard(b.text);
+      done(plan.note ?? null, cx);
+      return;
+    }
+    cx.spawn(async (cx2) => {
+      const out = await this.helper({ mode: "clip", html: b.html, text: b.text }).catch((e) => ({ ok: false, error: String(e?.message ?? e) }));
+      if (!out.ok) cx2.write_to_clipboard(b.text);
+      done(out.ok ? null : `copied as plain text: ${out.error}`, cx2);
+    });
+  }
+  // ---- blocks ----
+  block(t, b, id, maxW, canHtml) {
+    const md = (text) => TextView.markdown(`${id}-md`, text).selectable(true);
+    const note = this.copyNote(t, id);
+    switch (b.kind) {
+      case "mermaid":
+      case "figure":
+        return v_flex().id(id).gap(4).children([this.diagram(t, b, `${id}-pic`, maxW), this.buttons(t, b.buttons, id, canHtml, false), note].filter(Boolean));
+      case "code":
+        return v_flex().id(id).w_full().gap(2).children([
+          h_flex().gap(8).items_center().child(div().flex_1().text_size(11).text_color(t.dim).child(b.lang || "code")).child(this.buttons(t, b.buttons, id, canHtml)),
+          div().w_full().text_size(13).child(md(b.md)),
+          note
+        ].filter(Boolean));
+      case "alert": {
+        const a = ALERTS[b.alert] ?? ALERTS.note;
+        const c = t[a.color];
+        return v_flex().id(id).w_full().gap(4).p(8).border_l(3).border_color(c).bg(c + "14").rounded(4).children([
+          h_flex().gap(8).items_center().child(div().flex_1().text_size(11.5).font_semibold().text_color(c).child(a.title)).child(this.buttons(t, b.buttons, id, canHtml)),
+          div().w_full().text_size(13).child(md(b.md)),
+          note
+        ].filter(Boolean));
+      }
+      case "marker": {
+        const role = b.by === "you" ? "you" : "event";
+        const c = t[ROLE_COLOR[role]];
+        return div().id(id).w_full().pl(8).py(2).border_l(3).border_color(c).bg(c + "14").text_size(12).text_color(c).child(role === "you" ? `YOU, while Claude worked: ${b.text}` : `${speakerLabel("event", b.event)} \xB7 ${b.text}`);
+      }
+      case "text":
+        return div().id(id).w_full().text_size(13).child(md(b.md));
+      default:
+        return v_flex().id(id).w_full().gap(4).children([this.buttons(t, b.buttons, id, canHtml), div().w_full().text_size(13).child(md(b.md)), note].filter(Boolean));
+    }
+  }
+  // ---- the conversation ----
+  toggle(id, open, cx) {
+    this.toggled.set(id, open);
+    if (open && !this.data?.open?.[id]) {
+      this.opening.add(id);
+      cx.spawn(async (cx2) => this.load(cx2));
+    }
+    cx.notify();
+  }
+  // An open exchange: the turn that started it on its speaker's rail, then Claude's reply on Claude's.
+  exchange(t, row, data, maxW) {
+    const role = row.by === "you" ? "you" : "event";
+    const c = t[ROLE_COLOR[role]], claude = t[ROLE_COLOR.claude];
+    const x = `render-x-${row.id}`;
+    const when = row.at ? ` \xB7 ${ago(row.at, Date.now())} ago` : "";
+    const p = promptView(row.text, this.showAll.has(row.id));
+    const turn = v_flex().id(`${x}-turn`).w_full().gap(4).pl(10).py(4).border_l(3).border_color(c).bg(c + "14").children([
+      div().id(`${x}-head`).text_size(11).font_semibold().text_color(c).cursor_pointer().tooltip("Fold").on_click((_e, cx) => this.toggle(row.id, false, cx)).child(`${speakerLabel(role, row.event)}${when}`),
+      p.text ? div().w_full().text_size(13).child(TextView.markdown(`${x}-text`, p.text).selectable(true)) : null,
+      p.more ? div().id(`${x}-all`).text_size(11.5).text_color(t.accent).cursor_pointer().on_click((_e, cx) => {
+        this.showAll.add(row.id);
+        cx.notify();
+      }).child("show all") : null
+    ].filter(Boolean));
+    const note = replyNote(row);
+    const canHtml = Boolean(this.data?.canHtml);
+    const reply = v_flex().id(`${x}-reply`).w_full().gap(8).pl(10).py(4).border_l(3).border_color(claude).children([
+      div().text_size(11).font_semibold().text_color(claude).child("CLAUDE"),
+      ...note ? [div().text_size(12.5).text_color(t.dim).child(note)] : [
+        ...data.reply.map((b, i) => this.block(t, b, `${x}-${i}`, maxW, canHtml)),
+        this.buttons(t, data.buttons, `${x}-copy`, canHtml),
+        this.copyNote(t, `${x}-copy`)
+      ]
+    ].filter(Boolean));
+    return v_flex().id(x).w_full().gap(6).child(turn).child(reply);
+  }
+  // A folded exchange: one row; clicking it opens it.
+  folded(t, row) {
+    const role = row.by === "you" ? "you" : "event";
+    const c = t[ROLE_COLOR[role]];
+    const text = this.opening.has(row.id) ? "opening\u2026" : [row.text.replace(/\s+/g, " ").trim(), row.preview].filter(Boolean).join(" \xB7 ");
+    return h_flex().id(`render-x-${row.id}`).w_full().h(24).gap(8).items_center().pl(10).border_l(3).border_color(c).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggle(row.id, true, cx)).child(div().flex_none().text_size(11).font_semibold().text_color(c).child(speakerLabel(role, row.event))).child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(text || "\u2014"));
+  }
+  conversationView(t) {
+    const rows = this.data?.exchanges;
+    if (!rows) return [this.note(t, "Reading\u2026")];
+    if (!rows.length) return [this.note(t, "No conversation yet in this session.")];
+    const open = new Set(openIds(rows, this.toggled));
+    const maxW = Math.max(120, this.width - PAD * 2 - 13);
+    return rows.flatMap((row, i) => [
+      ...i ? [div().id(`render-sep-${i}`).w_full().h(0).border_b(1).border_dashed().border_color(t.border)] : [],
+      open.has(row.id) && this.data.open?.[row.id] ? this.exchange(t, row, this.data.open[row.id], maxW) : this.folded(t, row)
+    ]);
   }
   header(t) {
     const a = this.target?.agent;
@@ -386,15 +557,6 @@ var Render = class extends View {
   }
   note(t, text) {
     return div().p(PAD).text_size(12.5).text_color(t.dim).child(text);
-  }
-  answerView(t) {
-    const a = this.data?.answer;
-    if (!a) return [this.note(t, this.data ? "No reply yet in this session." : "Reading\u2026")];
-    return [
-      ...this.data.prompt ? [div().text_size(11.5).text_color(t.dim).truncate().child(`You: ${this.data.prompt.replace(/\s+/g, " ")}`)] : [],
-      ...this.segments(t, a.segments, "render-answer"),
-      div().text_size(11).text_color(t.dim).child(a.at ? `${ago(a.at, Date.now())} ago` : "")
-    ];
   }
   diagramsView(t) {
     const list = this.data?.diagrams ?? [];
@@ -407,12 +569,15 @@ var Render = class extends View {
   }
   filesView(t) {
     if (this.file) {
+      const f = this.file;
+      const maxW = Math.max(120, this.width - PAD * 2);
       return [
-        h_flex().id("render-file-back").gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted).hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
+        h_flex().gap(8).items_center().child(h_flex().id("render-file-back").flex_1().min_w(0).gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted).hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
           this.file = null;
           cx.notify();
-        }).child(svg("mods/workspace-chrome/chevron-left.svg").size(12)).child(this.file.path.split("/").pop()),
-        ...this.segments(t, this.file.segments, "render-file")
+        }).child(svg("mods/workspace-chrome/chevron-left.svg").size(12)).child(f.path.split("/").pop())).children([this.buttons(t, f.buttons, "render-file-copy", f.canHtml)].filter(Boolean)),
+        ...[this.copyNote(t, "render-file-copy")].filter(Boolean),
+        ...f.blocks.map((b, i) => this.block(t, b, `render-file-${i}`, maxW, f.canHtml))
       ];
     }
     if (this.files === null) return [this.note(t, "Reading\u2026")];
@@ -438,7 +603,7 @@ var Render = class extends View {
     if (this.zoom) return this.zoomView(t);
     this.follow(cx);
     const view = this.view();
-    const body = this.problem && !this.data ? [this.note(t, this.problem)] : !this.target && !this.problem ? [this.note(t, "Focus a Claude Code or Codex agent: its latest reply shows here, drawn.")] : view === "diagrams" ? this.diagramsView(t) : view === "files" ? this.filesView(t) : this.answerView(t);
+    const body = this.problem && !this.data ? [this.note(t, this.problem)] : !this.target && !this.problem ? [this.note(t, "Focus a Claude Code or Codex agent: its conversation shows here, drawn.")] : view === "diagrams" ? this.diagramsView(t) : view === "files" ? this.filesView(t) : this.conversationView(t);
     return v_flex().id("dock-render").size_full().min_h(0).bg(t.background).text_color(t.foreground).on_size_change((size, cx2) => {
       if (Math.abs((size?.width ?? 0) - this.width) > 2) {
         this.width = size.width;

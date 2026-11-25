@@ -429,13 +429,23 @@ board, a daily brief and your team's sprint board on **Today**, an issue's detai
 **Render** (`dock-render`, a right-panel mod: its rail icon is the last one) draws what your agent wrote, beside the
 terminal, so you keep Claude Code's own terminal UI:
 
-- **Answer**: the focused agent's latest reply (what came after your last message), formatted (headings, lists,
-  tables, code), with each ```` ```mermaid ```` block drawn as a diagram and each ```` ```figure ```` block as a
-  picture. It follows the agent you're looking at (the focused pane's, else the tab's first) and updates as the reply
-  arrives.
+- **Conversation**: every exchange of the focused agent's session, newest first: the turn that started it and the
+  reply, formatted (headings, lists, tables, code), with each ```` ```mermaid ```` block drawn as a diagram and each
+  ```` ```figure ```` block as a picture. Who speaks is on a coloured rail: **you** blue, **Claude** magenta, **events**
+  amber (a background task finishing, a compaction, anything else Claude Code starts a turn with). What arrives while
+  Claude works (a message you type, a notification) shows inside the reply it interrupted. The newest three exchanges
+  are open; older ones fold to a row (click to open, click a label to fold). A long turn shows 12 lines, then
+  `show all`. Alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) are drawn as coloured boxes.
+  It follows the agent you're looking at (the focused pane's, else the tab's first) and updates as the reply arrives.
+- **Copy buttons**, as [prismantis](https://github.com/NahumLitvin/prismantis) has them: a table's **md** (as
+  written), **art** (a boxed text table in a code fence, for Slack) and **html** (a formatted table plus
+  tab-separated text, for Jira, Confluence and email); **copy** on code (without its fences), lists (as Markdown),
+  quotes (without `>`) and alerts; **copy source** on a diagram or figure; **copy md** and **copy html** for a whole
+  reply (and for a whole file in Files). html copies work on macOS; elsewhere those buttons are hidden. Selecting text
+  works inside one block.
 - **Diagrams**: every Mermaid diagram and figure of the session, newest first.
 - **Files**: the Markdown files under the agent's folder (plans, specs), newest first; one opens formatted, with its
-  diagrams drawn.
+  diagrams drawn and the same copy buttons.
 - Click a diagram to open it large. A diagram that doesn't parse shows its error and source.
 - **Colours**: each node, participant, class box and ER entity, and each series of a chart, takes its own colour
   from your terminal's colours (blue, cyan, green, magenta, yellow, then the accent; red is kept for errors). A node
@@ -457,7 +467,10 @@ terminal, so you keep Claude Code's own terminal UI:
   long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
   invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
   drawn longer, one layer per extra character, as in Mermaid.
-- **Keys**: `dock-render.answer|diagrams|files|refresh|clear`, and in Files `next|prev|open|back`.
+- Replies are read with `marked` (MIT), bundled into the helper. The table art, its width and wrapping, and the macOS
+  pasteboard script behind html copies are ported from [prismantis](https://github.com/NahumLitvin/prismantis) (MIT).
+- **Keys**: `dock-render.conversation|diagrams|files|refresh|clear` (`answer` still works), and in Files
+  `next|prev|open|back`.
 
 ### Where Render keeps its diagrams
 

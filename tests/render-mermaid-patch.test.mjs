@@ -53,13 +53,13 @@ test("the built Render helper draws an arrow without spaces as two nodes and an 
     writeFileSync(f, cases.map((c) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(JSON.parse(r.stdout).segments.length, cases.length);
-    JSON.parse(r.stdout).segments.forEach((s, i) => {
+    assert.equal(JSON.parse(r.stdout).blocks.length, cases.length);
+    JSON.parse(r.stdout).blocks.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
       assert.equal((svg.match(/<g class="node"/g) ?? []).length, 2, cases[i]);
       assert.equal((svg.match(/class="edge"/g) ?? []).length, 1, cases[i]);
     });
-    assert.match(readFileSync(join(h, JSON.parse(r.stdout).segments[6].svg), "utf8"), /data-id="my-node"/);
+    assert.match(readFileSync(join(h, JSON.parse(r.stdout).blocks[6].svg), "utf8"), /data-id="my-node"/);
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
 
@@ -92,7 +92,7 @@ test("the built Render helper draws a :::class node followed by an unspaced arro
     writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n  classDef hot fill:#ff0000\n  classDef cold fill:#0000ff\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const segs = JSON.parse(r.stdout).segments;
+    const segs = JSON.parse(r.stdout).blocks;
     assert.equal(segs.length, cases.length);
     segs.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
@@ -112,7 +112,7 @@ test("the built Render helper keeps a classed node's colour after an unspaced op
     writeFileSync(f, cases.map((c) => "```mermaid\nflowchart LR\n  " + c + "\n  classDef hot fill:#ff0000\n  classDef cold fill:#0000ff\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const segs = JSON.parse(r.stdout).segments;
+    const segs = JSON.parse(r.stdout).blocks;
     assert.equal(segs.length, cases.length);
     segs.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
@@ -137,7 +137,7 @@ test("the built Render helper draws long links as two nodes and one hop per laye
     writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const segs = JSON.parse(r.stdout).segments;
+    const segs = JSON.parse(r.stdout).blocks;
     assert.equal(segs.length, cases.length);
     segs.forEach((s, i) => {
       const svg = readFileSync(join(h, s.svg), "utf8");
@@ -156,7 +156,7 @@ test("the built Render helper: a bare classed node keeps its class; a hyphen ins
     writeFileSync(f, "```mermaid\nflowchart LR\n  A:::hot\n  classDef hot fill:#ff0000\n```\n\n```mermaid\nflowchart LR\n  A:::my-cls-->B\n```\n");
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const [bare, hyphen] = JSON.parse(r.stdout).segments.map((s) => readFileSync(join(h, s.svg), "utf8"));
+    const [bare, hyphen] = JSON.parse(r.stdout).blocks.map((s) => readFileSync(join(h, s.svg), "utf8"));
     assert.equal((bare.match(/<g class="node"/g) ?? []).length, 1);
     assert.match(bare, /<g class="node" data-id="A"[^>]*>\s*<[a-z]+[^>]*fill="#ff0000"/);
     assert.equal((hyphen.match(/<g class="node"/g) ?? []).length, 2);
@@ -172,7 +172,7 @@ test("the built Render helper: a long closing operator in a text arrow takes its
     writeFileSync(f, cases.map(([c]) => "```mermaid\nflowchart LR\n  " + c + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const segs = JSON.parse(r.stdout).segments;
+    const segs = JSON.parse(r.stdout).blocks;
     assert.equal(segs.length, cases.length);
     segs.forEach((s, i) => assert.equal(edgeStyle(readFileSync(join(h, s.svg), "utf8")), cases[i][1], cases[i][0]));
   } finally { rmSync(h, { recursive: true, force: true }); }
@@ -186,7 +186,7 @@ const drawAll = (sources) => {
     writeFileSync(f, sources.map((s) => "```mermaid\n" + s + "\n```").join("\n\n"));
     const r = spawnSync(process.execPath, [BUILT, JSON.stringify({ mode: "file", path: f, cacheDir: join(h, "c"), relBase: "c", theme: THEME })], { encoding: "utf8", timeout: 60000 });
     assert.equal(r.status, 0, r.stderr);
-    const segs = JSON.parse(r.stdout).segments;
+    const segs = JSON.parse(r.stdout).blocks;
     assert.equal(segs.length, sources.length);
     return segs.map((s) => { assert.ok(s.svg, s.error); return readFileSync(join(h, s.svg), "utf8"); });
   } finally { rmSync(h, { recursive: true, force: true }); }

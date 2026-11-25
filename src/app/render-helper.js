@@ -5,7 +5,7 @@
 //   { mode: "claude", transcript, open?, cacheDir, relBase, theme }   Claude Code's session transcript
 //   { mode: "codex", cwd, codexHome?, now?, open?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
 //       -> { exchanges: rows (newest first), open: { [id]: { reply: blocks, buttons } }, diagrams, canHtml }
-//          open: the exchanges whose blocks to send (default: the newest three); ids not there are ignored
+//          open: exchanges opened by hand, whose blocks to send besides the newest three's; ids not there are ignored
 //   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file -> { blocks, buttons, canHtml }
 //   { mode: "list", cwd }                                           the Markdown files under cwd
 //   { mode: "clear", cacheDir }                                     delete every rendered diagram
@@ -102,7 +102,9 @@ function replyBlocks(ex, req, themeId) {
 function fromLog(read, lines, req, extra) {
   const themeId = themeKey(req.theme);
   const r = read(lines);
-  const wanted = new Set(Array.isArray(req.open) ? req.open : r.exchanges.slice(0, OPEN_NEWEST).map((e) => e.id));
+  // The newest always come with their blocks (the panel can't know the ids of exchanges that arrived since its last
+  // read), plus the ones opened by hand.
+  const wanted = new Set([...r.exchanges.slice(0, OPEN_NEWEST).map((e) => e.id), ...(Array.isArray(req.open) ? req.open : [])]);
   const open = {};
   for (const ex of r.exchanges) {
     if (wanted.has(ex.id)) open[ex.id] = { reply: replyBlocks(ex, req, themeId), buttons: replyButtons(replyText(ex)) };

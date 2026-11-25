@@ -165,11 +165,11 @@ test("claude: rows for every exchange, blocks for the newest three, canHtml", ()
   } finally { x.done(); }
 });
 
-test("claude: open ids choose the blocks sent; ids that aren't there are ignored; pictures are drawn", () => {
+test("claude: the newest three always come with blocks, plus the ids opened by hand; ids that aren't there are ignored", () => {
   const x = home();
   try {
     const out = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), open: ["u1", "gone"] });
-    assert.deepEqual(Object.keys(out.open), ["u1"]);
+    assert.deepEqual(Object.keys(out.open), ["u7", "u6", "u5", "u1"]);
     const pic = out.open.u1.reply.find((b) => b.kind === "mermaid");
     assert.match(pic.svg, /^herdr-dock\/render\/.+\.svg$/);
   } finally { x.done(); }
