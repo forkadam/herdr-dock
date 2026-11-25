@@ -500,3 +500,41 @@ test("fetchChanges branch view: on the default branch there's nothing to compare
   assert.equal(none.base, null);
   assert.deepEqual(none.files, []);
 });
+
+// ---- The panel's header line and empty states ----
+import { followsLine, emptyText, FILE_LIMIT as LIMIT } from "../src/shared/changes.js";
+
+test("followsLine: folder and branch, detached, and the base in the branch view", () => {
+  assert.equal(followsLine({ root: "/Users/a/dev/herdr-dock", branch: "feat", view: "uncommitted", base: "main" }), "herdr-dock · feat");
+  assert.equal(followsLine({ root: "/r/repo", branch: null, view: "uncommitted" }), "repo · detached");
+  assert.equal(followsLine({ root: "C:/w/repo/", branch: "feat", view: "branch", base: "origin/dev" }), "repo · feat · vs origin/dev");
+  assert.equal(followsLine({ root: "/r/repo", branch: "main", view: "branch", base: null }), "repo · main");
+  assert.equal(followsLine({ root: null, branch: null, view: "uncommitted" }), "");
+});
+
+test("emptyText: says why the list is empty, in each view", () => {
+  const at = { root: "/r/repo", branch: "feat", loading: false, error: null };
+  assert.equal(emptyText({ ...at, view: "uncommitted" }), "No uncommitted changes");
+  assert.equal(emptyText({ ...at, view: "branch", base: "main", mergeBase: "abc", onBase: false }), "Nothing on feat that isn't on main");
+  assert.equal(emptyText({ ...at, branch: null, view: "branch", base: "main", mergeBase: "abc", onBase: false }), "Nothing on HEAD that isn't on main");
+  assert.equal(emptyText({ ...at, branch: "main", view: "branch", base: "main", mergeBase: null, onBase: true }), "On main: nothing to compare");
+  assert.equal(emptyText({ ...at, view: "branch", base: null }), "No main or master branch to compare with");
+  assert.equal(emptyText({ ...at, view: "branch", base: "main", mergeBase: null, onBase: false }), "No history shared with main");
+  assert.equal(emptyText({ ...at, root: null, view: "branch" }), "No folder");
+  assert.equal(emptyText({ ...at, loading: true, view: "branch" }), "Loading changes…");
+  assert.equal(emptyText({ ...at, error: "Not a git repository", view: "branch" }), "Not a git repository");
+});
+
+test("fetchChanges branch view: a branch with more files than the limit lists the first ones and says so", async () => {
+  const many = Array.from({ length: LIMIT + 5 }, (_, i) => `f${i}.js`);
+  const base = fakeGit();
+  const exec = async (cmd, args) => {
+    if (args.includes("diff") && args.includes("abc123")) {
+      return { code: 0, stdout: args.includes("--name-status") ? many.map((p) => `M\0${p}\0`).join("") : many.map((p) => `1\t0\t${p}\0`).join(""), stderr: "" };
+    }
+    return base(cmd, args);
+  };
+  const r = await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(r.files.length, LIMIT);
+  assert.equal(r.limited, true);
+});

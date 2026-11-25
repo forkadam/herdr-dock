@@ -1,7 +1,7 @@
 // src/mods/dock-changes/main.js
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, shared, props, checking } from "herdr";
+import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, Tabs, Tab } from "gpui-base";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, shared, setShared, props, checking } from "herdr";
 
 // src/shared/follow.js
 function selectedLocation(state, selected) {
@@ -81,8 +81,19 @@ function parseNumstat(stdout, stats = {}) {
   }
   return stats;
 }
+function headerBranch(entry) {
+  const h = entry.slice(3);
+  if (/^HEAD \(no branch\)/.test(h)) return null;
+  const fresh = /^(?:No commits yet|Initial commit) on (.+)$/.exec(h);
+  return fresh ? fresh[1] : h.split("...")[0].trim() || null;
+}
 function parsePorcelainStatus(stdout, stats = {}, limit = FILE_LIMIT) {
-  const entries = String(stdout ?? "").split("\0").filter(Boolean);
+  let entries = String(stdout ?? "").split("\0").filter(Boolean);
+  let branch = null;
+  if (entries[0]?.startsWith("## ")) {
+    branch = headerBranch(entries[0]);
+    entries = entries.slice(1);
+  }
   const files = [];
   for (const entry of entries.slice(0, limit)) {
     const xy = entry.slice(0, 2), path = entry.slice(3), fresh = xy === "??";
@@ -91,7 +102,7 @@ function parsePorcelainStatus(stdout, stats = {}, limit = FILE_LIMIT) {
     const stat = stats[path] ?? { add: 0, del: 0 };
     files.push({ path, status, fresh, ...stat });
   }
-  return { files, limited: entries.length > limit };
+  return { files, limited: entries.length > limit, branch };
 }
 async function resolveRepo(exec2, { cwd, on }) {
   if (!on) {
@@ -102,19 +113,19 @@ async function resolveRepo(exec2, { cwd, on }) {
   const r = await exec2("git", ["rev-parse", "--show-toplevel"], { cwd, on });
   return r.code === 0 ? parseRepoPaths(r.stdout) : null;
 }
-async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null }) {
+async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null, mode = "uncommitted" }) {
   let repo = root ? { root, gitDir } : await resolveRepo(exec2, { cwd, on });
   if (!repo) return { notRepo: true };
   const runGit = (r, args) => exec2("git", [...GIT_READ, ...args], { cwd: r.root, on });
   let [status, headDiff] = await Promise.all([
-    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]),
+    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
     runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"])
   ]);
   if (status.code !== 0 && root) {
     repo = await resolveRepo(exec2, { cwd, on });
     if (!repo) return { notRepo: true };
     [status, headDiff] = await Promise.all([
-      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]),
+      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
       runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"])
     ]);
   }
@@ -135,8 +146,59 @@ async function fetchChanges({ exec: exec2, cwd, on, root = null, gitDir = null }
       parseNumstat(r.stdout, stats);
     }
   }
-  const { files, limited } = parsePorcelainStatus(status.stdout, stats);
-  return { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited };
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
+  const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
+  return mode === "branch" ? { ...out, ...await branchView((args) => runGit(repo, args), { branch, hasHead, untracked: files.filter((f) => f.fresh) }) } : out;
+}
+async function defaultBranch(runGit) {
+  const exists = async (name) => (await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])).code === 0;
+  const head = await runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (head.code === 0 && head.stdout.trim()) {
+    const remote = head.stdout.trim(), name = remote.replace(/^origin\//, "");
+    return await exists(name) ? name : remote;
+  }
+  for (const name of ["main", "master"]) if (await exists(name)) return name;
+  return null;
+}
+function parseNameStatus(stdout) {
+  const parts = String(stdout ?? "").split("\0").filter((x) => x !== "");
+  const out = {};
+  for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i + 1]] = parts[i][0];
+  return out;
+}
+async function branchView(runGit, { branch, hasHead, untracked }) {
+  const base = await defaultBranch(runGit);
+  if (!base) return { base: null, mergeBase: null, onBase: false, files: [] };
+  if (branch && (branch === base || `origin/${branch}` === base)) return { base, mergeBase: null, onBase: true, files: [] };
+  const mb = hasHead ? await runGit(["merge-base", "HEAD", base]) : { code: 1 };
+  if (mb.code !== 0) return { base, mergeBase: null, onBase: false, files: [] };
+  const mergeBase = mb.stdout.trim();
+  const [numstat, names] = await Promise.all([
+    runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
+    runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"])
+  ]);
+  if (numstat.code !== 0) throw new Error(numstat.stderr || `git diff exited ${numstat.code}`);
+  const stats = {};
+  parseNumstat(numstat.stdout, stats);
+  const letters = parseNameStatus(names.stdout);
+  const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...stats[path] ?? { add: 0, del: 0 } }));
+  for (const f of untracked) if (!letters[f.path]) files.push(f);
+  return { base, mergeBase, onBase: false, files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
+}
+function followsLine({ root, branch, view, base }) {
+  if (!root) return "";
+  const name = String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+  return [name, branch ?? "detached", ...view === "branch" && base ? [`vs ${base}`] : []].join(" \xB7 ");
+}
+function emptyText({ view, error, loading, root, branch, base, mergeBase, onBase }) {
+  if (error) return error;
+  if (loading) return "Loading changes\u2026";
+  if (!root) return "No folder";
+  if (view !== "branch") return "No uncommitted changes";
+  if (!base) return "No main or master branch to compare with";
+  if (onBase) return `On ${base}: nothing to compare`;
+  if (!mergeBase) return `No history shared with ${base}`;
+  return `Nothing on ${branch ?? "HEAD"} that isn't on ${base}`;
 }
 function pollDecision({
   visible,
@@ -380,6 +442,9 @@ function createChangesSync({
 
 // src/mods/dock-changes/main.js
 var MOD = "dock-changes";
+var VIEW_KEY = "dock.changes.view";
+var VIEWS = [["uncommitted", "Uncommitted"], ["branch", "Branch"]];
+var viewOf = (value) => value === "branch" ? "branch" : "uncommitted";
 function focusLocation() {
   const space = spaces().find((s) => s.active), f = focused();
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
@@ -392,7 +457,8 @@ function location() {
   followMemo = r.memo;
   return r.loc;
 }
-var key = () => JSON.stringify(location());
+var where = () => ({ ...location(), view: viewOf(shared(VIEW_KEY)) });
+var key = () => JSON.stringify(where());
 var countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
 var untab = (text) => text.replace(/[^\t]*\t/g, (s) => s.slice(0, -1).padEnd(s.length - 1 - (s.length - 1) % 4 + 4));
 function diffRows(lines) {
@@ -430,6 +496,11 @@ var Changes = class extends View {
     this.gitDir = null;
     this.on = null;
     this.context = null;
+    this.folder = null;
+    this.branch = null;
+    this.base = null;
+    this.mergeBase = null;
+    this.onBase = false;
     this.open = null;
     this.closed = false;
     this.limited = false;
@@ -452,8 +523,8 @@ var Changes = class extends View {
     });
     this.sync = createChangesSync({
       watchFolder,
-      getLocation: location,
-      onReset: (nextContext) => {
+      getLocation: where,
+      onReset: (nextContext, loc) => {
         this.context = nextContext;
         this.root = null;
         this.gitDir = null;
@@ -461,8 +532,16 @@ var Changes = class extends View {
         this.files = [];
         this.open = null;
         this.setLines([]);
-        this.message = "";
-        this.input.set_value("");
+        this.branch = null;
+        this.base = null;
+        this.mergeBase = null;
+        this.onBase = false;
+        const { view: _view, ...place } = loc ?? {}, folder = JSON.stringify(place);
+        if (folder !== this.folder) {
+          this.message = "";
+          this.input.set_value("");
+        }
+        this.folder = folder;
         this.error = null;
         this.note = null;
         this.closed = false;
@@ -470,7 +549,7 @@ var Changes = class extends View {
       },
       onRun: async ({ loc, context, isCurrent, notify }) => {
         try {
-          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir });
+          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view });
           if (!isCurrent()) return null;
           if (res.notRepo) {
             this.root = null;
@@ -478,6 +557,10 @@ var Changes = class extends View {
             this.files = [];
             this.setLines([]);
             this.open = null;
+            this.branch = null;
+            this.base = null;
+            this.mergeBase = null;
+            this.onBase = false;
             this.error = "Not a git repository";
             return null;
           }
@@ -488,6 +571,10 @@ var Changes = class extends View {
           this.files = res.files;
           this.limited = res.limited;
           this.error = null;
+          this.branch = res.branch ?? null;
+          this.base = res.base ?? null;
+          this.mergeBase = res.mergeBase ?? null;
+          this.onBase = Boolean(res.onBase);
           if (this.open && !res.files.some((f) => f.path === this.open)) {
             this.open = null;
             this.setLines([]);
@@ -527,6 +614,7 @@ var Changes = class extends View {
   }
   async load(path, context) {
     const file = this.files.find((f) => f.path === path), root = this.root, on = this.on;
+    const against = this.mergeBase ? [this.mergeBase] : this.hasHead ? ["HEAD"] : [];
     if (!file) return;
     let lines;
     if (file.fresh || !this.hasHead && file.status === "A") {
@@ -538,7 +626,7 @@ var Changes = class extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 4e5).replace(/\n$/, "").split("\n").slice(0, 1500).map((l) => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...GIT_READ, "diff", ...this.hasHead ? ["HEAD"] : [], "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...GIT_READ, "diff", ...against, "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
@@ -589,6 +677,9 @@ var Changes = class extends View {
     });
     cx.notify();
   }
+  viewTabs(t, view) {
+    return h_flex().flex_none().child(Tabs.new("changes-view").flex().flex_row().gap(2).p(2).rounded(7).bg(t.background).border_1().border_color(t.border).children(VIEWS.map(([value, text], i) => Tab.new(`changes-view-${value}`).selected(view === value).set_position(i + 1, VIEWS.length).flex().flex_row().items_center().h(18).px(8).rounded(5).text_size(11).when(view === value, (el) => el.bg(t.selected).text_color(t.foreground)).when(view !== value, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))).on_click(() => setShared(VIEW_KEY, value)).child(text))));
+  }
   diffRow({ kind, number, text }, t) {
     if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     return h_flex().w_full().h(20).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18")).child(div().w(30).flex_none().text_right().text_color(t.dim).child(number === void 0 ? "" : String(number))).child(div().flex_1().min_w(0).truncate().child(text));
@@ -604,6 +695,7 @@ var Changes = class extends View {
     const loading = this.sync.loading, busy = this.sync.busy;
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !busy && !loading);
+    const view = viewOf(shared(VIEW_KEY));
     return v_flex().id("changes").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle).on_key_down((e, cx2) => {
       if (e.key === "escape" && this.typing) {
         this.typing = false;
@@ -611,10 +703,10 @@ var Changes = class extends View {
         cx2.stop_propagation();
         cx2.notify();
       }
-    }).child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child("Changes")).child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`)).child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`\u2212${del}`))).child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border).child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
+    }).child(v_flex().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border).child(h_flex().h(24).gap(8).items_center().child(div().font_semibold().child("Changes")).child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`)).child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`\u2212${del}`))).child(h_flex().h(24).gap(8).items_center().child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(followsLine({ root: this.root, branch: this.branch, view, base: this.base }))).child(this.viewTabs(t, view)))).child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border).child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
       const parts = f.path.split("/"), name = parts.pop();
       return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx2) => this.pick(f.path, cx2)).child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status)).child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name))).when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`\u2212${f.del}`)));
-    })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (loading ? "Loading changes\u2026" : this.root ? "No uncommitted changes" : "No folder"))))).child(Scrollbar.vertical("changes-list").absolute().inset_0())).when(this.limited, (el) => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files"))).child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11).child(div().id("changes-diff-x").size_full().overflow_x_scrollbar().child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list(
+    })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(emptyText({ view, error: this.error, loading, root: this.root, branch: this.branch, base: this.base, mergeBase: this.mergeBase, onBase: this.onBase }))))).child(Scrollbar.vertical("changes-list").absolute().inset_0())).when(this.limited, (el) => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files"))).child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11).child(div().id("changes-diff-x").size_full().overflow_x_scrollbar().child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list(
       "changes-diff",
       this.rows.length,
       20,

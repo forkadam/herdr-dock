@@ -139,6 +139,15 @@ config order (it scrolls when there are many):
   the last thing you did: selecting a repo or worktree in Git projects shows that worktree (even with no terminal
   open there, and on another machine); moving to a terminal in another folder shows that terminal's repo again.
   Herdr's own `files` and `changes` always follow the focused terminal.
+- Changes says what it follows under its title: the repo folder and branch (`detached` off a branch). Two views:
+  - **Uncommitted**: what isn't committed yet, as Herdr's panel shows. It empties when an agent commits as it goes.
+  - **Branch**: everything on this branch that isn't on the default branch yet, committed or not, plus new files,
+    each diffed against where the branch left the default branch. The line under the title adds `vs <default branch>`.
+    The default branch is the one `origin/HEAD` names, the local branch when it exists (so work merged locally
+    but not pushed isn't shown again), else `origin/<name>`; without `origin/HEAD`, local `main`, then `master`.
+    On the default branch itself there's nothing to compare, and the panel says so.
+
+  The view is remembered. The Commit box commits the uncommitted changes in either view.
 - Icons: Files and Changes use Herdr's own, `dock-*` mods their manifest icon, other mods `mods/<id>/icon.svg`
   when it exists, else the first letter of their name. Hover for the name.
 - Whether the panel is shown and which mod it shows are remembered per PC in Herdr's own state

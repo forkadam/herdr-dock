@@ -171,7 +171,27 @@ async function branchView(runGit, { branch, hasHead, untracked }) {
   const letters = parseNameStatus(names.stdout);
   const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
   for (const f of untracked) if (!letters[f.path]) files.push(f);
-  return { base, mergeBase, onBase: false, files };
+  return { base, mergeBase, onBase: false, files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
+}
+
+// The dim line under the panel's title: which folder and branch it follows, and in the branch
+// view what it compares with.
+export function followsLine({ root, branch, view, base }) {
+  if (!root) return "";
+  const name = String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+  return [name, branch ?? "detached", ...(view === "branch" && base ? [`vs ${base}`] : [])].join(" · ");
+}
+
+// What an empty list says, so an empty panel explains itself.
+export function emptyText({ view, error, loading, root, branch, base, mergeBase, onBase }) {
+  if (error) return error;
+  if (loading) return "Loading changes…";
+  if (!root) return "No folder";
+  if (view !== "branch") return "No uncommitted changes";
+  if (!base) return "No main or master branch to compare with";
+  if (onBase) return `On ${base}: nothing to compare`;
+  if (!mergeBase) return `No history shared with ${base}`;
+  return `Nothing on ${branch ?? "HEAD"} that isn't on ${base}`;
 }
 
 // Decides whether a periodic poll tick should run a refresh, and whether a previously failed

@@ -7,14 +7,21 @@
 // - Parallel git status/diff reads with cached repo root and immediate file-list paint before diff load.
 // - Proper FolderWatch lifecycle: cancels watches on repo switch, panel hide, and close; watches a
 //   linked worktree's git dir too; polls faster (2.5 s) while visible if watching is unavailable.
+// - The header says which folder and branch it follows; a Branch view lists everything on the branch
+//   that isn't on the default branch yet, committed or not, with diffs against the merge base.
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, shared, props, checking } from "herdr";
+import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, Tabs, Tab } from "gpui-base";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, shared, setShared, props, checking } from "herdr";
 import { followLocation } from "../../shared/follow.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
-import { GIT_READ, POLL_MS, createChangesSync, fetchChanges } from "../../shared/changes.js";
+import { GIT_READ, POLL_MS, createChangesSync, emptyText, fetchChanges, followsLine } from "../../shared/changes.js";
 
 const MOD = "dock-changes";
+// Uncommitted: what isn't committed yet. Branch: everything on this branch that isn't on the
+// default branch, committed or not (src/shared/changes.js). Shared, so every copy shows the same.
+const VIEW_KEY = "dock.changes.view";
+const VIEWS = [["uncommitted", "Uncommitted"], ["branch", "Branch"]];
+const viewOf = (value) => value === "branch" ? "branch" : "uncommitted";
 
 function focusLocation() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -32,7 +39,9 @@ function location() {
   followMemo = r.memo;
   return r.loc;
 }
-const key = () => JSON.stringify(location());
+// The view is part of what the panel follows: switching it starts a fresh list, as a new folder does.
+const where = () => ({ ...location(), view: viewOf(shared(VIEW_KEY)) });
+const key = () => JSON.stringify(where());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
 
 // Text draws a tab as nothing: pad each to the next 4-column stop.
@@ -62,7 +71,8 @@ const runCtx = (cx) => ({
 export default class Changes extends View {
   init(_props, cx) {
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
-    this.root = null; this.gitDir = null; this.on = null; this.context = null;
+    this.root = null; this.gitDir = null; this.on = null; this.context = null; this.folder = null;
+    this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
     this.open = null; this.closed = false; this.limited = false; this.error = null; this.note = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -75,24 +85,30 @@ export default class Changes extends View {
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.sync = createChangesSync({
       watchFolder,
-      getLocation: location,
-      onReset: (nextContext) => {
+      getLocation: where,
+      onReset: (nextContext, loc) => {
         this.context = nextContext; this.root = null; this.gitDir = null; this.on = null;
         this.files = []; this.open = null; this.setLines([]);
-        this.message = ""; this.input.set_value(""); this.error = null; this.note = null;
+        this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
+        // Switching the view keeps a commit message being written; following another folder doesn't.
+        const { view: _view, ...place } = loc ?? {}, folder = JSON.stringify(place);
+        if (folder !== this.folder) { this.message = ""; this.input.set_value(""); }
+        this.folder = folder; this.error = null; this.note = null;
         this.closed = false; this.limited = false;
       },
       onRun: async ({ loc, context, isCurrent, notify }) => {
         try {
-          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir });
+          const res = await fetchChanges({ exec, cwd: loc.cwd, on: loc.on, root: this.root, gitDir: this.gitDir, mode: loc.view });
           if (!isCurrent()) return null;
           if (res.notRepo) {
             this.root = null; this.gitDir = null; this.files = []; this.setLines([]); this.open = null;
+            this.branch = null; this.base = null; this.mergeBase = null; this.onBase = false;
             this.error = "Not a git repository";
             return null;
           }
           this.root = res.root; this.gitDir = res.gitDir; this.on = loc.on; this.hasHead = res.hasHead;
           this.files = res.files; this.limited = res.limited; this.error = null;
+          this.branch = res.branch ?? null; this.base = res.base ?? null; this.mergeBase = res.mergeBase ?? null; this.onBase = Boolean(res.onBase);
           if (this.open && !res.files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
           // The first file's diff shows until you pick another.
           if (!this.open && !this.closed && res.files.length) this.open = res.files[0].path;
@@ -131,6 +147,8 @@ export default class Changes extends View {
 
   async load(path, context) {
     const file = this.files.find((f) => f.path === path), root = this.root, on = this.on;
+    // The branch view compares with the merge base; the uncommitted view with HEAD.
+    const against = this.mergeBase ? [this.mergeBase] : this.hasHead ? ["HEAD"] : [];
     if (!file) return;
     let lines;
     if (file.fresh || (!this.hasHead && file.status === "A")) {
@@ -142,7 +160,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 1500).map((l) => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...GIT_READ, "diff", ...(this.hasHead ? ["HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...GIT_READ, "diff", ...against, "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
@@ -184,6 +202,17 @@ export default class Changes extends View {
     cx.notify();
   }
 
+  viewTabs(t, view) {
+    return h_flex().flex_none().child(Tabs.new("changes-view").flex().flex_row().gap(2).p(2).rounded(7).bg(t.background)
+      .border_1().border_color(t.border)
+      .children(VIEWS.map(([value, text], i) => Tab.new(`changes-view-${value}`).selected(view === value).set_position(i + 1, VIEWS.length)
+        .flex().flex_row().items_center().h(18).px(8).rounded(5).text_size(11)
+        .when(view === value, (el) => el.bg(t.selected).text_color(t.foreground))
+        .when(view !== value, (el) => el.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)))
+        .on_click(() => setShared(VIEW_KEY, value))
+        .child(text))));
+  }
+
   diffRow({ kind, number, text }, t) {
     if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     return h_flex().w_full().h(20).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
@@ -202,14 +231,19 @@ export default class Changes extends View {
     const loading = this.sync.loading, busy = this.sync.busy;
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !busy && !loading);
+    const view = viewOf(shared(VIEW_KEY));
     return v_flex().id("changes").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       })
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Changes"))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
-        .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
+      .child(v_flex().flex_none().px(14).py(8).gap(6).border_b(1).border_color(t.border)
+        .child(h_flex().h(24).gap(8).items_center()
+          .child(div().font_semibold().child("Changes"))
+          .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
+          .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
+        .child(h_flex().h(24).gap(8).items_center()
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(followsLine({ root: this.root, branch: this.branch, view, base: this.base })))
+          .child(this.viewTabs(t, view))))
       // overflow_y_scrollbar() wraps the list, so its flex sizing never reached the panel's layout.
       .child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border)
         .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
@@ -218,7 +252,7 @@ export default class Changes extends View {
             .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
             .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
             .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-        })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
+        })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(emptyText({ view, error: this.error, loading, root: this.root, branch: this.branch, base: this.base, mergeBase: this.mergeBase, onBase: this.onBase })))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
       .when(this.limited, (el) => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
