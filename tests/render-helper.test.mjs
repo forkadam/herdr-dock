@@ -223,3 +223,22 @@ test("claude: rows carry their size; a long turn comes as its first 12 lines unl
     assert.deepEqual([full.open.u.page, full.open.u.pageCount], [0, 1]);
   } finally { x.done(); }
 });
+
+test("claude: footnotes across a mid-turn marker are numbered once and noted at the reply's end", () => {
+  const x = home();
+  try {
+    const t = join(x.h, "fn.jsonl");
+    writeFileSync(t, [
+      JSON.stringify({ type: "user", uuid: "f", origin: { kind: "human" }, message: { content: "go" } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Claim[^1]." }, { type: "tool_use", id: "t1", name: "X", input: {} }], stop_reason: "tool_use" } }),
+      JSON.stringify({ type: "attachment", attachment: { type: "queued_command", prompt: "also", origin: { kind: "human" }, commandMode: "prompt" } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "More.\n\n[^1]: The source." }], stop_reason: "end_turn" } }),
+    ].join("\n"));
+    const reply = run({ ...x.base, mode: "claude", transcript: t }).open.f.reply;
+    assert.ok(JSON.stringify(reply[0]).includes("Claim¹"));
+    assert.deepEqual(reply.at(-1).kind, "footnotes");
+    assert.equal(reply.at(-1).notes[0].mark, "¹");
+    assert.ok(!JSON.stringify(reply).includes("[^1]"));
+  } finally { x.done(); }
+});

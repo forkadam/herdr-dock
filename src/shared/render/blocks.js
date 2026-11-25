@@ -15,6 +15,7 @@ import { tableArt, tableText, width } from "./table-copy.js";
 import { pieces } from "./view.js";
 import { inlineRuns } from "./runs.js";
 import { codeLines } from "./code-colour.js";
+import { applyFootnotes } from "./footnotes.js";
 
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
 const OPTIONS = { gfm: true };
@@ -123,9 +124,10 @@ function tokenBlocks(tokens) {
   return out;
 }
 
-// Text -> Block[], in order.
-export function toBlocks(text) {
-  return splitSegments(text).flatMap((seg) => (seg.kind === "md" ? tokenBlocks(marked.lexer(seg.text, OPTIONS))
+// Text -> Block[], in order. `marks` (from collectFootnotes over the whole reply or file): footnote references become
+// their marks and the notes are taken out first.
+export function toBlocks(text, { marks } = {}) {
+  return splitSegments(marks ? applyFootnotes(text, marks) : text).flatMap((seg) => (seg.kind === "md" ? tokenBlocks(marked.lexer(seg.text, OPTIONS))
     : [withBytes({ kind: seg.kind, source: seg.source, id: seg.id, buttons: [{ label: "copy source", text: seg.source }] })]));
 }
 

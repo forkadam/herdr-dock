@@ -22,6 +22,7 @@ import { renderMermaidSVG } from "beautiful-mermaid";
 import { flattenSvg } from "../shared/render/flatten.js";
 import { toBlocks, replyButtons } from "../shared/render/blocks.js";
 import { paginate } from "../shared/render/pages.js";
+import { collectFootnotes, footnotesBlock } from "../shared/render/footnotes.js";
 import { OPEN_NEWEST } from "../shared/render/view.js";
 import { copyHtml } from "./clipboard.js";
 import { cacheToPrune, themeKey } from "../shared/render/cache.js";
@@ -94,13 +95,16 @@ function blocks(text, req, themeId) {
 function replyBlocks(ex) {
   const out = [];
   let run = [];
-  const flush = () => { if (run.length) out.push(...toBlocks(run.join("\n\n"))); run = []; };
+  // Footnotes over the whole reply, so a note at its end matches a reference before a mid-turn marker.
+  const { marks, notes } = collectFootnotes(replyText(ex));
+  const flush = () => { if (run.length) out.push(...toBlocks(run.join("\n\n"), { marks })); run = []; };
   for (const p of ex.parts) {
     if (p.type === "text") { run.push(p.text); continue; }
     flush();
     out.push({ kind: "marker", by: p.by, event: p.event, text: p.text, bytes: new TextEncoder().encode(p.text).length });
   }
   flush();
+  if (notes.length) out.push(footnotesBlock(notes));
   return out;
 }
 
@@ -199,7 +203,9 @@ function run(req) {
     }
     case "file": {
       const text = readText(req.path, MAX_FILE);
-      const { page, pageCount, list } = pageOf(toBlocks(text), req.page);
+      const { marks, notes } = collectFootnotes(text);
+      const all = [...toBlocks(text, { marks }), ...(notes.length ? [footnotesBlock(notes)] : [])];
+      const { page, pageCount, list } = pageOf(all, req.page);
       return { ok: true, path: req.path, canHtml: CAN_HTML, blocks: drawn(list, req, themeKey(req.theme)), page, pageCount, buttons: replyButtons(text) };
     }
     case "clip":
