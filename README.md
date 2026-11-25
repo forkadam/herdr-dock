@@ -467,6 +467,14 @@ terminal, so you keep Claude Code's own terminal UI:
   long links (`A---->B`, `A-..->B`, `A====>B`) are read; circle and cross heads (`--o`, `--x`, `o--o`) are drawn;
   invisible links (`~~~`) are laid out but not drawn; class names may hold hyphens (`classDef my-cls`). A long link is
   drawn longer, one layer per extra character, as in Mermaid.
+- **Diagram hints**: Claude writes diagrams, figures and tables when it knows they'll be drawn. Deploy adds two hooks
+  to `~/.claude/settings.json` (copied to `settings.json.bak-herdr-dock` first; your own hooks are kept) that run
+  `mods/dock-render/herdr-hint.mjs`: once per session (at start, after `/clear` and after compaction) a note on what
+  the panel draws and how to write a ```` ```figure ````, and on each prompt a one-line reminder (about 40 tokens).
+  They're quiet outside Herdr (no `HERDR_PANE_ID`) and while [prismantis](https://github.com/NahumLitvin/prismantis)'s
+  own diagram hints are on, so you never get two notes. `npm run deploy -- --no-hints` leaves them out; to remove them,
+  delete the two `herdr-hint` entries from `hooks` in `~/.claude/settings.json`. The note's wording is adapted from
+  prismantis (MIT).
 - Replies are read with `marked` (MIT), bundled into the helper. The table art, its width and wrapping, and the macOS
   pasteboard script behind html copies are ported from [prismantis](https://github.com/NahumLitvin/prismantis) (MIT).
 - **Keys**: `dock-render.conversation|diagrams|files|refresh|clear` (`answer` still works), and in Files

@@ -10,6 +10,7 @@ import { slashPath } from "../src/shared/path.js";
 import { BINDINGS, mergeKeys, SECTION } from "./keys.mjs";
 import { resolveAppHome } from "./app-home.mjs";
 import { setupStatusline } from "../src/app/statusline-setup.js";
+import { setupHints } from "../src/app/hints-setup.js";
 import { AGY_MARK } from "../src/shared/statusline.js";
 import { browserOf } from "../src/shared/browser/config.js";
 import { BROWSER_REL, binRel } from "../src/shared/browser/session.js";
@@ -19,10 +20,11 @@ import { MISSING_CHROME, ensureChrome, installAgentBrowser, installSkills, remov
 const args = process.argv.slice(2);
 const dry = args.includes("--dry-run");
 const noStatusline = args.includes("--no-statusline");
+const noHints = args.includes("--no-hints");
 const noSkills = args.includes("--no-skills");
 const appHome = resolveAppHome(args);
 if (!appHome) {
-  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run] [--no-statusline] [--no-skills]");
+  console.error("usage: node scripts/deploy.mjs [--app-home <dir>] [--dry-run] [--no-statusline] [--no-hints] [--no-skills]");
   process.exit(1);
 }
 const say = (s) => console.log((dry ? "[dry-run] " : "") + s);
@@ -158,6 +160,16 @@ if (existsSync(claudeHome)) {
       say(`status line: ${r.message}`);
     } catch (e) {
       console.error(`status line setup failed (Quotas offers Set up): ${e.message}`);
+    }
+  }
+  // The Render panel's diagram hints: Claude Code's SessionStart and UserPromptSubmit hooks run herdr-hint.mjs.
+  if (noHints) console.log("--no-hints: leaving the diagram-hint hooks out");
+  else {
+    try {
+      const r = setupHints({ claudeHome, script: slashPath(join(appHome, "mods/dock-render/herdr-hint.mjs")), dry });
+      say(`diagram hints: ${r.message}`);
+    } catch (e) {
+      console.error(`diagram hints setup failed: ${e.message}`);
     }
   }
 } else {

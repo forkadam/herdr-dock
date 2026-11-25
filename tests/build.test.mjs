@@ -165,8 +165,24 @@ test("deploy installs the status-line writer into an existing Claude folder, and
     assert.ok(existsSync(writer) && existsSync(join(tmp, "mods/dock-quotas/herdr-statusline-setup.mjs")));
     assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).statusLine.command, `node "${slashPath(writer)}"`);
     assert.match(r.stdout, /status line: Add a status line/);
+    // The diagram hints: both hook entries run the script installed with dock-render; the file was backed up first.
+    const settings = JSON.parse(readFileSync(join(claude, "settings.json"), "utf8"));
+    const script = slashPath(join(tmp, "mods/dock-render/herdr-hint.mjs"));
+    assert.ok(existsSync(script));
+    assert.deepEqual(settings.hooks.SessionStart.map((g) => g.hooks[0].command), [`node "${script}" session`]);
+    assert.deepEqual(settings.hooks.UserPromptSubmit.map((g) => g.hooks[0].command), [`node "${script}" prompt`]);
+    assert.ok(existsSync(join(claude, "settings.json.bak-herdr-dock")));
     const again = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: claude });
     assert.match(again.stdout, /status line: the Claude status line already feeds herdr-dock/);
+    assert.match(again.stdout, /diagram hints: already/);
+    assert.deepEqual(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")), settings);
+    // --no-hints leaves the hooks out.
+    const plain = mkdtempSync(join(tmpdir(), "dock-claude-"));
+    try {
+      const r3 = run(["--app-home", tmp, "--no-hints"], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: plain });
+      assert.equal(r3.status, 0, r3.stderr);
+      assert.equal(JSON.parse(readFileSync(join(plain, "settings.json"), "utf8")).hooks, undefined);
+    } finally { rmSync(plain, { recursive: true, force: true }); }
     const missing = join(tmpdir(), "dock-claude-missing-" + process.pid);
     const r2 = run(["--app-home", tmp], { DOCK_SKIP_CHECK: "1", DOCK_CLAUDE_HOME: missing });
     assert.equal(r2.status, 0, r2.stderr);
