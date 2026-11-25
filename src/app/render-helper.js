@@ -2,10 +2,11 @@
 // copies and rendered Mermaid diagrams out, for dock-render. Bundled with beautiful-mermaid and marked (MIT) into
 // mods/dock-render/herdr-render.mjs, so nothing needs installing. Run with one JSON argument; prints one JSON line.
 //
-//   { mode: "claude", transcript, open?, cacheDir, relBase, theme }   Claude Code's session transcript
+//   { mode: "claude", transcript, open?, cacheDir, relBase, theme, runsDir? } Claude Code's session transcript
 //   { mode: "codex", cwd, codexHome?, now?, open?, cacheDir, relBase, theme } the newest Codex rollout started in cwd
 //       -> { exchanges: rows (newest first), open: { [id]: { reply: blocks, buttons } }, diagrams, canHtml }, and for
-//          Claude hints: { state: "ok" | "silent" | "unknown", checked } (transcript.js, hintReach)
+//          Claude hints: { state: "ok" | "silent" | "unknown", checked, at?, run? } (transcript.js, hintReach; run:
+//          the hint hook's record of its last run in the session, from runsDir — sent by the panel)
 //          open: exchanges opened by hand, whose blocks to send besides the newest three's; ids not there are ignored
 //   { mode: "file", path, cacheDir, relBase, theme }                a Markdown file -> { blocks, buttons, canHtml }
 //   { mode: "list", cwd }                                           the Markdown files under cwd
@@ -18,7 +19,7 @@
 // doesn't draw gives { error, source } instead (a figure's error is why, as prismantis words it).
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { flattenSvg } from "../shared/render/flatten.js";
 import { toBlocks, replyButtons } from "../shared/render/blocks.js";
@@ -31,7 +32,6 @@ import { mermaidColors, paintDiagram } from "../shared/render/paint.js";
 import { decideFigure, figureSvg } from "../shared/render/figure.js";
 import { codexCwd, exchangeRow, hintReach, readClaude, readCodex, replyText } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
-import { hooksSpeak } from "../shared/render/hints.js";
 
 const MAX_LOG = 64 * 1024 * 1024; // a session log bigger than this is read from its last 64 MB
 const MAX_FILE = 2 * 1024 * 1024;
@@ -182,23 +182,41 @@ function prune(cacheDir, options) {
   return n;
 }
 
-// hintReach, with "silent" only while the settings let the hooks speak (read now, as the hook reads them on each
-// prompt: prismantis turned on or the hooks removed since make a quiet session expected, not a fault), and were in
-// place when the newest prompt was typed (settings changed since, say hints just set up: too early to say).
-function reach(lines) {
+// hintReach, plus the hint hook's record of its last run in this session (render-hint.js:
+// <runsDir>/<session id>.json, the id being the transcript's file name), when there is one that reads.
+const SESSION_ID = /^[A-Za-z0-9-]{1,128}$/;
+function reach(lines, transcript, runsDir) {
   const r = hintReach(lines);
-  if (r.state !== "silent") return r;
-  const file = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json");
-  let text = null, changed = null;
-  try { text = readFileSync(file, "utf8"); changed = statSync(file).mtimeMs; } catch {}
-  const quiet = !hooksSpeak(text) || (r.at != null && changed != null && changed > r.at);
-  return quiet ? { ...r, state: "unknown" } : r;
+  const id = basename(String(transcript)).replace(/\.jsonl$/, "");
+  if (!runsDir || !SESSION_ID.test(id)) return r;
+  try {
+    const run = JSON.parse(readFileSync(join(runsDir, `${id}.json`), "utf8"));
+    if (run && typeof run === "object" && !Array.isArray(run)) return { ...r, run };
+  } catch {}
+  return r;
+}
+
+// The hook's records not written for RUNS_MAX_AGE_MS (their sessions are over), and temp files an interrupted write
+// left, deleted. Other files are left alone.
+const RUNS_MAX_AGE_MS = 14 * 86400e3;
+function pruneRuns(runsDir) {
+  let names;
+  try { names = readdirSync(runsDir); } catch { return; }
+  const now = Date.now();
+  for (const name of names) {
+    if (!/\.json(\.\d+\.tmp)?$/.test(name)) continue;
+    try {
+      const age = now - statSync(join(runsDir, name)).mtimeMs;
+      if (age > (name.endsWith(".tmp") ? 3600e3 : RUNS_MAX_AGE_MS)) rmSync(join(runsDir, name), { force: true });
+    } catch {}
+  }
 }
 
 function main(req) {
   const out = run(req);
   // After each read, the cache is tidied (unused for 14 days, past the newest 300): cheap, a folder listing.
   if (req?.cacheDir && ["claude", "codex", "file"].includes(req.mode)) prune(req.cacheDir);
+  if (req?.runsDir && req.mode === "claude") pruneRuns(req.runsDir);
   return out;
 }
 
@@ -208,7 +226,7 @@ function run(req) {
       return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
     case "claude": {
       const lines = readText(req.transcript, MAX_LOG).split("\n");
-      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: reach(lines) });
+      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: reach(lines, req.transcript, req.runsDir) });
     }
     case "codex": {
       const home = req.codexHome || join(homedir(), ".codex");

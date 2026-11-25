@@ -1,7 +1,7 @@
 // The Render panel's Conversation view model (src/shared/render/view.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HINTS_WHY, copyPlan, hintsDetails, hintsNotice, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf } from "../src/shared/render/view.js";
+import { copyPlan, hintsDetails, hintsNotice, hintsWhy, reachVerdict, openIds, promptView, replyNote, shownButtons, speakerLabel, viewOf } from "../src/shared/render/view.js";
 
 const rows = ["a", "b", "c", "d", "e"].map((id) => ({ id }));
 
@@ -53,25 +53,50 @@ test("hintsNotice: missing or moved offers Set up; unreadable says so; present, 
   assert.deepEqual(n("missing", { error: "Cannot write" }), { text: "Set up failed: Cannot write", action: "setup" });
 });
 
-test("hintsNotice: hooks present but the session's prompts got none -> the reach row; not for prismantis, unknown, ok or after ×", () => {
-  const n = (o) => hintsNotice("present", { dismissed: false, error: null, reach: "silent", prismantis: false, reachDismissed: false, ...o });
+test("reachVerdict: silent, and the hook ran for the newest prompt (5 s slack) and spoke or didn't see Herdr; else null", () => {
+  const at = Date.parse("2026-11-25T14:29:25.000Z");
+  const silent = { state: "silent", checked: 3, at };
+  const run = (decision, dt = 50, event = "prompt") => ({ at: at + dt, event, decision });
+  assert.equal(reachVerdict(silent, run("spoke")), "spoke");
+  assert.equal(reachVerdict(silent, run("not-herdr")), "not-herdr");
+  assert.equal(reachVerdict(silent, run("spoke", -4000)), "spoke");
+  for (const [h, r, why] of [
+    [silent, run("prismantis"), "prismantis on: quiet by design"],
+    [silent, run("settings-invalid"), "settings row covers it"],
+    [silent, undefined, "no record: the hook never ran"],
+    [silent, run("spoke", -60000), "the record is from before the newest prompt: the hook stopped running"],
+    [silent, run("spoke", 50, "session"), "a session-start run says nothing about prompts"],
+    [{ state: "unknown", checked: 1, at }, run("spoke"), "too early"],
+    [{ state: "ok", checked: 3, at }, run("spoke"), "hints arrive"],
+    [{ state: "silent", checked: 3 }, run("spoke"), "no prompt time to compare"],
+  ]) assert.equal(reachVerdict(h, r), null, why);
+});
+
+test("hintsNotice: a verdict gives its row (set-up rows first; × hides it; 'don't ask again' doesn't)", () => {
+  const n = (o) => hintsNotice("present", { dismissed: false, error: null, reach: "spoke", reachDismissed: false, ...o });
   assert.deepEqual(n({}), { text: "Diagram hints aren't reaching Claude in this session", action: "why" });
+  assert.deepEqual(n({ reach: "not-herdr" }), { text: "The diagram-hint hook doesn't see Herdr in this session", action: "why" });
   assert.deepEqual(n({ dismissed: true }), { text: "Diagram hints aren't reaching Claude in this session", action: "why" });
-  for (const o of [{ prismantis: true }, { reach: "unknown" }, { reach: "ok" }, { reach: undefined }, { reachDismissed: true }]) assert.equal(n(o), null, JSON.stringify(o));
-  assert.equal(hintsNotice("missing", { dismissed: false, error: null, reach: "silent" }).action, "setup");
-  assert.equal(hintsNotice("moved", { dismissed: false, error: null, reach: "silent" }).action, "setup");
+  for (const o of [{ reach: null }, { reach: undefined }, { reachDismissed: true }]) assert.equal(n(o), null, JSON.stringify(o));
+  assert.equal(hintsNotice("missing", { dismissed: false, error: null, reach: "spoke" }).action, "setup");
+  assert.equal(hintsNotice("moved", { dismissed: false, error: null, reach: "spoke" }).action, "setup");
 });
 
-test("HINTS_WHY says what happened and what to do", () => {
-  assert.equal(HINTS_WHY, "Your last 2 prompts reached Claude without Render's note, though the hooks are set up. If this session started before the hints were set up, start a new Claude session. If a new session shows this too, the hint hook is staying silent: copy the details and report it.");
+test("hintsWhy: what happened and what to do, per verdict", () => {
+  assert.equal(hintsWhy("spoke"), "The hint hook ran on your last prompts and sent the hint, but it isn't in this session's log, so Claude didn't get it. Copy the details and report it.");
+  assert.equal(hintsWhy("not-herdr"), "The hint hook ran on your last prompts but saw none of Herdr's terminal variables (HC_TERMINAL_ID, HC_SCOPE), so it stayed quiet. That happens when Claude was started outside Herdr and attached here, or runs through WSL, tmux or ssh in this pane. If this is a plain Herdr terminal, copy the details and report it.");
+  assert.equal(hintsWhy(null), "");
 });
 
-test("hintsDetails: platform, hook commands, transcript, prompts checked", () => {
-  const d = hintsDetails({ platform: "linux", commands: ['node "/a/herdr-hint.mjs" prompt'], transcript: "/t.jsonl", checked: 3 });
-  for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl", "3"]) assert.ok(d.includes(s), s);
-  assert.match(hintsDetails({ platform: null, commands: [], transcript: null, checked: 0 }), /none found/);
-  assert.ok(d.split("\n").every((l) => !/ $/.test(l)), "no line ends in a space");
+test("hintsDetails: platform, hook commands, transcript, prompts checked, the hook's last run", () => {
+  const run = { at: Date.parse("2026-11-25T14:29:25.050Z"), event: "prompt", decision: "spoke" };
+  const d = hintsDetails({ platform: "linux", commands: ['node "/a/herdr-hint.mjs" prompt'], transcript: "/t.jsonl", checked: 3, run });
+  for (const s of ["linux", 'node "/a/herdr-hint.mjs" prompt', "/t.jsonl", "2026-11-25T14:29:25.050Z", "prompt", "spoke"]) assert.ok(d.includes(s), s);
   assert.match(d, /^typed prompts checked: 3 \(the newest 2 got no hint\)$/m);
+  assert.ok(d.split("\n").every((l) => !/ $/.test(l)), "no line ends in a space");
+  const none = hintsDetails({ platform: null, commands: [], transcript: null, checked: 0, run: null });
+  assert.match(none, /none found/);
+  assert.match(none, /^the hook's last run: none recorded$/m);
 });
 
 // ---- Colour ----

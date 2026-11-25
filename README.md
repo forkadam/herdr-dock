@@ -501,10 +501,15 @@ terminal, so you keep Claude Code's own terminal UI:
   the panel draws and how to write a ```` ```figure ````, and on each prompt a one-line reminder (about 40 tokens).
   They're quiet outside Herdr (none of `HC_TERMINAL_ID`, `HC_SCOPE`, `HERDR_PANE_ID`) and while
   [prismantis](https://github.com/NahumLitvin/prismantis)'s own diagram hints are on, so you never get two notes.
-  Render checks that the hints arrive: when the hooks are set up but the last two prompts of the Claude session it
-  shows reached Claude without one (Claude Code logs each hint in the session), it says **Diagram hints aren't
-  reaching Claude in this session**, with **Why** (what to do, and details to copy for a report) and × to hide it for
-  that session. `npm run deploy -- --no-hints` leaves them out. Deleting the
+  Render checks that the hints arrive. The hook notes each run in `<app home>/herdr-dock/hint-runs/<session id>.json`
+  (when, and whether it sent the hint or why not; notes untouched for 14 days are deleted). When the last two prompts
+  of the Claude session Render shows reached Claude without a hint (Claude Code logs each hint in the session) although
+  the hook ran for them, it says why: **Diagram hints aren't reaching Claude in this session** (the hook sent it) or
+  **The diagram-hint hook doesn't see Herdr in this session** (Herdr's variables didn't reach Claude, e.g. through
+  WSL, tmux or ssh), with **Why** (what to do, and details to copy for a report) and × to hide it for that session.
+  When the hook didn't run at all (hooks switched off in any of Claude Code's settings, or a session started before
+  set up) or is quiet by design (prismantis's hints on), nothing is shown. `npm run deploy -- --no-hints` leaves them
+  out. Deleting the
   two `herdr-hint` entries from `hooks` in `~/.claude/settings.json` removes them only until the next deploy or update
   (`npm run update` and the Dock layout dialog's Update run deploy), which adds them back. The note's wording is
   adapted from prismantis (MIT).

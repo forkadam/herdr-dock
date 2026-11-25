@@ -14,7 +14,7 @@ import {
   theme, watchFolder, window,
 } from "herdr";
 import { listDirCommand } from "../../shared/platform.js";
-import { HINT_MARK, hintsPlan, prismantisHints } from "../../shared/render/hints.js";
+import { HINT_MARK, hintsPlan } from "../../shared/render/hints.js";
 import { readSettings } from "../../shared/statusline.js";
 import { slashPath } from "../../shared/path.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
@@ -22,8 +22,8 @@ import { agentKind, pickAgent, transcriptPath } from "../../shared/render/agent.
 import { shownSize } from "../../shared/render/size.js";
 import { ago } from "../../shared/jira/model.js";
 import {
-  ALERTS, CHAR_PX, COLOURS, FOLD_OVER, HINTS_WHY, ROLE_COLOR, codeFold, copyPlan, hintsDetails, hintsNotice, openWithin, pieces, replyNote, shownButtons, sideBySide,
-  speakerLabel, tableWidths, viewOf,
+  ALERTS, CHAR_PX, COLOURS, FOLD_OVER, ROLE_COLOR, codeFold, copyPlan, hintsDetails, hintsNotice, hintsWhy, openWithin, pieces, replyNote, shownButtons, sideBySide,
+  reachVerdict, speakerLabel, tableWidths, viewOf,
 } from "../../shared/render/view.js";
 
 const MOD = "dock-render";
@@ -55,8 +55,8 @@ export default class Render extends View {
     this.unfolded = new Set(); // element ids of long code blocks opened past their first 20 lines
     this.opening = new Set(); // exchange ids opened by hand whose blocks are being read
     this.copied = null; // { key, note } of the copy button just pressed
-    // The diagram-hint hooks in Claude's settings; prismantis: its own hints are on; commands: ours found there.
-    this.hints = { state: null, busy: false, error: null, checked: false, prismantis: false, commands: [] };
+    // The diagram-hint hooks in Claude's settings; commands: ours found there (for a report's details).
+    this.hints = { state: null, busy: false, error: null, checked: false, commands: [] };
     this.reachWhy = null; // the transcript whose "aren't reaching Claude" row has Why open
     this.reachDismissed = new Set(); // transcripts whose "aren't reaching Claude" row was closed with ×
     this.files = null; // [{ path, name, rel, mtimeMs }]
@@ -201,7 +201,7 @@ export default class Render extends View {
         const t = this.target;
         const open = [...this.toggled].filter(([, on]) => on).map(([id]) => id); // the newest three come anyway
         const more = { open, full: [...this.full], pages: Object.fromEntries(this.pages) };
-        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, ...more })
+        const out = t.kind === "claude" ? await this.helper({ mode: "claude", transcript: t.transcript, runsDir: `${slashPath(appHome())}/herdr-dock/hint-runs`, ...more })
           : await this.helper({ mode: "codex", cwd: t.cwd, ...more });
         if (this.target !== t) return;
         if (out.ok) { this.data = out; this.problem = null; } else this.problem = out.error ?? "Couldn't read the session.";
@@ -275,7 +275,6 @@ export default class Render extends View {
       } else {
         this.hints.state = hintsPlan(text, this.hintScript()).state;
         const r = readSettings(text);
-        this.hints.prismantis = r.ok && prismantisHints(r.settings);
         this.hints.commands = r.ok ? Object.values(r.settings?.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? [])
           .map((h) => h?.command).filter((c) => typeof c === "string" && c.includes(HINT_MARK)) : [];
       }
@@ -309,13 +308,14 @@ export default class Render extends View {
   // but the Claude session shown got no hint on its last prompts (Why, and × for that session).
   hintsRow(t) {
     const transcript = this.target?.kind === "claude" ? this.target.transcript : null;
+    const verdict = transcript && this.data?.file === transcript ? reachVerdict(this.data.hints, this.data.hints?.run) : null;
     const n = hintsNotice(this.hints.state, {
-      dismissed: shared(HINTS_KEY) === true, error: this.hints.error, prismantis: this.hints.prismantis,
-      reach: transcript && this.data?.file === transcript ? this.data.hints?.state : undefined,
+      dismissed: shared(HINTS_KEY) === true, error: this.hints.error,
+      reach: verdict,
       reachDismissed: this.reachDismissed.has(transcript),
     });
     if (!n) return null;
-    if (n.action === "why") return this.reachRow(t, n, transcript);
+    if (n.action === "why") return this.reachRow(t, n, transcript, verdict);
     return h_flex().id("render-hints").px(PAD).py(4).gap(8).flex_none().items_center().border_b(1).border_color(t.border)
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.hints.error ? (t.blocked ?? t.ansi1) : t.muted).child(n.text))
       .when(n.action === "setup", (el) => el.child(h_flex().id("render-hints-setup").h(22).px(8).flex_none().items_center().rounded(6)
@@ -329,8 +329,8 @@ export default class Render extends View {
   }
 
   // The hints are set up but don't reach Claude: the row, Why (what it means, what to do, details to copy), ×.
-  reachRow(t, n, transcript) {
-    const details = hintsDetails({ platform: window()?.platform ?? null, commands: this.hints.commands, transcript, checked: this.data?.hints?.checked });
+  reachRow(t, n, transcript, verdict) {
+    const details = hintsDetails({ platform: window()?.platform ?? null, commands: this.hints.commands, transcript, checked: this.data?.hints?.checked, run: this.data?.hints?.run ?? null });
     const open = this.reachWhy === transcript;
     return v_flex().id("render-hints").px(PAD).py(4).gap(6).flex_none().border_b(1).border_color(t.border)
       .child(h_flex().gap(8).items_center()
@@ -344,7 +344,7 @@ export default class Render extends View {
           .on_click((_e, cx) => { this.reachDismissed.add(transcript); this.reachWhy = null; cx.notify(); })
           .child(svg("mods/workspace-chrome/x.svg").size(12))))
       .when(open, (el) => el
-        .child(div().text_size(12).text_color(t.muted).child(HINTS_WHY))
+        .child(div().text_size(12).text_color(t.muted).child(hintsWhy(verdict)))
         .child(this.buttons(t, [{ label: "copy details", text: details }], "render-hints-details", false, false)));
   }
 

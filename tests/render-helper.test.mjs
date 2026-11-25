@@ -243,38 +243,42 @@ test("claude: footnotes across a mid-turn marker are numbered once and noted at 
   } finally { x.done(); }
 });
 
-test("claude: says whether the session's last prompts got Render's hint; codex answers don't", () => {
+test("claude: whether the last prompts got Render's hint, with the hook's record of its last run here; codex answers don't", () => {
   const x = home();
   try {
-    // Claude Code's settings as the hook reads them: our hooks in, prismantis off.
-    const claude = join(x.h, "claude");
-    mkdirSync(claude);
-    const hook = { hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: 'node "/x/herdr-hint.mjs" prompt' }] }] } };
-    // Written well before the fixture's prompts (2026-11-23), as settings that were in place when they were typed.
-    const settings = (o, when = new Date("2026-01-01T00:00:00Z")) => {
-      const file = join(claude, "settings.json");
-      writeFileSync(file, JSON.stringify(o));
-      utimesSync(file, when, when);
-      return { CLAUDE_CONFIG_DIR: claude };
-    };
-    const plain = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") }, settings(hook));
+    const runsDir = join(x.h, "herdr-dock", "hint-runs");
+    mkdirSync(runsDir, { recursive: true });
+    const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir };
+    const plain = run(req);
     assert.equal(plain.hints.state, "silent");
     assert.equal(plain.hints.checked, 3);
-    // The hook is quiet by design (no hooks, prismantis on, settings that don't parse): not "silent", read afresh each time.
-    const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") };
-    assert.equal(run(req, settings({})).hints.state, "unknown");
-    assert.equal(run(req, settings({ ...hook, enabledPlugins: { "prismantis@prismantis": true } })).hints.state, "unknown");
-    // Settings changed after the newest prompt (hints just set up, prismantis just turned off): those prompts followed
-    // the old ones, so it's too early to say.
-    assert.equal(run(req, settings(hook, new Date())).hints.state, "unknown");
-    writeFileSync(join(claude, "settings.json"), "{ nope");
-    assert.equal(run(req, { CLAUDE_CONFIG_DIR: claude }).hints.state, "unknown");
+    assert.equal(typeof plain.hints.at, "number");
+    assert.equal(plain.hints.run, undefined);
+    // The record is the transcript's own: <session id>.json, the id being the transcript's file name.
+    const rec = { at: 1764080000000, event: "prompt", decision: "spoke" };
+    writeFileSync(join(runsDir, "claude-conversation.json"), JSON.stringify(rec));
+    assert.deepEqual(run(req).hints.run, rec);
+    writeFileSync(join(runsDir, "claude-conversation.json"), "{ nope");
+    assert.equal(run(req).hints.run, undefined);
     const p = (uuid, text) => JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } });
     const hint = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: ["The Render panel beside this terminal draws ```mermaid."] } });
     const file = join(x.h, "hinted.jsonl");
     writeFileSync(file, [p("u1", "first"), hint, p("u2", "second"), hint].join("\n") + "\n");
-    assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }, settings(hook)).hints, { state: "ok", checked: 2 });
-    const codex = run({ ...x.base, mode: "codex", cwd: "/nowhere", codexHome: join(x.h, "no-codex") });
+    assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }).hints, { state: "ok", checked: 2 });
+    const codex = run({ ...x.base, mode: "codex", cwd: "/nowhere", codexHome: join(x.h, "no-codex"), runsDir });
     assert.equal(codex.hints, undefined);
+  } finally { x.done(); }
+});
+
+test("claude: hook records untouched for 14 days are deleted after a read; newer ones and other files stay", () => {
+  const x = home();
+  try {
+    const runsDir = join(x.h, "herdr-dock", "hint-runs");
+    mkdirSync(runsDir, { recursive: true });
+    const old = new Date(Date.now() - 15 * 86400e3);
+    for (const name of ["old-session.json", "notes.txt"]) { writeFileSync(join(runsDir, name), "{}"); utimesSync(join(runsDir, name), old, old); }
+    writeFileSync(join(runsDir, "fresh-session.json"), "{}");
+    run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl"), runsDir });
+    assert.deepEqual(readdirSync(runsDir).sort(), ["fresh-session.json", "notes.txt"]);
   } finally { x.done(); }
 });

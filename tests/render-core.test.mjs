@@ -296,3 +296,10 @@ test("hintReach: a peer message's hint isn't the typed prompt's; the newest prom
   assert.equal(hintReach([P("a"), at]).at, Date.parse("2026-11-25T14:00:00.000Z"));
   assert.equal("at" in hintReach([P("a")]), false);
 });
+
+test("hintReach: a meta line from a person, or with no origin, keeps the pending hint (only another session's resets it)", () => {
+  const META = (origin) => JSON.stringify({ type: "user", isMeta: true, ...(origin ? { origin: { kind: origin } } : {}), message: { content: "skill text" } });
+  assert.equal(hintReach([P("a"), H(), META("human")]).state, "ok");
+  assert.equal(hintReach([P("a"), META("human"), H()]).state, "ok");
+  assert.equal(hintReach([P("a"), META(null), H()]).state, "ok");
+});
