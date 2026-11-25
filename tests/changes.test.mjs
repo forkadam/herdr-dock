@@ -561,3 +561,82 @@ test("fetchChanges branch view: compares with whichever of main and origin/main 
   const same = await fetchBranch({ exec: exec({ main: "same", "origin/main": "same" }), cwd: "/repo", on: null, mode: "branch" });
   assert.deepEqual([same.base, same.mergeBase], ["main", "same"]);
 });
+
+// ---- The branch view's deferred minors ----
+import { folderOf } from "../src/shared/changes.js";
+
+test("folderOf: the follow key without the view", () => {
+  const a = JSON.stringify({ cwd: "/r", on: null, view: "branch" });
+  const b = JSON.stringify({ cwd: "/r", on: null, view: "uncommitted" });
+  const c = JSON.stringify({ cwd: "/s", on: null, view: "branch" });
+  assert.equal(folderOf(a), folderOf(b));
+  assert.notEqual(folderOf(a), folderOf(c));
+  assert.equal(folderOf(null), null);
+});
+
+// fakeGit, with a status listing `status` entries, a branch diff listing `names` ([letter, path]),
+// and `lone`: no history shared with the default branch.
+const bigGit = ({ status, names = [], lone = false, ...opts }) => {
+  const git = fakeGit(opts);
+  return async (cmd, args) => {
+    if (args.includes("status")) return { code: 0, stdout: `## ${opts.branch ?? "feat"}...origin/x\0${status.join("\0")}\0`, stderr: "" };
+    if (lone && args.includes("merge-base")) return { code: 1, stdout: "", stderr: "" };
+    if (args.includes("diff") && args.includes("abc123")) {
+      return { code: 0, stdout: args.includes("--name-status") ? names.map(([l, p]) => `${l}\0${p}\0`).join("") : names.map(([, p]) => `1\t0\t${p}\0`).join(""), stderr: "" };
+    }
+    return git(cmd, args);
+  };
+};
+
+test("fetchChanges branch view: its empty cases don't carry the uncommitted view's note", async () => {
+  const status = Array.from({ length: LIMIT + 1 }, (_, i) => ` M f${i}.js`);
+  const at = { cwd: "/repo", on: null, mode: "branch" };
+  const onMain = await fetchBranch({ ...at, exec: bigGit({ status, branch: "main" }) });
+  assert.deepEqual([onMain.onBase, onMain.limited], [true, false]);
+  const noBase = await fetchBranch({ ...at, exec: bigGit({ status, refs: [], originHead: null }) });
+  assert.deepEqual([noBase.base, noBase.limited], [null, false]);
+  const lone = await fetchBranch({ ...at, exec: bigGit({ status, lone: true }) });
+  assert.deepEqual([lone.base, lone.mergeBase, lone.limited], ["main", null, false]);
+});
+
+test("fetchChanges branch view: every new file counts toward the 1,000 cap; the uncommitted view keeps its cap", async () => {
+  const mods = Array.from({ length: 600 }, (_, i) => `m${i}.js`), news = Array.from({ length: 500 }, (_, i) => `n${i}.js`);
+  const exec = bigGit({ status: [...mods.map((p) => ` M ${p}`), ...news.map((p) => `?? ${p}`)], names: mods.map((p) => ["M", p]) });
+  const branch = await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch" });
+  assert.deepEqual([branch.files.length, branch.limited], [LIMIT, true]);
+  const uncommitted = await fetchBranch({ exec, cwd: "/repo", on: null });
+  assert.deepEqual([uncommitted.files.length, uncommitted.limited], [LIMIT, true]);
+});
+
+// Real git names a conflicted file M in a diff against a commit; only status says UU.
+test("fetchChanges branch view: a conflicted file shows U", async () => {
+  const r = await fetchBranch({ exec: bigGit({ status: ["UU a.js"], names: [["M", "a.js"]] }), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(r.files.find((f) => f.path === "a.js").status, "U");
+});
+
+test("fetchChanges: status doesn't count ahead/behind", async () => {
+  const calls = [], git = fakeGit();
+  await fetchBranch({ exec: async (cmd, args) => { calls.push(args); return git(cmd, args); }, cwd: "/repo", on: null });
+  assert.ok(calls.find((a) => a.includes("status")).includes("--no-ahead-behind"));
+});
+
+test("fetchChanges branch view: a default branch found once is reused; one not found is looked up again", async () => {
+  let calls = [];
+  const git = fakeGit();
+  const exec = async (cmd, args) => {
+    calls.push(args.join(" "));
+    if (args.includes("--verify") && args.at(-1) === "refs/remotes/origin/main") return { code: 0, stdout: "", stderr: "" };
+    return git(cmd, args);
+  };
+  const lookups = () => calls.filter((c) => c.includes("symbolic-ref") || c.includes("--verify")).length;
+  const first = await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(first.base, "main");
+  assert.deepEqual(first.bases, { name: "main", remote: "origin/main" });
+  calls = [];
+  const again = await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch", bases: first.bases });
+  assert.equal(again.base, "main");
+  assert.equal(lookups(), 0);
+  calls = [];
+  await fetchBranch({ exec, cwd: "/repo", on: null, mode: "branch", bases: { name: null, remote: null } });
+  assert.ok(lookups() > 0);
+});

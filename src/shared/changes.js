@@ -89,13 +89,14 @@ export async function resolveRepo(exec, { cwd, on }) {
 
 // Reads changed files + line stats for a repo using parallel git commands.
 // Reuses cached `root`/`gitDir` when provided; if `status` fails on a cached root, re-resolves once.
-export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, mode = "uncommitted" }) {
+// `bases`: the default-branch lookups a previous branch-view call returned; found ones are reused.
+export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, mode = "uncommitted", bases = null }) {
   let repo = root ? { root, gitDir } : await resolveRepo(exec, { cwd, on });
   if (!repo) return { notRepo: true };
 
   const runGit = (r, args) => exec("git", [...GIT_READ, ...args], { cwd: r.root, on });
   let [status, headDiff] = await Promise.all([
-    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
+    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch", "--no-ahead-behind"]),
     runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"]),
   ]);
 
@@ -103,7 +104,7 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, 
     repo = await resolveRepo(exec, { cwd, on });
     if (!repo) return { notRepo: true };
     [status, headDiff] = await Promise.all([
-      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
+      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch", "--no-ahead-behind"]),
       runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"]),
     ]);
   }
@@ -126,9 +127,10 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, 
     }
   }
 
-  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
+  // The branch view reads every status entry, so no new file is cut before its own list is capped.
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats, mode === "branch" ? Infinity : FILE_LIMIT);
   const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
-  return mode === "branch" ? { ...out, ...(await branchView((args) => runGit(repo, args), { branch, hasHead, untracked: files.filter((f) => f.fresh) })) } : out;
+  return mode === "branch" ? { ...out, ...(await branchView((args) => runGit(repo, args), { branch, hasHead, statusFiles: files, bases })) } : out;
 }
 
 // The repo's default branch to compare a branch with: origin/HEAD's name, as the local branch when it exists (you may
@@ -154,20 +156,30 @@ function parseNameStatus(stdout) {
 
 // The branch view: everything on this branch that isn't on the default branch yet — the working tree against the
 // merge base (committed and not), plus untracked files. On the default branch itself, or with none, no files.
-async function branchView(runGit, { branch, hasHead, untracked }) {
-  const base = await defaultBranch(runGit);
-  if (!base) return { base: null, mergeBase: null, onBase: false, files: [] };
-  if (branch && (branch === base || `origin/${branch}` === base)) return { base, mergeBase: null, onBase: true, files: [] };
-  const near = hasHead ? await nearestBase(runGit, base) : { base, mergeBase: null };
-  if (!near.mergeBase) return { base: near.base, mergeBase: null, onBase: false, files: [] };
-  return { ...(await branchFiles(runGit, near.mergeBase, untracked)), base: near.base, mergeBase: near.mergeBase, onBase: false };
+// Every return sets `limited`, so the uncommitted list's note never carries over; `bases` goes back
+// to the caller for the next refresh.
+async function branchView(runGit, { branch, hasHead, statusFiles, bases }) {
+  const none = { mergeBase: null, onBase: false, files: [], limited: false };
+  const name = bases?.name ?? await defaultBranch(runGit);
+  if (!name) return { ...none, base: null, bases: { name: null, remote: null } };
+  if (branch && (branch === name || `origin/${branch}` === name)) return { ...none, base: name, onBase: true, bases: { name, remote: bases?.remote ?? null } };
+  if (!hasHead) return { ...none, base: name, bases: { name, remote: bases?.remote ?? null } };
+  const found = { name, remote: bases?.remote ?? await remoteOf(runGit, name) };
+  const near = await nearestBase(runGit, name, found.remote);
+  if (!near.mergeBase) return { ...none, base: near.base, bases: found };
+  return { ...(await branchFiles(runGit, near.mergeBase, statusFiles)), base: near.base, mergeBase: near.mergeBase, onBase: false, bases: found };
+}
+
+// origin/<name> when it exists beside a local default branch.
+async function remoteOf(runGit, name) {
+  if (name.startsWith("origin/")) return null;
+  return (await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`])).code === 0 ? `origin/${name}` : null;
 }
 
 // A local default branch can be behind origin's (fetched, not fast-forwarded) or ahead of it (merged
 // locally, not pushed). Compare with whichever one this branch left last, so neither teammates' work
 // nor work already merged shows as this branch's.
-async function nearestBase(runGit, name) {
-  const remote = !name.startsWith("origin/") && (await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`])).code === 0 ? `origin/${name}` : null;
+async function nearestBase(runGit, name, remote) {
   const [local, other] = await Promise.all([name, remote].map(async (ref) => {
     if (!ref) return null;
     const r = await runGit(["merge-base", "HEAD", ref]);
@@ -177,7 +189,9 @@ async function nearestBase(runGit, name) {
   return { base: name, mergeBase: local };
 }
 
-async function branchFiles(runGit, mergeBase, untracked) {
+// A conflicted file is M in a diff against a commit; only status says it's in conflict (UU).
+async function branchFiles(runGit, mergeBase, statusFiles) {
+  const conflicts = new Set(statusFiles.filter((f) => f.status === "U").map((f) => f.path));
   const [numstat, names] = await Promise.all([
     runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
     runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"]),
@@ -186,8 +200,8 @@ async function branchFiles(runGit, mergeBase, untracked) {
   const stats = {};
   parseNumstat(numstat.stdout, stats);
   const letters = parseNameStatus(names.stdout);
-  const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
-  for (const f of untracked) if (!letters[f.path]) files.push(f);
+  const files = Object.keys(letters).map((path) => ({ path, status: conflicts.has(path) ? "U" : letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
+  for (const f of statusFiles) if (f.fresh && !letters[f.path]) files.push(f);
   return { files: files.slice(0, FILE_LIMIT), limited: files.length > FILE_LIMIT };
 }
 
@@ -197,6 +211,13 @@ export function followsLine({ root, branch, view, base }) {
   if (!root) return "";
   const name = String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
   return [name, branch ?? "detached", ...(view === "branch" && base ? [`vs ${base}`] : [])].join(" · ");
+}
+
+// The panel's follow key (its location as JSON, plus the view) without the view: the folder it follows.
+export function folderOf(context) {
+  if (context == null) return null;
+  const { view: _view, ...place } = JSON.parse(context);
+  return JSON.stringify(place);
 }
 
 // What an empty list says, so an empty panel explains itself.
@@ -429,3 +450,4 @@ export function createChangesSync({
     get visible() { return visible; },
   };
 }
+
