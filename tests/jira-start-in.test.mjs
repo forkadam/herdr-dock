@@ -88,8 +88,9 @@ test("folderProbe: one node run learns home (HOME, else USERPROFILE) and which p
     const win = parseFolderProbe(runProbe(["~/code/app"], { USERPROFILE: h }), ["~/code/app"]);
     assert.equal(win.home, h);
     assert.equal(win.exists("~/code/app"), true);
-    // No home at all: a ~ path is not a folder, an absolute one still is.
-    const none = parseFolderProbe(runProbe(["~/code/app", join(h, "code")], {}), ["~/code/app", join(h, "code")]);
+    // No home at all (an empty USERPROFILE: on Windows a child given neither gets the parent's, from libuv): a ~ path
+    // is not a folder, an absolute one still is.
+    const none = parseFolderProbe(runProbe(["~/code/app", join(h, "code")], { USERPROFILE: "" }), ["~/code/app", join(h, "code")]);
     assert.equal(none.home, null);
     assert.deepEqual([none.exists("~/code/app"), none.exists(join(h, "code"))], [false, true]);
     // Nothing to check still answers home.

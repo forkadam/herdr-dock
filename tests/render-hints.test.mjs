@@ -65,7 +65,7 @@ test("hintsPlan: a BOM-prefixed file reads; invalid JSON is left alone", () => {
 // ---- The hook script (src/app/render-hint.js; bundled as mods/dock-render/herdr-hint.mjs) ----
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const HINT_JS = join(import.meta.dirname, "..", "src", "app", "render-hint.js");
@@ -108,7 +108,7 @@ test("the setup command: adds the hooks; --check says what it would do and write
     const r = setupCli(["--script", "/x/herdr-hint.mjs"], claude);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /^added: /);
-    assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).hooks.SessionStart[0].hooks[0].command, 'node "/x/herdr-hint.mjs" session');
+    assert.equal(JSON.parse(readFileSync(join(claude, "settings.json"), "utf8")).hooks.SessionStart[0].hooks[0].command, `node "${resolve("/x/herdr-hint.mjs").replace(/\\/g, "/")}" session`);
     assert.match(setupCli(["--script", "/x/herdr-hint.mjs"], claude).stdout, /^present: /);
     writeFileSync(join(claude, "settings.json"), "{ nope");
     assert.equal(setupCli(["--script", "/x/herdr-hint.mjs"], claude).status, 1);

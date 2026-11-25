@@ -380,7 +380,7 @@ test("loadJira on a fresh PC: defaults, no token", async () => {
     assert.deepEqual(j.settings, DEFAULT_SETTINGS);
     assert.equal(j.token, null);
     assert.equal(j.problem, null);
-    assert.equal(j.paths.settingsPath, `${h.home}/herdr-dock/jira-work.json`);
+    assert.equal(j.paths.settingsPath, `${h.home.replace(/\\/g, "/")}/herdr-dock/jira-work.json`);
   } finally { h.done(); }
 });
 
