@@ -59,6 +59,11 @@ export async function buildAll(distDir = join(ROOT, "dist")) {
         plugins: [mermaidIds.plugin],
       });
       mermaidIds.check();
+      // The Claude Code hook that tells Claude what the panel draws (deploy adds it to ~/.claude/settings.json).
+      await build({
+        entryPoints: [join(ROOT, "src/app/render-hint.js")], outfile: join(dest, "herdr-hint.mjs"),
+        bundle: true, platform: "node", format: "esm", logLevel: "warning", absWorkingDir: ROOT,
+      });
     }
     if (name === "dock-browser") {
       // The browse command agents run (node browse.mjs ...): one file, nothing to install.

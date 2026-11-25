@@ -61,3 +61,34 @@ test("hintsPlan: a BOM-prefixed file reads; invalid JSON is left alone", () => {
   assert.equal(hintsPlan("\uFEFF{}", SCRIPT).state, "missing");
   assert.equal(hintsPlan("{ nope", SCRIPT).state, "invalid");
 });
+
+// ---- The hook script (src/app/render-hint.js; bundled as mods/dock-render/herdr-hint.mjs) ----
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const HINT_JS = join(import.meta.dirname, "..", "src", "app", "render-hint.js");
+const hook = (event, env, settings) => {
+  const dir = mkdtempSync(join(tmpdir(), "hint-"));
+  try {
+    if (settings != null) writeFileSync(join(dir, "settings.json"), settings);
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "HERDR_PANE_ID"));
+    return spawnSync(process.execPath, [HINT_JS, event], { encoding: "utf8", env: { ...clean, CLAUDE_CONFIG_DIR: dir, ...env } });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+};
+
+test("the script: prints the hook JSON in Herdr; nothing outside it; exit 0 either way", () => {
+  const r = hook("session", { HERDR_PANE_ID: "p1" }, "{}");
+  assert.equal(r.status, 0);
+  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, HINT);
+  const out = hook("prompt", {}, "{}");
+  assert.equal(out.status, 0);
+  assert.equal(out.stdout, "");
+});
+
+test("the script: broken settings print nothing; prismantis on prints nothing", () => {
+  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, "{ broken").stdout, "");
+  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM()).stdout, "");
+  assert.equal(hook("session", { HERDR_PANE_ID: "p1" }, PRISM({ diagramHints: false })).status, 0);
+});
