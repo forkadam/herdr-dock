@@ -20,7 +20,7 @@ const OPTIONS = { gfm: true };
 
 // Code as a fenced block, whatever it was written as (an indented block loses its indent once cut out): the fence is
 // longer than any run of backticks inside.
-function fenced(code, lang) {
+export function fenced(code, lang) {
   const fence = "`".repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((r) => r.length + 1)));
   return `${fence}${lang}\n${code}\n${fence}`;
 }

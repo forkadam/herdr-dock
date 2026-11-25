@@ -21,6 +21,7 @@ import { join, relative } from "node:path";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { flattenSvg } from "../shared/render/flatten.js";
 import { toBlocks, replyButtons } from "../shared/render/blocks.js";
+import { paginate } from "../shared/render/pages.js";
 import { OPEN_NEWEST } from "../shared/render/view.js";
 import { copyHtml } from "./clipboard.js";
 import { cacheToPrune, themeKey } from "../shared/render/cache.js";
@@ -80,24 +81,37 @@ function render(seg, req, themeId) {
 // Formatted copies work through macOS's pasteboard only; elsewhere the panel hides the html buttons.
 const CAN_HTML = process.platform === "darwin";
 
+// A list of blocks with its pictures rendered.
+const drawn = (list, req, themeId) => list.map((b) => (b.kind === "mermaid" || b.kind === "figure" ? { ...b, ...render(b, req, themeId) } : b));
+
 // Text -> blocks, pictures rendered.
 function blocks(text, req, themeId) {
-  return toBlocks(text).map((b) => (b.kind === "mermaid" || b.kind === "figure" ? { ...b, ...render(b, req, themeId) } : b));
+  return drawn(toBlocks(text), req, themeId);
 }
 
-// An exchange's reply: runs of text as blocks, with what arrived while Claude worked as markers between them.
-function replyBlocks(ex, req, themeId) {
+// An exchange's reply (not yet rendered): runs of text as blocks, with what arrived while Claude worked as markers
+// between them.
+function replyBlocks(ex) {
   const out = [];
   let run = [];
-  const flush = () => { if (run.length) out.push(...blocks(run.join("\n\n"), req, themeId)); run = []; };
+  const flush = () => { if (run.length) out.push(...toBlocks(run.join("\n\n"))); run = []; };
   for (const p of ex.parts) {
     if (p.type === "text") { run.push(p.text); continue; }
     flush();
-    out.push({ kind: "marker", by: p.by, event: p.event, text: p.text });
+    out.push({ kind: "marker", by: p.by, event: p.event, text: p.text, bytes: new TextEncoder().encode(p.text).length });
   }
   flush();
   return out;
 }
+
+// One page of a list of blocks: { page, pageCount, list } (the page asked for, kept in range).
+function pageOf(list, asked) {
+  const pages = paginate(list);
+  const page = Math.max(0, Math.min(pages.length - 1, Number.isInteger(asked) ? asked : 0));
+  return { page, pageCount: pages.length, list: pages[page] };
+}
+
+const TURN_LINES = 12;
 
 function fromLog(read, lines, req, extra) {
   const themeId = themeKey(req.theme);
@@ -107,7 +121,14 @@ function fromLog(read, lines, req, extra) {
   const wanted = new Set([...r.exchanges.slice(0, OPEN_NEWEST).map((e) => e.id), ...(Array.isArray(req.open) ? req.open : [])]);
   const open = {};
   for (const ex of r.exchanges) {
-    if (wanted.has(ex.id)) open[ex.id] = { reply: replyBlocks(ex, req, themeId), buttons: replyButtons(replyText(ex)) };
+    if (!wanted.has(ex.id)) continue;
+    const lines = String(ex.text ?? "").split("\n");
+    const turnMore = lines.length > TURN_LINES && !(Array.isArray(req.full) && req.full.includes(ex.id));
+    const { page, pageCount, list } = pageOf(replyBlocks(ex), req.pages?.[ex.id]);
+    open[ex.id] = {
+      turn: blocks(turnMore ? lines.slice(0, TURN_LINES).join("\n") : ex.text, req, themeId), turnMore,
+      reply: drawn(list, req, themeId), page, pageCount, buttons: replyButtons(replyText(ex)),
+    };
   }
   return {
     ok: true, ...extra, canHtml: CAN_HTML,
@@ -178,7 +199,8 @@ function run(req) {
     }
     case "file": {
       const text = readText(req.path, MAX_FILE);
-      return { ok: true, path: req.path, canHtml: CAN_HTML, blocks: blocks(text, req, themeKey(req.theme)), buttons: replyButtons(text) };
+      const { page, pageCount, list } = pageOf(toBlocks(text), req.page);
+      return { ok: true, path: req.path, canHtml: CAN_HTML, blocks: drawn(list, req, themeKey(req.theme)), page, pageCount, buttons: replyButtons(text) };
     }
     case "clip":
       if (typeof req.html !== "string" || typeof req.text !== "string") return { ok: false, error: "clip needs html and text" };

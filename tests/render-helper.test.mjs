@@ -190,3 +190,36 @@ test("file: blocks with their buttons and the whole file's copy md / copy html",
 test("clip: a request without html and text is refused without touching the clipboard", () => {
   assert.deepEqual(run({ mode: "clip" }), { ok: false, error: "clip needs html and text" });
 });
+
+test("file: a file over the budget comes a page at a time", () => {
+  const x = home();
+  try {
+    const path = join(x.h, "big.md");
+    writeFileSync(path, Array.from({ length: 30 }, (_, i) => `## Part ${i}\n\n${"text ".repeat(1000)}`).join("\n\n"));
+    const first = run({ ...x.base, mode: "file", path });
+    assert.ok(first.pageCount >= 3);
+    assert.equal(first.page, 0);
+    const second = run({ ...x.base, mode: "file", path, page: 1 });
+    assert.equal(second.page, 1);
+    assert.notDeepEqual(second.blocks[0], first.blocks[0]);
+    assert.equal(second.buttons[0].text.length, first.buttons[0].text.length);
+  } finally { x.done(); }
+});
+
+test("claude: rows carry their size; a long turn comes as its first 12 lines unless asked in full", () => {
+  const x = home();
+  try {
+    const long = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+    const t = join(x.h, "t.jsonl");
+    writeFileSync(t, [JSON.stringify({ type: "user", uuid: "u", origin: { kind: "human" }, message: { content: long } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" } })].join("\n"));
+    const out = run({ ...x.base, mode: "claude", transcript: t });
+    assert.equal(out.exchanges[0].size, Buffer.byteLength(long) + 2);
+    assert.equal(out.open.u.turnMore, true);
+    assert.ok(!JSON.stringify(out.open.u.turn).includes("line 12"));
+    const full = run({ ...x.base, mode: "claude", transcript: t, full: ["u"] });
+    assert.equal(full.open.u.turnMore, false);
+    assert.ok(JSON.stringify(full.open.u.turn).includes("line 19"));
+    assert.deepEqual([full.open.u.page, full.open.u.pageCount], [0, 1]);
+  } finally { x.done(); }
+});

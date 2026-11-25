@@ -92,8 +92,9 @@ export function exchangeRow(ex) {
     return true;
   });
   const preview = prose.join(" ").replace(/[#*_>|`]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
   return {
-    id: ex.id, by: ex.by, event: ex.event, text: ex.text, at: ex.at, preview,
+    id: ex.id, by: ex.by, event: ex.event, text: ex.text, at: ex.at, preview, size: bytes(ex.text) + bytes(reply),
     state: reply.trim() ? "reply" : ex.running ? "working" : "none",
     replyAt: ex.parts.at(-1)?.at ?? null,
   };
