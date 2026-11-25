@@ -1,7 +1,7 @@
 // The Render panel's diagram hints for Claude Code (src/shared/render/hints.js, src/app/render-hint.js).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HINT, HINT_PHRASE, REMINDER, hintCommand, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
+import { HINT, HINT_PHRASE, REMINDER, hintCommand, hooksSpeak, hintOutput, hintsPlan, prismantisHints } from "../src/shared/render/hints.js";
 
 const IN = { HC_TERMINAL_ID: "t1" };
 const PRISM = (options = {}) => JSON.stringify({ enabledPlugins: { "prismantis@prismantis": true }, pluginConfigs: { "prismantis@prismantis": { options } } });
@@ -35,6 +35,14 @@ test("hintOutput: in Herdr by HC_TERMINAL_ID, HC_SCOPE or HERDR_PANE_ID; empty o
 
 test("HINT_PHRASE is in both the note and the reminder", () => {
   assert.ok(HINT_PHRASE && HINT.includes(HINT_PHRASE) && REMINDER.includes(HINT_PHRASE));
+});
+
+test("hooksSpeak: settings that parse, with our hook in them and prismantis's hints off", () => {
+  const ours = (extra = {}) => JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: hintCommand(SCRIPT, "prompt") }] }] }, ...extra });
+  assert.equal(hooksSpeak(ours()), true);
+  assert.equal(hooksSpeak("﻿" + ours()), true);
+  assert.equal(hooksSpeak(ours(JSON.parse(PRISM()))), false);
+  for (const t of [null, "{}", "{ broken", JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ command: "echo mine" }] }] } })]) assert.equal(hooksSpeak(t), false, String(t));
 });
 
 test("prismantisHints: on unless the plugin is off or its enabled, mermaid or diagramHints option is false", () => {

@@ -258,3 +258,19 @@ test("hintReach: meta, sidechain and tool-result lines aren't prompts; an empty 
   assert.equal(hintReach([P("a"), H(), meta, side, tool, "{ broken"]).state, "ok");
   assert.deepEqual(hintReach([]), { state: "unknown", checked: 0 });
 });
+
+test("hintReach: interruptions aren't prompts, so two of them never read as silent", () => {
+  const INT = (t = "[Request interrupted by user]") => JSON.stringify({ type: "user", message: { content: [{ type: "text", text: t }] } });
+  const TN = JSON.stringify({ type: "user", origin: { kind: "task-notification" }, message: { content: "<task-notification>x</task-notification>" } });
+  assert.equal(hintReach([P("a"), H(), INT(), TN, INT()]).state, "ok");
+  assert.equal(hintReach([P("a"), H(), INT("[Request interrupted by user for tool use]"), INT()]).state, "ok");
+});
+
+test("hintReach: the hint is found in any attachment shape or name; a queued message holding the phrase isn't a hint", () => {
+  const phrase = `The ${HINT_PHRASE} draws diagrams.`;
+  const objects = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", content: [{ type: "text", text: phrase }] } });
+  const renamed = JSON.stringify({ type: "attachment", attachment: { type: "hook_context_v2", context: phrase } });
+  assert.equal(hintReach([P("a"), objects]).state, "ok");
+  assert.equal(hintReach([P("a"), renamed]).state, "ok");
+  assert.equal(hintReach([P("a"), H(), P("b"), Q(phrase), P("c")]).state, "silent");
+});

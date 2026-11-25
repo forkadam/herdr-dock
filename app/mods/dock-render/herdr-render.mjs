@@ -92862,9 +92862,9 @@ var require_prism = __commonJS({
               var matchStr = match[0];
               var before = str.slice(0, from);
               var after = str.slice(from + matchStr.length);
-              var reach = pos + str.length;
-              if (rematch && reach > rematch.reach) {
-                rematch.reach = reach;
+              var reach2 = pos + str.length;
+              if (rematch && reach2 > rematch.reach) {
+                rematch.reach = reach2;
               }
               var removeFrom = currentNode.prev;
               if (before) {
@@ -92880,7 +92880,7 @@ var require_prism = __commonJS({
               if (removeCount > 1) {
                 var nestedRematch = {
                   cause: token + "," + j2,
-                  reach
+                  reach: reach2
                 };
                 matchGrammar(text, tokenList, grammar, currentNode.prev, pos, nestedRematch);
                 if (rematch && nestedRematch.reach > rematch.reach) {
@@ -103089,7 +103089,24 @@ ${parts.join("\n")}
   return { svg, w: w2, h: h2 };
 }
 
+// src/shared/statusline.js
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function readSettings(text) {
+  if (text == null || !String(text).trim()) return { ok: true, settings: {}, command: null };
+  let settings;
+  try {
+    settings = JSON.parse(String(text).replace(/^﻿/, ""));
+  } catch (e) {
+    return { ok: false, error: `not valid JSON (${e.message})` };
+  }
+  if (!isObj(settings)) return { ok: false, error: "the root is not an object" };
+  const sl = settings.statusLine;
+  const command = isObj(sl) && typeof sl.command === "string" && sl.command.trim() ? sl.command : null;
+  return { ok: true, settings, command };
+}
+
 // src/shared/render/hints.js
+var HINT_MARK = "herdr-hint";
 var HINT_PHRASE = "Render panel beside this terminal";
 var GLYPHS = "\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550\u2551\u2192\u2190\u25BA\u25C4\u25B2\u25BC\u2713\u2717\u25CF\u25CB\u2588\u258F\u25A0\u25A1\xB7";
 var HINT = [
@@ -103109,6 +103126,20 @@ var HINT = [
     `At most ${FIGURE_MAX_COLUMNS} columns and ${FIGURE_MAX_LINES} lines, glyphs one column wide such as ${GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text. Draw a time axis with edge ticks like \u258F\u2500\u2500\u2500\u258F\u2500\u2500\u2500\u258F, not \u251C\u253C\u2524: \u2588 fills its cell, \u251C\u253C\u2524 sit mid-cell.`
   ].join(" ")
 ].join("\n");
+var isObj2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function prismantisHints(settings) {
+  const plugins = isObj2(settings?.enabledPlugins) ? settings.enabledPlugins : {};
+  return Object.entries(plugins).some(([key, on]) => {
+    if (!key.startsWith("prismantis@") || on !== true) return false;
+    const o = settings.pluginConfigs?.[key]?.options;
+    return !(isObj2(o) && (o.enabled === false || o.mermaid === false || o.diagramHints === false));
+  });
+}
+function hooksSpeak(settingsText) {
+  const r2 = readSettings(settingsText);
+  if (!r2.ok || !r2.settings || prismantisHints(r2.settings)) return false;
+  return Object.values(r2.settings.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).some((h2) => typeof h2?.command === "string" && h2.command.includes(HINT_MARK));
+}
 
 // src/shared/render/transcript.js
 var parse = (line) => {
@@ -103272,7 +103303,7 @@ function readClaude(lines) {
 }
 var REACH_PROMPTS = 3;
 var NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
-var hintIn = (content) => (Array.isArray(content) ? content : [content]).some((c) => typeof c === "string" && c.includes(HINT_PHRASE));
+var hintIn = (a) => a?.type !== "queued_command" && JSON.stringify(a ?? null).includes(HINT_PHRASE);
 function hintReach(lines) {
   const got = [];
   let hinted = false;
@@ -103280,12 +103311,12 @@ function hintReach(lines) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
     if (o.type === "attachment") {
-      if (o.attachment?.type === "hook_additional_context" && hintIn(o.attachment.content)) hinted = true;
+      if (hintIn(o.attachment)) hinted = true;
       continue;
     }
     if (o.type !== "user" || o.isMeta) continue;
     const text = userText(o.message?.content);
-    if (text == null || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
+    if (text == null || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
     got.push(hinted);
     hinted = false;
   }
@@ -103485,6 +103516,16 @@ function prune(cacheDir, options) {
   }
   return n;
 }
+function reach(lines) {
+  const r2 = hintReach(lines);
+  if (r2.state !== "silent") return r2;
+  let text = null;
+  try {
+    text = readFileSync(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json"), "utf8");
+  } catch {
+  }
+  return hooksSpeak(text) ? r2 : { ...r2, state: "unknown" };
+}
 function main(req) {
   const out2 = run2(req);
   if (req?.cacheDir && ["claude", "codex", "file"].includes(req.mode)) prune(req.cacheDir);
@@ -103496,7 +103537,7 @@ function run2(req) {
       return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
     case "claude": {
       const lines = readText(req.transcript, MAX_LOG).split("\n");
-      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: hintReach(lines) });
+      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: reach(lines) });
     }
     case "codex": {
       const home = req.codexHome || join(homedir(), ".codex");

@@ -161,10 +161,12 @@ export function readClaude(lines) {
 // Whether a Claude Code session's last typed prompts got Render's hint: Claude Code logs each hint it hands Claude as
 // a hook_additional_context attachment after the prompt. Read from the log's end, at most REACH_PROMPTS prompts.
 // "ok": the newest got it; "silent": the newest 2 both didn't; else "unknown" (too few prompts, or a single miss).
-// Slash and ! commands may not run prompt hooks, and queued messages and task notifications don't: none counts.
+// Slash and ! commands may not run prompt hooks, and queued messages, task notifications and interruptions aren't
+// typed: none counts. A hint is the phrase in any attachment but a queued message (not tied to one shape or name, so a
+// change in how Claude Code logs it can't make every session look silent).
 const REACH_PROMPTS = 3;
 const NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
-const hintIn = (content) => (Array.isArray(content) ? content : [content]).some((c) => typeof c === "string" && c.includes(HINT_PHRASE));
+const hintIn = (a) => a?.type !== "queued_command" && JSON.stringify(a ?? null).includes(HINT_PHRASE);
 
 export function hintReach(lines) {
   const got = []; // newest first
@@ -173,12 +175,12 @@ export function hintReach(lines) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
     if (o.type === "attachment") {
-      if (o.attachment?.type === "hook_additional_context" && hintIn(o.attachment.content)) hinted = true;
+      if (hintIn(o.attachment)) hinted = true;
       continue;
     }
     if (o.type !== "user" || o.isMeta) continue;
     const text = userText(o.message?.content);
-    if (text == null || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
+    if (text == null || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") continue;
     got.push(hinted);
     hinted = false;
   }

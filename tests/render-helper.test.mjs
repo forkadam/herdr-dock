@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 const HELPER = join(import.meta.dirname, "..", "src", "app", "render-helper.js");
 const FIX = join(import.meta.dirname, "fixtures", "render");
 const THEME = { background: "#1e1f22", foreground: "#d4d4d8", muted: "#8b8d94", border: "#3f4147", accent: "#7aa2f7", dark: true };
-const run = (req) => {
-  const r = spawnSync(process.execPath, [HELPER, JSON.stringify(req)], { encoding: "utf8", timeout: 60000 });
+const run = (req, env = {}) => {
+  const r = spawnSync(process.execPath, [HELPER, JSON.stringify(req)], { encoding: "utf8", timeout: 60000, env: { ...process.env, ...env } });
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout);
 };
@@ -246,14 +246,25 @@ test("claude: footnotes across a mid-turn marker are numbered once and noted at 
 test("claude: says whether the session's last prompts got Render's hint; codex answers don't", () => {
   const x = home();
   try {
-    const plain = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") });
+    // Claude Code's settings as the hook reads them: our hooks in, prismantis off.
+    const claude = join(x.h, "claude");
+    mkdirSync(claude);
+    const hook = { hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: 'node "/x/herdr-hint.mjs" prompt' }] }] } };
+    const settings = (o) => { writeFileSync(join(claude, "settings.json"), JSON.stringify(o)); return { CLAUDE_CONFIG_DIR: claude }; };
+    const plain = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") }, settings(hook));
     assert.equal(plain.hints.state, "silent");
     assert.equal(plain.hints.checked, 3);
+    // The hook is quiet by design (no hooks, prismantis on, settings that don't parse): not "silent", read afresh each time.
+    const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") };
+    assert.equal(run(req, settings({})).hints.state, "unknown");
+    assert.equal(run(req, settings({ ...hook, enabledPlugins: { "prismantis@prismantis": true } })).hints.state, "unknown");
+    writeFileSync(join(claude, "settings.json"), "{ nope");
+    assert.equal(run(req, { CLAUDE_CONFIG_DIR: claude }).hints.state, "unknown");
     const p = (uuid, text) => JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } });
     const hint = JSON.stringify({ type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "UserPromptSubmit", content: ["The Render panel beside this terminal draws ```mermaid."] } });
     const file = join(x.h, "hinted.jsonl");
     writeFileSync(file, [p("u1", "first"), hint, p("u2", "second"), hint].join("\n") + "\n");
-    assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }).hints, { state: "ok", checked: 2 });
+    assert.deepEqual(run({ ...x.base, mode: "claude", transcript: file }, settings(hook)).hints, { state: "ok", checked: 2 });
     const codex = run({ ...x.base, mode: "codex", cwd: "/nowhere", codexHome: join(x.h, "no-codex") });
     assert.equal(codex.hints, undefined);
   } finally { x.done(); }

@@ -31,6 +31,7 @@ import { mermaidColors, paintDiagram } from "../shared/render/paint.js";
 import { decideFigure, figureSvg } from "../shared/render/figure.js";
 import { codexCwd, exchangeRow, hintReach, readClaude, readCodex, replyText } from "../shared/render/transcript.js";
 import { slashPath } from "../shared/path.js";
+import { hooksSpeak } from "../shared/render/hints.js";
 
 const MAX_LOG = 64 * 1024 * 1024; // a session log bigger than this is read from its last 64 MB
 const MAX_FILE = 2 * 1024 * 1024;
@@ -181,6 +182,16 @@ function prune(cacheDir, options) {
   return n;
 }
 
+// hintReach, with "silent" only while the settings let the hooks speak (read now, as the hook reads them on each
+// prompt: prismantis turned on or the hooks removed since make a quiet session expected, not a fault).
+function reach(lines) {
+  const r = hintReach(lines);
+  if (r.state !== "silent") return r;
+  let text = null;
+  try { text = readFileSync(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json"), "utf8"); } catch {}
+  return hooksSpeak(text) ? r : { ...r, state: "unknown" };
+}
+
 function main(req) {
   const out = run(req);
   // After each read, the cache is tidied (unused for 14 days, past the newest 300): cheap, a folder listing.
@@ -194,7 +205,7 @@ function run(req) {
       return { ok: true, removed: req.cacheDir ? prune(req.cacheDir, { maxAgeMs: 0 }) : 0 };
     case "claude": {
       const lines = readText(req.transcript, MAX_LOG).split("\n");
-      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: hintReach(lines) });
+      return fromLog(readClaude, lines, req, { source: "claude", file: req.transcript, hints: reach(lines) });
     }
     case "codex": {
       const home = req.codexHome || join(homedir(), ".codex");
