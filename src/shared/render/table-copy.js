@@ -3,6 +3,8 @@
 // width, wrapRanges, columnWidths and tableArt are ported from prismantis 0.20.0 (hooks/render.tsx), and tableText
 // from its hooks/html.ts: https://github.com/NahumLitvin/prismantis (MIT).
 
+import { columnWidths } from "./columns.js";
+
 const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}\u20E3]|\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
 const segmenter = new Intl.Segmenter();
 const graphemes = (s) => [...segmenter.segment(s)].map((g) => g.segment);
@@ -58,35 +60,6 @@ function wrapRanges(text, w) {
 
 const longestWord = (text) => Math.max(0, ...text.split(/\s+/).map(width));
 
-// Column widths that fit `available` columns with `gap` between them: natural when they fit, else the narrow ones
-// keep theirs and the rest share what's left (never below a column's longest word when that fits).
-function columnWidths(natural, available, gap, words = []) {
-  const room = Math.max(natural.length, available - gap * (natural.length - 1));
-  const total = natural.reduce((a, b) => a + b, 0);
-  if (total <= room) return natural;
-  const minimum = natural.map((w, c) => Math.min(w, Math.max(1, words[c] ?? 1)));
-  const widths = natural.map(() => 0);
-  let open = natural.map((_, c) => c);
-  let left = room;
-  for (let fixed = [-1]; fixed.length;) {
-    const share = Math.floor(left / open.length);
-    const claim = (c) => (natural[c] <= share ? natural[c] : minimum[c]);
-    const minimumsFit = open.reduce((a, c) => a + minimum[c], 0) <= left;
-    const needed = open.reduce((a, c) => a + claim(c), 0);
-    fixed = open.filter((c) => natural[c] <= share);
-    if (minimumsFit && (!fixed.length || needed > left)) fixed = open.filter((c) => minimum[c] > share);
-    fixed.forEach((c) => { widths[c] = claim(c); left -= widths[c]; });
-    open = open.filter((c) => !fixed.includes(c));
-  }
-  open.forEach((c, i) => { widths[c] = Math.max(1, Math.floor(left / open.length) + (i < left % open.length ? 1 : 0)); });
-  while (widths.reduce((a, b) => a + b, 0) > room) {
-    const widest = widths.indexOf(Math.max(...widths));
-    if (widths[widest] <= 1) break;
-    widths[widest]--;
-  }
-  return widths;
-}
-
 // The plain text of marked inline tokens: markup gone, escapes as their character, a link as "text (address)" (as
 // prismantis's displayText) or just its address when that is its text.
 export function cellText(tokens) {
@@ -97,6 +70,13 @@ export function cellText(tokens) {
 }
 
 const rowsOf = (token) => [token.header, ...token.rows].map((r) => token.header.map((_, c) => cellText(r[c]?.tokens).replace(/\s+/g, " ").trim()));
+
+// Per column: the widest cell's display width and the longest word's (for columnWidths, in the panel's grid too).
+export function tableSizes(token) {
+  const cells = rowsOf(token);
+  const column = (measure) => token.header.map((_, c) => Math.max(0, ...cells.map((r) => measure(r[c]))));
+  return { natural: column(width), words: column(longestWord) };
+}
 
 const ART_WIDTH = 100;
 

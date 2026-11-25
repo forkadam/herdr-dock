@@ -4,11 +4,16 @@
 // md / art / html, copy on code, lists, quotes and alerts, copy source on a picture, copy md / copy html on a reply.
 //
 // Button: { label, text, html? }   (html only on a formatted copy; text is then its plain side)
+// Every block also carries `bytes` (its Markdown's UTF-8 length, for the panel's budget) and what the panel draws:
+// text `parts` (headings, paragraphs as runs, rules, HTML as text), list `items` (marker + blocks), quote and alert
+// `blocks`, table `header` / `rows` (runs) / `align` / `natural` / `words`, code `lines` (coloured runs).
 // Block:  { kind: "text" | "table" | "code" | "list" | "quote" | "alert", md, lang?, alert?, buttons }
 //       | { kind: "mermaid" | "figure", source, id, buttons }
 import { marked } from "marked";
 import { splitSegments } from "./markdown.js";
-import { tableArt, tableText } from "./table-copy.js";
+import { tableArt, tableSizes, tableText } from "./table-copy.js";
+import { inlineRuns } from "./runs.js";
+import { codeLines } from "./code-colour.js";
 
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
 const OPTIONS = { gfm: true };
@@ -20,45 +25,78 @@ function fenced(code, lang) {
   return `${fence}${lang}\n${code}\n${fence}`;
 }
 
-function mdBlocks(text) {
+const bytes = (s) => new TextEncoder().encode(String(s ?? "")).length;
+const withBytes = (b) => ({ ...b, bytes: bytes(b.kind === "mermaid" || b.kind === "figure" ? b.source : b.md) });
+
+// A text token -> what the panel draws for it (null: nothing to draw, e.g. blank space or a link definition).
+function textPart(token) {
+  switch (token.type) {
+    case "heading": return { type: "heading", level: token.depth, runs: inlineRuns(token.tokens) };
+    case "paragraph": return { type: "para", runs: inlineRuns(token.tokens) };
+    case "text": return { type: "para", runs: inlineRuns(token.tokens ?? [{ type: "text", text: token.text }]) };
+    case "hr": return { type: "rule" };
+    case "html": { const text = String(token.raw ?? "").trim(); return text ? { type: "html", text } : null; }
+    default: return null;
+  }
+}
+
+const listMarker = (list, item, i) => (item.task ? (item.checked ? "☑" : "☐")
+  : list.ordered ? `${(list.start === "" || list.start == null ? 1 : Number(list.start)) + i}.` : "•");
+
+// marked block tokens -> Block[] (used for a reply and, recursively, for list items, quotes and alerts).
+function tokenBlocks(tokens) {
   const out = [];
   let run = "";
+  let parts = [];
   const flush = () => {
     const md = run.trim();
-    if (md) out.push({ kind: "text", md, buttons: [] });
+    if (md || parts.length) out.push(withBytes({ kind: "text", md, parts, buttons: md ? [{ label: "copy", text: md }] : [] }));
     run = "";
+    parts = [];
   };
-  for (const token of marked.lexer(text, OPTIONS)) {
+  for (const token of tokens) {
     const raw = String(token.raw ?? "");
     if (token.type === "table") {
       flush();
-      out.push({
+      out.push(withBytes({
         kind: "table", md: raw.trim(),
+        header: token.header.map((c) => inlineRuns(c.tokens)),
+        rows: token.rows.map((r) => r.map((c) => inlineRuns(c.tokens))),
+        align: token.align.map((a) => a ?? null),
+        ...tableSizes(token),
         buttons: [
           { label: "md", text: raw.trim() },
           { label: "art", text: tableArt(token) },
           { label: "html", text: tableText(token), html: marked.parser([token], OPTIONS) },
         ],
-      });
+      }));
     } else if (token.type === "code") {
       flush();
       const lang = String(token.lang ?? "").trim().split(/\s+/)[0];
-      out.push({ kind: "code", md: fenced(token.text, lang), lang, buttons: [{ label: "copy", text: token.text }] });
+      out.push(withBytes({ kind: "code", md: fenced(token.text, lang), lang, lines: codeLines(token.text, lang), buttons: [{ label: "copy", text: token.text }] }));
     } else if (token.type === "list") {
       flush();
-      out.push({ kind: "list", md: raw.trim(), buttons: [{ label: "copy", text: raw.trim() }] });
+      out.push(withBytes({
+        kind: "list", md: raw.trim(), buttons: [{ label: "copy", text: raw.trim() }],
+        items: token.items.map((item, i) => ({
+          marker: listMarker(token, item, i),
+          blocks: tokenBlocks((item.tokens ?? []).filter((x) => x.type !== "checkbox")),
+        })),
+      }));
     } else if (token.type === "blockquote") {
       flush();
       const body = String(token.text ?? "");
       const alert = ALERT.exec(body);
       if (alert) {
         const md = body.slice(alert[0].length).trim();
-        out.push({ kind: "alert", alert: alert[1].toLowerCase(), md, buttons: [{ label: "copy", text: md }] });
+        out.push(withBytes({ kind: "alert", alert: alert[1].toLowerCase(), md, blocks: tokenBlocks(marked.lexer(md, OPTIONS)), buttons: [{ label: "copy", text: md }] }));
       } else {
-        out.push({ kind: "quote", md: raw.trim(), buttons: [{ label: "copy", text: body.trim() }] });
+        out.push(withBytes({ kind: "quote", md: raw.trim(), blocks: tokenBlocks(token.tokens ?? []), buttons: [{ label: "copy", text: body.trim() }] }));
       }
     } else {
       run += raw; // paragraphs, headings, rules, HTML, blank space: one stretch of text
+      const part = textPart(token);
+      if (part) parts.push(part);
     }
   }
   flush();
@@ -67,8 +105,8 @@ function mdBlocks(text) {
 
 // Text -> Block[], in order.
 export function toBlocks(text) {
-  return splitSegments(text).flatMap((seg) => (seg.kind === "md" ? mdBlocks(seg.text)
-    : [{ kind: seg.kind, source: seg.source, id: seg.id, buttons: [{ label: "copy source", text: seg.source }] }]));
+  return splitSegments(text).flatMap((seg) => (seg.kind === "md" ? tokenBlocks(marked.lexer(seg.text, OPTIONS))
+    : [withBytes({ kind: seg.kind, source: seg.source, id: seg.id, buttons: [{ label: "copy source", text: seg.source }] })]));
 }
 
 // A whole reply's buttons: copy md (as written) and copy html (marked's HTML, the Markdown as its plain side).

@@ -5,15 +5,16 @@ import { marked } from "marked";
 import { toBlocks, replyButtons } from "../src/shared/render/blocks.js";
 import { tableArt, tableText, width } from "../src/shared/render/table-copy.js";
 import { blockId } from "../src/shared/render/markdown.js";
+import { columnWidths } from "../src/shared/render/columns.js";
 
 const ALL = "# Title\n\nIntro para.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- one\n- two\n\n> quoted\n> more\n\n> [!WARNING]\n> Careful now\n\n```js\nconst x = 1;\n```\n\n```mermaid\ngraph TD\n A-->B\n```\n\nEnd.";
 const labels = (b) => b.buttons.map((x) => x.label);
 
-test("toBlocks: kinds in order; consecutive text merges and has no buttons", () => {
+test("toBlocks: kinds in order; consecutive text merges and has a copy button", () => {
   const b = toBlocks(ALL);
   assert.deepEqual(b.map((x) => x.kind), ["text", "table", "list", "quote", "alert", "code", "mermaid", "text"]);
   assert.equal(b[0].md, "# Title\n\nIntro para.");
-  assert.deepEqual(b[0].buttons, []);
+  assert.deepEqual(b[0].buttons, [{ label: "copy", text: "# Title\n\nIntro para." }]);
   assert.equal(b[7].md, "End.");
 });
 
@@ -109,4 +110,43 @@ test("art and TSV keep a link's address after its text (as prismantis does); a b
   const tok = marked.lexer("| a |\n|---|\n| [docs](http://x/y) |\n| <http://z> |")[0];
   assert.equal(tableText(tok), "a\ndocs (http://x/y)\nhttp://z");
   assert.match(tableArt(tok), /docs \(http:\/\/x\/y\)/);
+});
+
+test("drawn content: headings, paragraphs and rules as parts with runs; a text block gets copy", () => {
+  const [b] = toBlocks("# Deploy\n\nMain at **6b1**.\n\n---");
+  assert.deepEqual(b.parts.map((p) => p.type), ["heading", "para", "rule"]);
+  assert.equal(b.parts[0].level, 1);
+  assert.deepEqual(b.parts[1].runs.find((r) => r.bold), { text: "6b1", role: "strong", bold: true });
+  assert.deepEqual(b.buttons, [{ label: "copy", text: b.md }]);
+  assert.equal(b.bytes, Buffer.byteLength(b.md));
+});
+
+test("drawn content: lists nest, number from their start, tick tasks, keep code in an item", () => {
+  const [l] = toBlocks("3. a\n4. b\n   - c\n\n     ```sh\n     ls\n     ```");
+  assert.deepEqual(l.items.map((i) => i.marker), ["3.", "4."]);
+  const inner = l.items[1].blocks;
+  assert.equal(inner.find((x) => x.kind === "list").items[0].marker, "•");
+  assert.ok(JSON.stringify(inner).includes('"kind":"code"'));
+  assert.deepEqual(toBlocks("- [x] done\n- [ ] todo")[0].items.map((i) => i.marker), ["☑", "☐"]);
+  assert.equal(JSON.stringify(toBlocks("- [x] done")[0].items[0].blocks).includes("[x]"), false);
+});
+
+test("drawn content: quotes and alerts hold blocks; tables carry runs, alignment and widths; code carries lines", () => {
+  assert.equal(toBlocks("> a **b**")[0].blocks[0].parts[0].runs[1].role, "strong");
+  assert.equal(toBlocks("> [!NOTE]\n> x")[0].blocks[0].kind, "text");
+  const [t] = toBlocks("| Step | Time |\n|---|--:|\n| Push | 3s |");
+  assert.deepEqual(t.header.map((c) => c.map((r) => r.text).join("")), ["Step", "Time"]);
+  assert.deepEqual(t.rows[0][1], [{ text: "3s", role: "number" }]);
+  assert.deepEqual(t.align, [null, "right"]);
+  assert.deepEqual(t.natural, [4, 4]);
+  assert.equal(toBlocks("```js\nlet a = 1\n```")[0].lines[0][0].role, "keyword");
+});
+
+test("streaming input never throws: unclosed fence, half a table, an item cut mid-word", () => {
+  for (const s of ["```js\nlet a", "| a | b |\n|--", "- ite", "> [!WARN", "**bo"]) assert.doesNotThrow(() => toBlocks(s), s);
+});
+
+test("columnWidths moved to columns.js, same results", () => {
+  assert.deepEqual(columnWidths([4, 6], 96, 3), [4, 6]);
+  assert.deepEqual(columnWidths([14, 199], 93, 3, [14, 4]).reduce((a, b) => a + b), 90);
 });
