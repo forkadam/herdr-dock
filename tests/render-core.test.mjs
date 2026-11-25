@@ -288,3 +288,11 @@ test("hintReach: a hint after a turn that isn't counted isn't credited to the pr
   const META = JSON.stringify({ type: "user", isMeta: true, message: { content: "skill text" } });
   assert.equal(hintReach([P("a"), META, H()]).state, "ok");
 });
+
+test("hintReach: a peer message's hint isn't the typed prompt's; the newest prompt's time comes back when logged", () => {
+  const PEER = JSON.stringify({ type: "user", isMeta: true, origin: { kind: "peer" }, message: { content: "a message from another session" } });
+  assert.equal(hintReach([P("a"), P("b"), PEER, H()]).state, "silent");
+  const at = JSON.stringify({ type: "user", timestamp: "2026-11-25T14:00:00.000Z", message: { role: "user", content: "timed" } });
+  assert.equal(hintReach([P("a"), at]).at, Date.parse("2026-11-25T14:00:00.000Z"));
+  assert.equal("at" in hintReach([P("a")]), false);
+});

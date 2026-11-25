@@ -161,17 +161,21 @@ export function readClaude(lines) {
 // Whether a Claude Code session's last typed prompts got Render's hint: Claude Code logs each hint it hands Claude as
 // a hook_additional_context attachment after the prompt. Read from the log's end, at most REACH_PROMPTS prompts.
 // "ok": the newest got it; "silent": the newest 2 both didn't; else "unknown" (too few prompts, or a single miss).
+// `at`: when the newest was typed (ms), when the log says.
 // Slash and ! commands may not run prompt hooks, and queued messages, task notifications, interruptions and compaction
 // summaries aren't typed: none counts, and a hint after one is its own (Claude Code logs a prompt's hint right after
 // it), not the prompt's before. A hint is the phrase in any attachment but a queued message (not tied to one shape or name, so a
 // change in how Claude Code logs it can't make every session look silent).
 const REACH_PROMPTS = 3;
 const NOT_TYPED = /^<(command-name|command-message|bash-input)>/;
+// Any shape counts, so a file attachment quoting the phrase (an @-mention or an edit of herdr-dock's own source) reads
+// as a hint: that can only hide a fault, never show a false row.
 const hintIn = (a) => JSON.stringify(a ?? null).includes(HINT_PHRASE);
 
 export function hintReach(lines) {
   const got = []; // newest first
   let hinted = false; // a hint after the line being read, before the next typed prompt
+  let at = null;
   for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
@@ -180,18 +184,21 @@ export function hintReach(lines) {
       else if (hintIn(o.attachment)) hinted = true;
       continue;
     }
-    if (o.type !== "user" || o.isMeta) continue;
+    if (o.type !== "user") continue;
+    // A message from another session (meta, not a person's) gets a hint of its own: not the prompt's before it.
+    if (o.isMeta) { if (o.origin?.kind && o.origin.kind !== "human") hinted = false; continue; }
     const text = userText(o.message?.content);
     if (text == null) continue;
     if (o.isCompactSummary || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") {
       hinted = false;
       continue;
     }
+    if (!got.length) at = time(o.timestamp);
     got.push(hinted);
     hinted = false;
   }
   const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
-  return { state, checked: got.length };
+  return { state, checked: got.length, ...(at != null ? { at } : {}) };
 }
 
 // A Codex rollout (~/.codex/sessions/**/rollout-*.jsonl). Codex adds its own context as user messages

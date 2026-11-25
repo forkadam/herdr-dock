@@ -183,13 +183,16 @@ function prune(cacheDir, options) {
 }
 
 // hintReach, with "silent" only while the settings let the hooks speak (read now, as the hook reads them on each
-// prompt: prismantis turned on or the hooks removed since make a quiet session expected, not a fault).
+// prompt: prismantis turned on or the hooks removed since make a quiet session expected, not a fault), and were in
+// place when the newest prompt was typed (settings changed since, say hints just set up: too early to say).
 function reach(lines) {
   const r = hintReach(lines);
   if (r.state !== "silent") return r;
-  let text = null;
-  try { text = readFileSync(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json"), "utf8"); } catch {}
-  return hooksSpeak(text) ? r : { ...r, state: "unknown" };
+  const file = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json");
+  let text = null, changed = null;
+  try { text = readFileSync(file, "utf8"); changed = statSync(file).mtimeMs; } catch {}
+  const quiet = !hooksSpeak(text) || (r.at != null && changed != null && changed > r.at);
+  return quiet ? { ...r, state: "unknown" } : r;
 }
 
 function main(req) {

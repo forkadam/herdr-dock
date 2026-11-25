@@ -103258,6 +103258,7 @@ var hintIn = (a) => JSON.stringify(a ?? null).includes(HINT_PHRASE);
 function hintReach(lines) {
   const got = [];
   let hinted = false;
+  let at2 = null;
   for (let i = (lines?.length ?? 0) - 1; i >= 0 && got.length < REACH_PROMPTS; i--) {
     const o = parse(lines[i]);
     if (!o || o.isSidechain) continue;
@@ -103266,18 +103267,23 @@ function hintReach(lines) {
       else if (hintIn(o.attachment)) hinted = true;
       continue;
     }
-    if (o.type !== "user" || o.isMeta) continue;
+    if (o.type !== "user") continue;
+    if (o.isMeta) {
+      if (o.origin?.kind && o.origin.kind !== "human") hinted = false;
+      continue;
+    }
     const text = userText(o.message?.content);
     if (text == null) continue;
     if (o.isCompactSummary || TURN_ENDS.test(text) || NOT_TYPED.test(text.trimStart()) || speaker(text, o.origin?.kind ?? null, null)?.by !== "you") {
       hinted = false;
       continue;
     }
+    if (!got.length) at2 = time(o.timestamp);
     got.push(hinted);
     hinted = false;
   }
   const state = got[0] ? "ok" : got.length >= 2 && !got[1] ? "silent" : "unknown";
-  return { state, checked: got.length };
+  return { state, checked: got.length, ...at2 != null ? { at: at2 } : {} };
 }
 function readCodex(lines) {
   const events = [];
@@ -103358,7 +103364,7 @@ function prismantisHints(settings) {
 }
 function hooksSpeak(settingsText) {
   const r2 = readSettings(settingsText);
-  if (!r2.ok || !r2.settings || prismantisHints(r2.settings)) return false;
+  if (!r2.ok || !r2.settings || r2.settings.disableAllHooks === true || prismantisHints(r2.settings)) return false;
   return Object.values(r2.settings.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? []).some((h2) => typeof h2?.command === "string" && h2.command.includes(HINT_MARK));
 }
 
@@ -103526,12 +103532,15 @@ function prune(cacheDir, options) {
 function reach(lines) {
   const r2 = hintReach(lines);
   if (r2.state !== "silent") return r2;
-  let text = null;
+  const file = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json");
+  let text = null, changed = null;
   try {
-    text = readFileSync(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json"), "utf8");
+    text = readFileSync(file, "utf8");
+    changed = statSync(file).mtimeMs;
   } catch {
   }
-  return hooksSpeak(text) ? r2 : { ...r2, state: "unknown" };
+  const quiet = !hooksSpeak(text) || r2.at != null && changed != null && changed > r2.at;
+  return quiet ? { ...r2, state: "unknown" } : r2;
 }
 function main(req) {
   const out2 = run2(req);

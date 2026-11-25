@@ -250,7 +250,13 @@ test("claude: says whether the session's last prompts got Render's hint; codex a
     const claude = join(x.h, "claude");
     mkdirSync(claude);
     const hook = { hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: 'node "/x/herdr-hint.mjs" prompt' }] }] } };
-    const settings = (o) => { writeFileSync(join(claude, "settings.json"), JSON.stringify(o)); return { CLAUDE_CONFIG_DIR: claude }; };
+    // Written well before the fixture's prompts (2026-11-23), as settings that were in place when they were typed.
+    const settings = (o, when = new Date("2026-01-01T00:00:00Z")) => {
+      const file = join(claude, "settings.json");
+      writeFileSync(file, JSON.stringify(o));
+      utimesSync(file, when, when);
+      return { CLAUDE_CONFIG_DIR: claude };
+    };
     const plain = run({ ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") }, settings(hook));
     assert.equal(plain.hints.state, "silent");
     assert.equal(plain.hints.checked, 3);
@@ -258,6 +264,9 @@ test("claude: says whether the session's last prompts got Render's hint; codex a
     const req = { ...x.base, mode: "claude", transcript: join(FIX, "claude-conversation.jsonl") };
     assert.equal(run(req, settings({})).hints.state, "unknown");
     assert.equal(run(req, settings({ ...hook, enabledPlugins: { "prismantis@prismantis": true } })).hints.state, "unknown");
+    // Settings changed after the newest prompt (hints just set up, prismantis just turned off): those prompts followed
+    // the old ones, so it's too early to say.
+    assert.equal(run(req, settings(hook, new Date())).hints.state, "unknown");
     writeFileSync(join(claude, "settings.json"), "{ nope");
     assert.equal(run(req, { CLAUDE_CONFIG_DIR: claude }).hints.state, "unknown");
     const p = (uuid, text) => JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } });

@@ -54,10 +54,11 @@ export function prismantisHints(settings) {
 const EVENTS = { session: "SessionStart", prompt: "UserPromptSubmit" };
 
 // Whether Claude Code's settings (text, or null when missing) let our hooks speak: they parse, hold a hook of ours,
-// and prismantis's own hints are off. Else the hooks are quiet by design, and a session without hints isn't a fault.
+// prismantis's own hints are off, and hooks aren't switched off (disableAllHooks). Else the hooks are quiet by design,
+// and a session without hints isn't a fault.
 export function hooksSpeak(settingsText) {
   const r = readSettings(settingsText);
-  if (!r.ok || !r.settings || prismantisHints(r.settings)) return false;
+  if (!r.ok || !r.settings || r.settings.disableAllHooks === true || prismantisHints(r.settings)) return false;
   return Object.values(r.settings.hooks ?? {}).flat().flatMap((g) => g?.hooks ?? [])
     .some((h) => typeof h?.command === "string" && h.command.includes(HINT_MARK));
 }

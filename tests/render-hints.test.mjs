@@ -42,6 +42,8 @@ test("hooksSpeak: settings that parse, with our hook in them and prismantis's hi
   assert.equal(hooksSpeak(ours()), true);
   assert.equal(hooksSpeak("﻿" + ours()), true);
   assert.equal(hooksSpeak(ours(JSON.parse(PRISM()))), false);
+  assert.equal(hooksSpeak(ours({ disableAllHooks: true })), false);
+  assert.equal(hooksSpeak(ours({ disableAllHooks: false })), true);
   for (const t of [null, "{}", "{ broken", JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ command: "echo mine" }] }] } })]) assert.equal(hooksSpeak(t), false, String(t));
 });
 
