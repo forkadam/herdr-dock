@@ -445,3 +445,58 @@ test("createChangesSync keeps watch-triggered refreshes at least MIN_GAP_MS apar
   assert.equal(MIN_GAP_MS, 500);
   sync.close();
 });
+
+// ---- The branch it follows, and the branch view ----
+import { parsePorcelainStatus as parseStatus, fetchChanges as fetchBranch } from "../src/shared/changes.js";
+
+test("parsePorcelainStatus: the ## header gives the branch and isn't a file", () => {
+  const a = parseStatus("## feat...origin/feat\0 M a.js\0", {});
+  assert.equal(a.branch, "feat");
+  assert.deepEqual(a.files.map((f) => f.path), ["a.js"]);
+  assert.equal(parseStatus("## HEAD (no branch)\0", {}).branch, null);
+  const fresh = parseStatus("## No commits yet on main\0?? x\0", {});
+  assert.equal(fresh.branch, "main");
+  assert.deepEqual(fresh.files.map((f) => f.path), ["x"]);
+});
+
+// A fake git: `branch` checked out; refs: which local branches exist; originHead: origin/HEAD's target (or null).
+const fakeGit = ({ branch = "feat", refs = ["main"], originHead = "origin/main" } = {}) => async (_cmd, args) => {
+  const has = (x) => args.includes(x);
+  if (has("--show-toplevel")) return { code: 0, stdout: "/repo\n/repo/.git\n", stderr: "" };
+  if (has("status")) return { code: 0, stdout: `## ${branch}...origin/${branch}\0 M a.js\0?? n.js\0`, stderr: "" };
+  if (has("symbolic-ref")) return originHead ? { code: 0, stdout: `${originHead}\n`, stderr: "" } : { code: 1, stdout: "", stderr: "" };
+  if (has("--verify")) { const ref = args.at(-1).replace("refs/heads/", ""); return { code: refs.includes(ref) ? 0 : 1, stdout: "", stderr: "" }; }
+  if (has("merge-base")) return { code: 0, stdout: "abc123\n", stderr: "" };
+  if (has("diff") && has("abc123") && has("--name-status")) return { code: 0, stdout: "M\0a.js\0A\0b.js\0", stderr: "" };
+  if (has("diff") && has("abc123")) return { code: 0, stdout: "4\t1\ta.js\0" + "10\t0\tb.js\0", stderr: "" };
+  if (has("diff") && has("HEAD")) return { code: 0, stdout: "4\t1\ta.js\0", stderr: "" };
+  throw new Error(`unexpected: ${args.join(" ")}`);
+};
+
+test("fetchChanges: uncommitted view reports the branch it follows", async () => {
+  const r = await fetchBranch({ exec: fakeGit(), cwd: "/repo", on: null });
+  assert.equal(r.branch, "feat");
+  assert.deepEqual(r.files.map((f) => f.path).sort(), ["a.js", "n.js"]);
+});
+
+test("fetchChanges branch view: committed and uncommitted since the merge base, plus untracked", async () => {
+  const r = await fetchBranch({ exec: fakeGit(), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(r.base, "main");
+  assert.equal(r.mergeBase, "abc123");
+  assert.equal(r.onBase, false);
+  const by = Object.fromEntries(r.files.map((f) => [f.path, [f.status, f.add, f.del, f.fresh]]));
+  assert.deepEqual(by, { "a.js": ["M", 4, 1, false], "b.js": ["A", 10, 0, false], "n.js": ["A", 0, 0, true] });
+});
+
+test("fetchChanges branch view: on the default branch there's nothing to compare; base found by origin/HEAD, local first", async () => {
+  const on = await fetchBranch({ exec: fakeGit({ branch: "main" }), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(on.onBase, true);
+  assert.deepEqual(on.files, []);
+  const master = await fetchBranch({ exec: fakeGit({ refs: ["master"], originHead: null }), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(master.base, "master");
+  const remote = await fetchBranch({ exec: fakeGit({ refs: [], originHead: "origin/dev" }), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(remote.base, "origin/dev");
+  const none = await fetchBranch({ exec: fakeGit({ refs: [], originHead: null }), cwd: "/repo", on: null, mode: "branch" });
+  assert.equal(none.base, null);
+  assert.deepEqual(none.files, []);
+});

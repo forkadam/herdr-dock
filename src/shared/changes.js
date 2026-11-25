@@ -50,9 +50,20 @@ export function parseNumstat(stdout, stats = {}) {
   return stats;
 }
 
-// Parses `git status --porcelain=v1 -z --no-renames --untracked-files=all` output.
+// The branch named by `git status --branch`'s "## " entry: "main...origin/main" -> main, "No commits yet on main" ->
+// main, "HEAD (no branch)" -> null (detached).
+function headerBranch(entry) {
+  const h = entry.slice(3);
+  if (/^HEAD \(no branch\)/.test(h)) return null;
+  const fresh = /^(?:No commits yet|Initial commit) on (.+)$/.exec(h);
+  return fresh ? fresh[1] : h.split("...")[0].trim() || null;
+}
+
+// Parses `git status --porcelain=v1 -z --no-renames --untracked-files=all [--branch]` output.
 export function parsePorcelainStatus(stdout, stats = {}, limit = FILE_LIMIT) {
-  const entries = String(stdout ?? "").split("\0").filter(Boolean);
+  let entries = String(stdout ?? "").split("\0").filter(Boolean);
+  let branch = null;
+  if (entries[0]?.startsWith("## ")) { branch = headerBranch(entries[0]); entries = entries.slice(1); }
   const files = [];
   for (const entry of entries.slice(0, limit)) {
     const xy = entry.slice(0, 2), path = entry.slice(3), fresh = xy === "??";
@@ -61,7 +72,7 @@ export function parsePorcelainStatus(stdout, stats = {}, limit = FILE_LIMIT) {
     const stat = stats[path] ?? { add: 0, del: 0 };
     files.push({ path, status, fresh, ...stat });
   }
-  return { files, limited: entries.length > limit };
+  return { files, limited: entries.length > limit, branch };
 }
 
 // Resolves the repo's top-level folder and (for local repos) its absolute git dir.
@@ -78,13 +89,13 @@ export async function resolveRepo(exec, { cwd, on }) {
 
 // Reads changed files + line stats for a repo using parallel git commands.
 // Reuses cached `root`/`gitDir` when provided; if `status` fails on a cached root, re-resolves once.
-export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null }) {
+export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null, mode = "uncommitted" }) {
   let repo = root ? { root, gitDir } : await resolveRepo(exec, { cwd, on });
   if (!repo) return { notRepo: true };
 
   const runGit = (r, args) => exec("git", [...GIT_READ, ...args], { cwd: r.root, on });
   let [status, headDiff] = await Promise.all([
-    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]),
+    runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
     runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"]),
   ]);
 
@@ -92,7 +103,7 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null }
     repo = await resolveRepo(exec, { cwd, on });
     if (!repo) return { notRepo: true };
     [status, headDiff] = await Promise.all([
-      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]),
+      runGit(repo, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--branch"]),
       runGit(repo, ["diff", "HEAD", "--numstat", "-z", "--no-renames"]),
     ]);
   }
@@ -115,8 +126,52 @@ export async function fetchChanges({ exec, cwd, on, root = null, gitDir = null }
     }
   }
 
-  const { files, limited } = parsePorcelainStatus(status.stdout, stats);
-  return { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited };
+  const { files, limited, branch } = parsePorcelainStatus(status.stdout, stats);
+  const out = { notRepo: false, root: repo.root, gitDir: repo.gitDir, hasHead, files, limited, branch };
+  return mode === "branch" ? { ...out, ...(await branchView((args) => runGit(repo, args), { branch, hasHead, untracked: files.filter((f) => f.fresh) })) } : out;
+}
+
+// The repo's default branch to compare a branch with: origin/HEAD's name, as the local branch when it exists (you may
+// merge locally before pushing), else origin/<name>; without origin/HEAD, local main, then master. null: none found.
+export async function defaultBranch(runGit) {
+  const exists = async (name) => (await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])).code === 0;
+  const head = await runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (head.code === 0 && head.stdout.trim()) {
+    const remote = head.stdout.trim(), name = remote.replace(/^origin\//, "");
+    return (await exists(name)) ? name : remote;
+  }
+  for (const name of ["main", "master"]) if (await exists(name)) return name;
+  return null;
+}
+
+// Parses `git diff --name-status -z` (status\0path\0 pairs) into { path: status letter }.
+function parseNameStatus(stdout) {
+  const parts = String(stdout ?? "").split("\0").filter((x) => x !== "");
+  const out = {};
+  for (let i = 0; i + 1 < parts.length; i += 2) out[parts[i + 1]] = parts[i][0];
+  return out;
+}
+
+// The branch view: everything on this branch that isn't on the default branch yet — the working tree against the
+// merge base (committed and not), plus untracked files. On the default branch itself, or with none, no files.
+async function branchView(runGit, { branch, hasHead, untracked }) {
+  const base = await defaultBranch(runGit);
+  if (!base) return { base: null, mergeBase: null, onBase: false, files: [] };
+  if (branch && (branch === base || `origin/${branch}` === base)) return { base, mergeBase: null, onBase: true, files: [] };
+  const mb = hasHead ? await runGit(["merge-base", "HEAD", base]) : { code: 1 };
+  if (mb.code !== 0) return { base, mergeBase: null, onBase: false, files: [] };
+  const mergeBase = mb.stdout.trim();
+  const [numstat, names] = await Promise.all([
+    runGit(["diff", mergeBase, "--numstat", "-z", "--no-renames"]),
+    runGit(["diff", mergeBase, "--name-status", "-z", "--no-renames"]),
+  ]);
+  if (numstat.code !== 0) throw new Error(numstat.stderr || `git diff exited ${numstat.code}`);
+  const stats = {};
+  parseNumstat(numstat.stdout, stats);
+  const letters = parseNameStatus(names.stdout);
+  const files = Object.keys(letters).map((path) => ({ path, status: letters[path] === "D" ? "D" : letters[path] === "A" ? "A" : "M", fresh: false, ...(stats[path] ?? { add: 0, del: 0 }) }));
+  for (const f of untracked) if (!letters[f.path]) files.push(f);
+  return { base, mergeBase, onBase: false, files };
 }
 
 // Decides whether a periodic poll tick should run a refresh, and whether a previously failed
