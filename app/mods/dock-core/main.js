@@ -1014,7 +1014,7 @@ function createCollector(io) {
     prev: void 0,
     retryError: null,
     full: false
-    // whether the last completed poll was a full one (jobs and log lines)
+    // whether the last poll attempted was a full one (jobs and log lines), whatever its outcome
   });
   const headOf = (wt, w) => wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head };
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
@@ -1042,6 +1042,8 @@ function createCollector(io) {
   async function pollCi(wt, repo, origin, w, now) {
     const ci = wt.ci;
     ci.busy = true;
+    const full = watched(wt.id);
+    ci.full = full;
     try {
       const login = await client.resolve(origin.host);
       Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
@@ -1050,7 +1052,6 @@ function createCollector(io) {
       const head = headOf(wt, w);
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
-      const full = watched(wt.id);
       const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (!got.ok) {
         log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
@@ -1060,7 +1061,7 @@ function createCollector(io) {
       const cur = got.pipeline;
       const was = ci.pipeline;
       if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
-      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true, full });
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? void 0;
     } finally {
@@ -1354,6 +1355,7 @@ function createCollector(io) {
     client.reset();
   }
   async function select(id) {
+    if (wtRecs.has(selected) && selected !== (id ?? null)) wtRecs.get(selected).ci.full = false;
     selected = id ?? null;
     io.setShared(SELECTED_KEY, selected);
     publishDetail();

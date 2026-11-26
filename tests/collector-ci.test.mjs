@@ -1220,8 +1220,41 @@ test("watched: only the selected worktree is watched", async () => {
   const { io, shared } = ciIo({ routes: passedRoutes() });
   shared.set("dock.git.watching", { at: io.t });
   const c = createCollector(io);
-  await c.tick(); // nothing selected
+  await c.tick();
+  await c.select("|d:/work/elsewhere"); // another worktree is on screen; this one is not
+  io.t += 1000;
+  await c.tick();
   assert.equal(jobsFetched(io), 0);
+  await c.select(WT);
+  await c.tick();
+  assert.equal(jobsFetched(io), 1, "selected, the same heartbeat makes it full");
+});
+
+test("watched: a failing poll is not retried every tick", async () => {
+  const { io, shared } = ciIo({ routes: { [PIPES]: res(403, { message: "403 Forbidden" }), [SHAQ]: res(403, { message: "403 Forbidden" }) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  const beat = async () => { io.t += 1000; shared.set("dock.git.watching", { at: io.t }); await c.tick(); };
+  await beat(); // becoming watched: the one full attempt
+  const base = polls(io);
+  assert.equal(base, 2);
+  await beat(); await beat(); await beat();
+  assert.equal(polls(io), base, "the normal interval applies after a failure");
+});
+
+test("watched: reselecting a worktree whose jobs went stale polls at once", async () => {
+  const { io, shared } = ciIo({ routes: passedRoutes() });
+  const beat = () => shared.set("dock.git.watching", { at: io.t });
+  const c = createCollector(io);
+  beat();
+  await boot(c);
+  assert.equal(jobsFetched(io), 1);
+  await c.select("|d:/work/elsewhere");
+  io.t += 1000; beat();
+  await c.select(WT);
+  await c.tick();
+  assert.equal(jobsFetched(io), 2, "polled full again at once");
 });
 
 test("watched running pipeline re-polls after 10 s, unwatched after 30 s", async () => {
@@ -1233,17 +1266,25 @@ test("watched running pipeline re-polls after 10 s, unwatched after 30 s", async
     await boot(c);
     const base = polls(io);
     const out = [];
-    for (const dt of [9000, 10000, 29000, 30000]) { io.t = T0 + dt; beat(); await c.tick(); out.push(polls(io) - base); }
+    for (const dt of [9999, 10000, 19999, 20000, 29999, 30000]) { io.t = T0 + dt; beat(); await c.tick(); out.push(polls(io) - base); }
     return out;
   };
-  assert.deepEqual(await run(true), [0, 1, 2, 2]); // polls at 10 s and 29 s (the next is due 10 s after that)
-  assert.deepEqual(await run(false), [0, 0, 0, 1]);
+  assert.deepEqual(await run(true), [0, 1, 1, 2, 2, 3]); // every 10 s
+  assert.deepEqual(await run(false), [0, 0, 0, 0, 0, 1]); // 30 s
 });
 
 test("the selected worktree without a heartbeat polls like any other", async () => {
-  const { io } = ciIo({ routes: passedRoutes() });
-  await boot(createCollector(io));
-  assert.equal(jobsFetched(io), 0);
+  const { io } = ciIo({ routes: { ...fullRoutes(), [glBridges(48213)]: res(200, []) } });
+  const c = createCollector(io);
+  await boot(c);
+  const bridges = () => io.fetches.filter((f) => f.url === glBridges(48213)).length;
+  assert.equal(bridges(), 0, "no full poll");
+  const base = polls(io);
+  io.t = T0 + 10000; await c.tick();
+  assert.equal(polls(io), base, "running: not due at 10 s");
+  io.t = T0 + 30000; await c.tick();
+  assert.equal(polls(io), base + 1, "running: due at 30 s");
+  assert.equal(bridges(), 0, "still not full");
 });
 
 const busyRoutes = () => {

@@ -188,7 +188,7 @@ export function createCollector(io) {
   const newCi = () => ({
     at: -Infinity, busy: false, done: false, host: null, path: null, provider: null, pipeline: null, runIds: [],
     error: null, hint: null, hostFailure: false, target: null, prev: undefined, retryError: null,
-    full: false, // whether the last completed poll was a full one (jobs and log lines)
+    full: false, // whether the last poll attempted was a full one (jobs and log lines), whatever its outcome
   });
   const headOf = (wt, w) => (wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head });
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
@@ -216,6 +216,10 @@ export function createCollector(io) {
   async function pollCi(wt, repo, origin, w, now) {
     const ci = wt.ci;
     ci.busy = true;
+    // Full only while the Pipelines panel is on screen on this worktree (a heartbeat fresh at poll time).
+    // Recorded as attempted: a failing poll must not be repeated every tick just because it never succeeded.
+    const full = watched(wt.id);
+    ci.full = full;
     try {
       const login = await client.resolve(origin.host);
       Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
@@ -224,8 +228,6 @@ export function createCollector(io) {
       const head = headOf(wt, w);
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
-      // Full only while the Pipelines panel is on screen on this worktree (a heartbeat fresh at poll time).
-      const full = watched(wt.id);
       const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (!got.ok) {
         log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
@@ -237,7 +239,7 @@ export function createCollector(io) {
       // A different pipeline (a new run, or its status moved) makes the last Retry error old news.
       const was = ci.pipeline;
       if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
-      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true, full });
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? undefined;
     } finally {
@@ -577,6 +579,8 @@ export function createCollector(io) {
 
   // Selects a worktree for the Pipelines panel and publishes its detail; polls its CI first if it never was.
   async function select(id) {
+    // Its jobs go stale once it is off screen, so coming back to it polls full at once.
+    if (wtRecs.has(selected) && selected !== (id ?? null)) wtRecs.get(selected).ci.full = false;
     selected = id ?? null;
     io.setShared(SELECTED_KEY, selected);
     publishDetail();
