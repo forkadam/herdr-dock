@@ -256,3 +256,23 @@ test("dock-spaces: a worktree whose git answer is pending (after a cd) stays nes
   assert.equal(s.activeAt, 1); // W is its own row now, and R no longer holds it
   localStorage.removeItem("spaces.folded");
 });
+
+test("dock-spaces: a space with no working folder shows no git, not its last answer", () => {
+  const s = repoAndWorktree("B", false);
+  herdr.data.spaces[1].folder = ""; // W's place is gone: nothing is ever looked up there
+  const w = s.ordered().find((r) => r.w.id === "W");
+  assert.equal(w.tree, null);
+  assert.equal(w.g, null);
+  localStorage.removeItem("spaces.folded");
+});
+
+test("dock-spaces: an unsure place's own old answer wins over the space's last one", () => {
+  const s = repoAndWorktree("B", false);
+  s.git['[null,"/q"]'] = { name: "q", branch: "main", ahead: 0, behind: 0, repo: '[null,"/q/.git"]', linked: false };
+  s.unsure.add('[null,"/q"]'); // the last look at /q couldn't ask git; its old answer still stands
+  herdr.data.spaces[1].folder = "/q"; // W cds into Q's checkout
+  const w = s.ordered().find((r) => r.w.id === "W");
+  assert.equal(w.g?.repo, '[null,"/q/.git"]');
+  assert.equal(w.tree, null);
+  localStorage.removeItem("spaces.folded");
+});

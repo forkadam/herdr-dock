@@ -10,3 +10,9 @@ test("host stubs: an element method Herdr doesn't declare throws; declared ones 
   assert.doesNotThrow(() => svg("a.svg").size(12).spin(900));
   assert.throws(() => div().text_colr("red"), /text_colr is not an element method/);
 });
+
+test("host stubs: a misspelled handler name throws too; declared handlers and odd-shaped methods are accepted", () => {
+  assert.throws(() => div().id("x").on_mouse_dwn("right", () => {}), /on_mouse_dwn is not an element method/);
+  assert.doesNotThrow(() => div().id("x").on_mouse_down("right", () => {}).on_token_click(() => {}).token(() => null));
+  assert.doesNotThrow(() => div().map((el) => el));
+});

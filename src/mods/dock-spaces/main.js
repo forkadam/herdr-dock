@@ -409,8 +409,11 @@ export default class Spaces extends View {
     // one, so a worktree doesn't un-nest from under its checkout (and a folded parent) for a moment.
     const gitOf = (w) => {
       const k = where(w, ps);
+      // No folder: nothing is ever looked up there, so no git rather than an old answer.
+      if (!JSON.parse(k)[1]) { delete this.lastGit[w.id]; return this.git[k] ?? null; }
       if (k in this.git && !this.unsure.has(k)) return (this.lastGit[w.id] = this.git[k]);
-      return this.lastGit[w.id] ?? this.git[k] ?? null;
+      // Unsure (git couldn't be asked): this place's own old answer first, else the space's last one.
+      return this.git[k] ?? this.lastGit[w.id] ?? null;
     };
     const live = new Set(sp.map((w) => w.id));
     for (const id of Object.keys(this.lastGit)) if (!live.has(id)) delete this.lastGit[id];

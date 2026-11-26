@@ -531,8 +531,12 @@ var Spaces = class extends View {
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
     const gitOf = (w) => {
       const k = where(w, ps);
+      if (!JSON.parse(k)[1]) {
+        delete this.lastGit[w.id];
+        return this.git[k] ?? null;
+      }
       if (k in this.git && !this.unsure.has(k)) return this.lastGit[w.id] = this.git[k];
-      return this.lastGit[w.id] ?? this.git[k] ?? null;
+      return this.git[k] ?? this.lastGit[w.id] ?? null;
     };
     const live = new Set(sp.map((w) => w.id));
     for (const id of Object.keys(this.lastGit)) if (!live.has(id)) delete this.lastGit[id];
