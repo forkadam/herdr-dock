@@ -539,7 +539,7 @@ function finishedStamp(provider, b) {
   return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
 }
 function allSettled(provider, jobs) {
-  return jobs.every((j) => j?.status !== "canceling" && FINISHED.has(normalizeStatus(provider, j)));
+  return jobs.every((j) => j?.status !== "canceling" && (FINISHED.has(normalizeStatus(provider, j)) || provider === "gitlab" && j?.status === "manual"));
 }
 var headerReader = (r) => (name) => {
   try {

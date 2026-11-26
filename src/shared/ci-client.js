@@ -41,9 +41,11 @@ function finishedStamp(provider, b) {
 
 // Whether every job of an answer is settled. The build's status and its jobs come from separate requests, so a
 // finished build can arrive with a job that is not (and GitLab's "canceling" job is still stopping): such an answer
-// is never cached, so the next poll asks again.
+// is never cached, so the next poll asks again. A GitLab "manual" job that was never played counts as settled: playing
+// it restarts the pipeline, which moves the build's stamp, so the cached answer can't outlive it.
 function allSettled(provider, jobs) {
-  return jobs.every((j) => j?.status !== "canceling" && FINISHED.has(normalizeStatus(provider, j)));
+  return jobs.every((j) => j?.status !== "canceling"
+    && (FINISHED.has(normalizeStatus(provider, j)) || (provider === "gitlab" && j?.status === "manual")));
 }
 
 // A fetch whose headers can't be read (a getter that throws) is treated like one without them: unknown, never a

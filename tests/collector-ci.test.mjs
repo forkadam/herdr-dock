@@ -2519,6 +2519,17 @@ test("M2: a finished GitLab pipeline whose jobs answer still has a running job i
   assert.equal(calls(io, glJobs(48213)), 2);
 });
 
+test("a finished GitLab pipeline with an unplayed manual job is cached (playing it moves the stamp)", async () => {
+  const done = pipeline({ status: "success", updated_at: U1 });
+  const withManual = passedJobs.map((j) => (j.id === 902 ? { ...j, status: "manual" } : j));
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, withManual), [glBridges(48213)]: res(200, []) },
+  });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 1);
+});
+
 test("M3: a 200 with extra fields stores and returns only the kept fields; a later 304 returns the same object", async () => {
   const { keepGithubRuns } = await import("../src/shared/ci.js");
   const row = { id: 1, name: "CI", head_branch: "main", head_sha: "s", run_number: 3, event: "push", status: "completed",
