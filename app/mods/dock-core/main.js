@@ -809,9 +809,11 @@ ${r.stdout ?? ""}`)) {
   }
   function budget(host) {
     const h = hosts.get(host);
-    if (!h || h.cli || !h.budget) return null;
-    const { remaining, limit, resetAt } = h.budget;
-    return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+    if (!h) return null;
+    const limitedUntil = isLimited(h) ? h.limitedUntil : null;
+    const b = h.cli ? null : h.budget;
+    if (!b) return limitedUntil == null ? null : { remaining: null, limit: null, resetAt: null, limitedUntil, low: false };
+    return { remaining: b.remaining, limit: b.limit, resetAt: b.resetAt, limitedUntil, low: isLow(b) };
   }
   const dropLinesIfLow = (host, path) => {
     if (budget(host)?.low) lastLog.delete(`${host}|${path}`);

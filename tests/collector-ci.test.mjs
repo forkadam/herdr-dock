@@ -913,7 +913,7 @@ test("ETag: text (trace) requests never send If-None-Match", async () => {
   assert.equal(io.fetches[3].init.headers["If-None-Match"], undefined);
 });
 
-test("no readable headers: no If-None-Match ever, budget null, a 429 still pauses 60 s", async () => {
+test("no readable headers: no If-None-Match ever, budget null until a pause, a 429 still pauses 60 s", async () => {
   let next = () => res(200, []);
   const { io, c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: () => next() } });
   await c.request("github.com", "GET", RUNS_P);
@@ -925,7 +925,7 @@ test("no readable headers: no If-None-Match ever, budget null, a 429 still pause
   assert.deepEqual(r, { ok: false, error: "API limit reached", limited: true, limitedUntil: T0 + 60000, hostFailure: false });
   assert.equal(c.blocked("github.com", T0 + 59999), true);
   assert.equal(c.blocked("github.com", T0 + 60000), false);
-  assert.equal(c.budget("github.com"), null);
+  assert.deepEqual(c.budget("github.com"), { remaining: null, limit: null, resetAt: null, limitedUntil: T0 + 60000, low: false }); // paused: only limitedUntil
 });
 
 test("budget: remaining/limit/reset from the latest answer; low when under 10 %", async () => {
@@ -1006,14 +1006,14 @@ test("limit: a 503 with retry-after is an ordinary host failure", async () => {
   assert.equal(limitLogs(io).length, 0);
 });
 
-test("CLI route: stderr \"HTTP 403: API rate limit exceeded\" pauses 60 s; budget stays null", async () => {
+test("CLI route: stderr \"HTTP 403: API rate limit exceeded\" pauses 60 s; budget is only limitedUntil during the pause", async () => {
   const tls = () => { throw Object.assign(new Error("fetch failed"), { cause: { code: "CERT" } }); };
   let answer = { code: 1, stdout: "", stderr: "gh: HTTP 403: API rate limit exceeded for user ID 1." };
   const { io, c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: tls }, cli: { [`gh api ${RUNS_P}`]: () => answer } });
   const r = await c.request("github.com", "GET", RUNS_P);
   assert.deepEqual(r, { ok: false, error: "API limit reached", limited: true, limitedUntil: T0 + 60000, hostFailure: false });
   assert.equal(c.via("github.com"), "gh");
-  assert.equal(c.budget("github.com"), null);
+  assert.deepEqual(c.budget("github.com"), { remaining: null, limit: null, resetAt: null, limitedUntil: T0 + 60000, low: false });
   assert.equal(c.blocked("github.com", T0 + 59999), true);
   const api = () => io.calls.filter((x) => x.cmd === "gh" && x.args[0] === "api").length;
   assert.equal((await c.request("github.com", "GET", RUNS_P)).limited, true);
@@ -2469,4 +2469,29 @@ branch refs/heads/b
   await at(30000);
   assert.equal(nA(), a0 + 1);
   assert.equal(nB(), b0 + 1);
+});
+
+test("budget() during a pause is always an object (no headers needed); null again after it, when no headers were ever seen", async () => {
+  const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: hres(429, {}) } });
+  assert.equal(c.budget("gitlab.corp"), null);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.deepEqual(c.budget("gitlab.corp"), { remaining: null, limit: null, resetAt: null, limitedUntil: io.t + 60000, low: false });
+  io.t += 60000;
+  assert.equal(c.budget("gitlab.corp"), null);
+
+  const cli = await cliClientOf({
+    [`${P}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`]: { code: 1, stdout: "", stderr: "glab: HTTP 429 Too Many Requests" },
+  });
+  await cli.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.deepEqual(cli.c.budget("gitlab.corp"), { remaining: null, limit: null, resetAt: null, limitedUntil: cli.io.t + 60000, low: false });
+  cli.io.t += 60000;
+  assert.equal(cli.c.budget("gitlab.corp"), null);
+});
+
+test("detail.budget carries limitedUntil for a bare 429 with no headers", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: () => hres(429, {}) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.deepEqual(detailOf(io).budget, { provider: "gitlab", remaining: null, limit: null, limitedUntil: T0 + 60000 });
 });

@@ -401,12 +401,16 @@ export function createCiClient(io, log) {
     };
   }
   // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers) or
-  // before any were seen. low: under 10 % left (log tails are skipped).
+  // before any were seen, except while the host is paused: then always an object, so the panel can say "API limit
+  // reached" even for a bare 429 or a CLI message (remaining/limit/resetAt null, low false, when no headers were seen).
+  // low: under 10 % left (log tails are skipped).
   function budget(host) {
     const h = hosts.get(host);
-    if (!h || h.cli || !h.budget) return null;
-    const { remaining, limit, resetAt } = h.budget;
-    return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+    if (!h) return null;
+    const limitedUntil = isLimited(h) ? h.limitedUntil : null;
+    const b = h.cli ? null : h.budget;
+    if (!b) return limitedUntil == null ? null : { remaining: null, limit: null, resetAt: null, limitedUntil, low: false };
+    return { remaining: b.remaining, limit: b.limit, resetAt: b.resetAt, limitedUntil, low: isLow(b) };
   }
 
   // A low budget drops the repo's kept log lines on any poll, plain or full, so a line from before the low stretch

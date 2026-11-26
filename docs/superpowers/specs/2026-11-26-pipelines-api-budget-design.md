@@ -98,8 +98,9 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
   `{ ok: false, error: "API limit reached", limitedUntil, hostFailure: false }` — no network call — and the
   collector keeps the last good pipeline, sets the detail's `limitedUntil`, and does not count it as a host
   failure (no backoff ladder). At `resetAt` the pause ends by itself.
-- `client.budget(host)` → `{ remaining, limit, resetAt, limitedUntil } | null` for the collector to publish in
-  `dock.git.detail.budget`.
+- `client.budget(host)` → `{ remaining, limit, resetAt, limitedUntil, low } | null` for the collector to publish in
+  `dock.git.detail.budget`. It is null (CLI route, or before any header was seen) except while the host is paused:
+  then it is always an object, with `remaining`/`limit`/`resetAt` null when no headers were seen and `low` false.
 
 ### Panel
 
@@ -143,7 +144,7 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
    reached"). Budget headers on a 401 answer are ignored (they describe an unauthenticated budget).
 3. **CLI route (`gh api` / `glab api`):** stderr/stdout matching `/rate limit|too many requests|\bHTTP 429\b/i` pauses
    the host for 60 s (no reset time there). **Unverified guess:** the exact gh/glab wording; the pattern is broad on
-   purpose. The CLI route has no headers, so `budget()` is null there, the budget line is hidden and "low" never
+   purpose. The CLI route has no headers, so `budget()` is null there except during a pause (then only `limitedUntil` is set), the budget line is hidden and "low" never
    fires.
 4. **Cache inputs:** `latest()` already has each GitLab pipeline's `updated_at`/`status` (list endpoint) and each
    GitHub run's `updated_at`/`status`/`conclusion` when it decides to fetch jobs. A finished build without a cache
