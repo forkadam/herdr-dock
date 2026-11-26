@@ -285,3 +285,53 @@ test("dock-pipelines: while a limit pause lasts the warn line shows and the job 
   assert.ok(all.indexOf(warn) < all.indexOf("2 jobs · 2 running"), "the warn line is above the job list");
   assert.deepEqual(rowOf("e2e", "integration"), ["e2e", "1m34s", "↗", "> 112/340 specs passed"]);
 });
+
+test("dock-pipelines: a limit pause redraws each second with no job running, once more after it ends, then stops", async () => {
+  resetHost();
+  herdr.data.checking = false;
+  herdr.data.props = { overlay: "pl" };
+  const d = gitlabDetail();
+  for (const j of d.pipeline.jobs) j.status = "passed";
+  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 2000 };
+  herdr.data.shared.set("dock.git.detail", d);
+  const cx = loopCx();
+  const v = new Pipelines();
+  v.init({}, cx);
+  await cx.tick(2);
+  assert.equal(cx.notified, 2);
+  // The pause ends: one more redraw so the warn line goes, then the loop is quiet again.
+  d.budget = { ...d.budget, limitedUntil: Date.now() - 1 };
+  await cx.tick(1);
+  assert.equal(cx.notified, 3);
+  await cx.tick(3);
+  assert.equal(cx.notified, 3);
+  clearTexts();
+  v.render(plainCx);
+  assert.equal(texts().some((s) => s.includes("API")), false);
+});
+
+test("dock-pipelines: a limit pause redraws only while the panel is on screen", async () => {
+  resetHost();
+  herdr.data.checking = false;
+  herdr.data.props = { dockRegion: "right" };
+  const d = gitlabDetail();
+  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 60000 };
+  for (const j of d.pipeline.jobs) j.status = "passed";
+  herdr.data.shared.set("dock.git.detail", d);
+  herdr.data.shared.set("dock.config.applied", { right: { hidden: false, features: [{ mod: "dock-pipelines" }, { mod: "dock-browser" }] } });
+  herdr.data.shared.set("dock.right.shown", true);
+  herdr.data.shared.set("dock.right.active", "dock-browser");
+  const cx = loopCx();
+  new Pipelines().init({}, cx);
+  await cx.tick(3);
+  assert.equal(cx.notified, 0);
+});
+
+test("dock-pipelines: a limit that has already passed draws the dim line with the numbers, not the warn line", () => {
+  const d = gitlabDetail();
+  d.budget = { provider: "gitlab", remaining: 15, limit: 2000, limitedUntil: Date.now() - 5000 };
+  draw(d);
+  const all = texts();
+  assert.ok(all.includes("GitLab API: 15 of 2,000 left"), all.join(" | "));
+  assert.equal(all.some((s) => s.includes("limit reached")), false);
+});

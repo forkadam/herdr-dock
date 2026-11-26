@@ -219,7 +219,7 @@ var Pipelines = class extends View {
         for (let tick = 0; !this.closed; tick++) {
           if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
           await cx2.sleep(TICK_MS);
-          if (!this.closed && this.shown() && this.anyRunning()) cx2.notify();
+          if (!this.closed && this.shown() && this.needsRedraw()) cx2.notify();
         }
       } finally {
         this.looping = false;
@@ -233,6 +233,15 @@ var Pipelines = class extends View {
     if (props()?.overlay || props()?.dockRegion !== "right") return true;
     const applied = shared("dock.config.applied");
     return rightShownOf(shared("dock.right.shown"), applied) && rightActiveOf(shared("dock.right.active"), applied?.right?.features ?? []) === MOD;
+  }
+  // A running job's elapsed time ticks; a limit pause's warn line must go when the pause ends, with no new detail
+  // to trigger a draw, so the tick after it ends redraws once more.
+  needsRedraw() {
+    const until = shared("dock.git.detail")?.budget?.limitedUntil;
+    const limited = typeof until === "number" && until > Date.now();
+    const wasLimited = this.wasLimited;
+    this.wasLimited = limited;
+    return this.anyRunning() || limited || wasLimited === true;
   }
   anyRunning() {
     const jobs = shared("dock.git.detail")?.pipeline?.jobs;
