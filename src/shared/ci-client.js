@@ -40,7 +40,8 @@ export function createCiClient(io, log) {
     return t;
   };
   // Full GitLab polls: per "host|path", jobId -> { line, busy, failLogged } for the jobs still running. A failed
-  // trace call keeps the job's previous line, and is logged once until a call succeeds again.
+  // trace call keeps the job's previous line, and is logged once until a call succeeds again. Keyed by repo, not
+  // worktree, because only the watched worktree polls full.
   const lastLog = new Map();
   const rangeLogged = new Set(); // hosts whose answer to a Range request was logged (does GitLab honour it?)
   const rec = (host) => {
@@ -263,9 +264,14 @@ export function createCiClient(io, log) {
   }
 
   // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has results
-  // (a tag build of HEAD is filed under the tag, not the branch); else the branch's newest, as before.
+  // (a tag build of HEAD is filed under the tag, not the branch); else the branch's newest, as before. Only the
+  // branch query speaks for the host's health: the commit query failing never backs the host off, so it can't
+  // block this poll's jobs call or the next polls.
   async function branchOrCommit(host, path, branchPath, commitPath, rows) {
-    const [b, c] = await Promise.all([request(host, "GET", branchPath), request(host, "GET", commitPath)]);
+    const [b, c] = await Promise.all([
+      request(host, "GET", branchPath),
+      request(host, "GET", commitPath, { noBackoff: true }),
+    ]);
     const found = c.ok ? rows(c.data) : null;
     if (found?.length) return c;
     if (!found) log(`CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
@@ -325,7 +331,10 @@ export function createCiClient(io, log) {
     return { ok: true, pipeline };
   }
 
-  // Sets logLine on the most recently started running jobs (not bridges: they have no log of their own).
+  // Sets logLine on the most recently started running jobs (not bridges: they have no log of their own). The
+  // traces are awaited on purpose, so the poll publishes its jobs with their lines: a slow trace delays that
+  // poll's publish by at most 8 s (16 s with a 416 retry). The in-flight skip guards overlapping polls of two
+  // worktrees of one repo, which can happen after the selection moves between them.
   async function logLines(host, path, pipeline) {
     const key = `${host}|${path}`;
     const prev = lastLog.get(key) ?? new Map();
@@ -356,8 +365,7 @@ export function createCiClient(io, log) {
       }
       if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
       if (r.ok) {
-        // Redacted before lastLogLine cuts the line to 200 characters, so a token split by the cut can't slip out.
-        e.line = lastLogLine(redact(r.data));
+        e.line = lastLogLine(r.data, redact);
         e.failLogged = false;
       } else if (!e.failLogged) {
         e.failLogged = true;

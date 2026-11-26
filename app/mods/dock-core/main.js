@@ -113,6 +113,7 @@ var rank = (s) => {
   return i < 0 ? RANK.indexOf("pending") : i;
 };
 var worst = (statuses) => statuses.reduce((a, b) => rank(b) < rank(a) ? b : a);
+var isBusy = (status) => status === "running" || status === "pending";
 var GITLAB = {
   success: "passed",
   failed: "failed",
@@ -190,19 +191,21 @@ function gitlabPipeline(p, jobs) {
   const failedJobs = [];
   let lastFail = null;
   for (const j of list) {
-    const status = normalizeStatus("gitlab", j);
+    const status2 = normalizeStatus("gitlab", j);
     if (!byStage.has(j.stage)) byStage.set(j.stage, []);
-    byStage.get(j.stage).push(status);
-    if (status === "failed" && j.allow_failure !== true) {
+    byStage.get(j.stage).push(status2);
+    if (status2 === "failed" && j.allow_failure !== true) {
       failedJobs.push({ name: j.name, stage: j.stage, webUrl: j.web_url, duration: j.duration ?? null });
       if (j.finished_at && (!lastFail || Date.parse(j.finished_at) > Date.parse(lastFail))) lastFail = j.finished_at;
     }
   }
+  const status = normalizeStatus("gitlab", p);
   return {
     id: p.id,
     number: p.id ?? null,
     // what the UI shows as #<number>
-    status: normalizeStatus("gitlab", p),
+    status,
+    busy: isBusy(status),
     ref: p.ref,
     sha: p.sha,
     webUrl: p.web_url,
@@ -222,8 +225,9 @@ function gitlabCommitPipeline(entries) {
   if (!entries.length) return null;
   const parts = entries.map((e) => gitlabPipeline(e.pipeline, e.jobs));
   const base = parts[0];
-  const stamps = parts.map((x) => x.finishedAt).filter(Boolean);
-  const finishedAt = latestStamp(stamps);
+  const status = worst(parts.map((x) => x.status));
+  const keyed = status === "failed" ? parts.filter((x) => x.status === "failed") : parts;
+  const finishedAt = latestStamp(keyed.map((x) => x.finishedAt).filter(Boolean));
   const jobs = entries.flatMap((e) => {
     const key = `gl:${e.pipeline.id}`;
     const all = [
@@ -234,7 +238,9 @@ function gitlabCommitPipeline(entries) {
   });
   return {
     ...base,
-    status: worst(parts.map((x) => x.status)),
+    id: keyed[0].id,
+    status,
+    busy: parts.some((x) => x.busy),
     failedJobs: parts.flatMap((x) => x.failedJobs),
     finishedAt,
     jobs,
@@ -310,6 +316,7 @@ function githubLatest(runsJson, jobsByRunId) {
     // the alert identity; the UI shows number
     number: newest.run_number ?? null,
     status: worst(stages.map((s) => s.status)),
+    busy: stages.some((s) => isBusy(s.status)),
     ref: newest.head_branch,
     sha: newest.head_sha,
     webUrl: (failedRun ?? newest).html_url,
@@ -351,10 +358,10 @@ function ciInterval({ status, upstreamChangedAt, now, watched }) {
 function gitInterval({ open }) {
   return open ? 15e3 : 6e4;
 }
-function lastLogLine(text) {
+function lastLogLine(text, redact = (s) => s) {
   if (!text) return null;
   const lines2 = text.slice(-16384).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/section_(start|end):\d+:[^\r\n]*/g, "").split("\n").map((l) => l.replace(/\r+$/, "")).map((l) => l.slice(l.lastIndexOf("\r") + 1).trim()).filter(Boolean);
-  return lines2.length ? lines2[lines2.length - 1].slice(0, 200) : null;
+  return lines2.length ? redact(lines2[lines2.length - 1]).slice(0, 200) : null;
 }
 
 // src/shared/limiter.js
@@ -610,7 +617,10 @@ ${st.stderr ?? ""}`;
     }
   }
   async function branchOrCommit(host, path, branchPath, commitPath, rows) {
-    const [b, c] = await Promise.all([request(host, "GET", branchPath), request(host, "GET", commitPath)]);
+    const [b, c] = await Promise.all([
+      request(host, "GET", branchPath),
+      request(host, "GET", commitPath, { noBackoff: true })
+    ]);
     const found = c.ok ? rows(c.data) : null;
     if (found?.length) return c;
     if (!found) log(`CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
@@ -689,7 +699,7 @@ ${st.stderr ?? ""}`;
       }
       if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
       if (r.ok) {
-        e.line = lastLogLine(redact(r.data));
+        e.line = lastLogLine(r.data, redact);
         e.failLogged = false;
       } else if (!e.failLogged) {
         e.failLogged = true;

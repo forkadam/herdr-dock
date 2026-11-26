@@ -8,6 +8,9 @@ const rank = (s) => {
   return i < 0 ? RANK.indexOf("pending") : i;
 };
 const worst = (statuses) => statuses.reduce((a, b) => (rank(b) < rank(a) ? b : a));
+// A Pipeline's busy: some run of it is still going, whatever its worst status (a failed branch pipeline can sit
+// beside a running tag one).
+const isBusy = (status) => status === "running" || status === "pending";
 
 const GITLAB = {
   success: "passed", failed: "failed", running: "running", canceled: "canceled", skipped: "skipped",
@@ -73,10 +76,12 @@ export function gitlabPipeline(p, jobs) {
       if (j.finished_at && (!lastFail || Date.parse(j.finished_at) > Date.parse(lastFail))) lastFail = j.finished_at;
     }
   }
+  const status = normalizeStatus("gitlab", p);
   return {
     id: p.id,
     number: p.id ?? null, // what the UI shows as #<number>
-    status: normalizeStatus("gitlab", p),
+    status,
+    busy: isBusy(status),
     ref: p.ref,
     sha: p.sha,
     webUrl: p.web_url,
@@ -100,9 +105,12 @@ export function gitlabCommitPipeline(entries) {
   if (!entries.length) return null;
   const parts = entries.map((e) => gitlabPipeline(e.pipeline, e.jobs));
   const base = parts[0];
-  // Latest over all entries, like failedJobs: an older pipeline of the commit failing later must move the alert key.
-  const stamps = parts.map((x) => x.finishedAt).filter(Boolean);
-  const finishedAt = latestStamp(stamps);
+  const status = worst(parts.map((x) => x.status));
+  // While failed, the alert identity (id + finishedAt) is the failed pipelines' own: a tag pipeline starting or
+  // passing beside a failed branch pipeline must not alert again. finishedAt is the latest over them, so an older
+  // pipeline of the commit failing later still moves the key. The UI's number, link and age stay the newest's.
+  const keyed = status === "failed" ? parts.filter((x) => x.status === "failed") : parts;
+  const finishedAt = latestStamp(keyed.map((x) => x.finishedAt).filter(Boolean));
   const jobs = entries.flatMap((e) => {
     const key = `gl:${e.pipeline.id}`;
     const all = [
@@ -113,7 +121,9 @@ export function gitlabCommitPipeline(entries) {
   });
   return {
     ...base,
-    status: worst(parts.map((x) => x.status)),
+    id: keyed[0].id,
+    status,
+    busy: parts.some((x) => x.busy),
     failedJobs: parts.flatMap((x) => x.failedJobs),
     finishedAt,
     jobs,
@@ -183,6 +193,7 @@ export function githubLatest(runsJson, jobsByRunId) {
     id: newest.head_sha, // the alert identity; the UI shows number
     number: newest.run_number ?? null,
     status: worst(stages.map((s) => s.status)),
+    busy: stages.some((s) => isBusy(s.status)),
     ref: newest.head_branch,
     sha: newest.head_sha,
     webUrl: (failedRun ?? newest).html_url,
@@ -244,7 +255,9 @@ export function gitInterval({ open }) {
 
 // The last meaningful line of a job log, for the running job's live line. Only the tail is read (a log can be
 // megabytes). Colour codes and GitLab's section markers are noise, and a line redrawn with \r keeps only its final draw.
-export function lastLogLine(text) {
+// `redact` (the CI client's) runs after the strip, so a token split by a colour code is whole again, and before
+// the 200-character cut, so the cut can't leave part of a token it no longer recognises.
+export function lastLogLine(text, redact = (s) => s) {
   if (!text) return null;
   const lines = text
     .slice(-16384)
@@ -255,5 +268,5 @@ export function lastLogLine(text) {
     .map((l) => l.replace(/\r+$/, ""))
     .map((l) => l.slice(l.lastIndexOf("\r") + 1).trim())
     .filter(Boolean);
-  return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
+  return lines.length ? redact(lines[lines.length - 1]).slice(0, 200) : null;
 }

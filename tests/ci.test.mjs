@@ -229,7 +229,9 @@ test("gitlabCommitPipeline: two pipelines of one commit", () => {
   const tag = { id: 20, status: "running", ref: "v1.0", sha: "s", web_url: "T", created_at: "2026-11-26T11:00:00Z" };
   const branch = { id: 10, status: "failed", ref: "main", sha: "s", web_url: "M", created_at: "2026-11-26T10:00:00Z" };
   const p = gitlabCommitPipeline([{ pipeline: tag, jobs: [jobs[3], jobs[0]], bridges }, { pipeline: branch, jobs: jobs.slice(0, 3), bridges: null }]);
-  assert.equal(p.id, 20);
+  // Failed: the alert identity is the newest failed pipeline; the display number stays the newest.
+  assert.equal(p.id, 10);
+  assert.equal(p.number, 20);
   assert.equal(p.status, "failed");
   assert.deepEqual(p.groups.map((g) => g.ref), ["v1.0", "main"]);
   assert.deepEqual(p.groups.map((g) => [g.key, g.name]), [["gl:20", "#20"], ["gl:10", "#10"]]);
@@ -320,4 +322,64 @@ test("lastLogLine: CRLF lines keep their text, a redraw keeps its last draw", ()
 test("lastLogLine: a cut tail keeps its first line, whose end is real log text", () => {
   assert.equal(lastLogLine("y".repeat(20000) + "\n"), "y".repeat(200));
   assert.equal(lastLogLine("n".repeat(20000) + "\nreal last"), "real last");
+});
+
+// --- Task 4 review fixes ----------------------------------------------------------------------------
+
+test("gitlabCommitPipeline: while failed, the alert identity is the failed pipelines' (a tag pipeline starting or passing beside it moves nothing)", () => {
+  const F = "2026-11-26T10:05:00Z";
+  const failedJobs = [{ id: 1, name: "unit", stage: "test", status: "failed", finished_at: F }];
+  const branch = { pipeline: { id: 10, status: "failed", ref: "main", sha: "s", web_url: "M", created_at: "2026-11-26T10:00:00Z" }, jobs: failedJobs, bridges: null };
+  const tag = (status, o = {}) => ({ pipeline: { id: 20, status, ref: "v1", sha: "s", web_url: "T", created_at: "2026-11-26T10:10:00Z", ...o }, jobs: null, bridges: null });
+  const alone = gitlabCommitPipeline([branch]);
+  const running = gitlabCommitPipeline([tag("running"), branch]);
+  const passed = gitlabCommitPipeline([tag("success", { finished_at: "2026-11-26T10:20:00Z" }), branch]);
+  for (const p of [running, passed]) {
+    assert.equal(p.status, "failed");
+    assert.equal(p.id, 10);
+    assert.equal(p.finishedAt, F);
+    assert.equal(alertKey(p), alertKey(alone));
+    // What the UI shows stays the newest pipeline's.
+    assert.deepEqual([p.number, p.webUrl, p.createdAt], [20, "T", "2026-11-26T10:10:00Z"]);
+  }
+  // Not failed: the newest pipeline's id, the latest stamp of all (as before).
+  const ok = gitlabCommitPipeline([tag("success", { finished_at: "2026-11-26T10:20:00Z" }), { ...branch, pipeline: { ...branch.pipeline, status: "success" }, jobs: [] }]);
+  assert.deepEqual([ok.id, ok.finishedAt], [20, "2026-11-26T10:20:00Z"]);
+});
+
+test("githubLatest: a run starting or passing beside a failed run keeps the alert key", () => {
+  const run = (id, name, status, conclusion, updated_at) => ({
+    id, name, head_branch: "main", head_sha: "x", status, conclusion, html_url: `R${id}`, created_at: "2026-11-26T09:00:00Z", updated_at,
+  });
+  const failed = run(1, "CI", "completed", "failure", "2026-11-26T09:10:00Z");
+  const key = alertKey(githubLatest({ workflow_runs: [failed] }, {}));
+  const running = githubLatest({ workflow_runs: [run(2, "Release", "in_progress", null, "2026-11-26T09:20:00Z"), failed] }, {});
+  const passed = githubLatest({ workflow_runs: [run(2, "Release", "completed", "success", "2026-11-26T09:30:00Z"), failed] }, {});
+  assert.equal(alertKey(running), key);
+  assert.equal(alertKey(passed), key);
+});
+
+test("busy: any group running or pending; status stays the worst", () => {
+  const pl = (id, status, ref) => ({ pipeline: { id, status, ref, sha: "s" }, jobs: null, bridges: null });
+  const mixed = gitlabCommitPipeline([pl(20, "running", "v1"), pl(10, "failed", "main")]);
+  assert.deepEqual([mixed.status, mixed.busy], ["failed", true]);
+  assert.equal(gitlabCommitPipeline([pl(20, "created", "v1"), pl(10, "success", "main")]).busy, true);
+  assert.equal(gitlabCommitPipeline([pl(20, "success", "v1"), pl(10, "failed", "main")]).busy, false);
+  assert.equal(gitlabPipeline({ id: 1, status: "running" }, null).busy, true);
+  assert.equal(gitlabPipeline({ id: 1, status: "pending" }, null).busy, true);
+  assert.equal(gitlabPipeline({ id: 1, status: "failed" }, null).busy, false);
+  const run = (id, status, conclusion) => ({ id, name: `w${id}`, head_branch: "main", head_sha: "x", status, conclusion, created_at: "2026-11-26T09:00:00Z" });
+  const gh = githubLatest({ workflow_runs: [run(1, "completed", "failure"), run(2, "in_progress", null)] }, {});
+  assert.deepEqual([gh.status, gh.busy], ["failed", true]);
+  assert.equal(githubLatest({ workflow_runs: [run(1, "completed", "failure"), run(2, "queued", null)] }, {}).busy, true);
+  assert.equal(githubLatest({ workflow_runs: [run(1, "completed", "failure"), run(2, "completed", "success")] }, {}).busy, false);
+});
+
+test("lastLogLine: redact runs after the escape strip and before the 200-character cut", () => {
+  const TOKEN = "glpat-secret123";
+  const redact = (s) => s.split(TOKEN).join("***");
+  assert.equal(lastLogLine("a\nuse glpat-sec\x1b[0mret123 now\n", redact), "use *** now");
+  assert.equal(lastLogLine(`a\n${"x".repeat(190)}${TOKEN}\n`, redact), `${"x".repeat(190)}***`);
+  // No redact given: the text as is.
+  assert.equal(lastLogLine("a\nuse glpat-sec\x1b[0mret123\n"), `use ${TOKEN}`);
 });

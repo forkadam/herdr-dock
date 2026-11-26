@@ -1078,3 +1078,94 @@ test("GitHub full: jobs of every run of HEAD are fetched; not full only failed r
   assert.deepEqual(q.pipeline.jobs, []);
   assert.deepEqual(plain.io.fetches.map((f) => f.url), [GH_BRANCH, GH_HEAD(TAG_SHA)]);
 });
+
+// --- Task 4 review fixes ----------------------------------------------------------------------------
+
+test("GitLab: a tag pipeline of HEAD starting, then passing, beside a failed branch pipeline doesn't alert again", async () => {
+  const F = "2026-11-22T10:05:00Z";
+  const p10 = (status) => pipeline({ id: 10, ref: "main", status, created_at: "2026-11-22T10:01:00Z", web_url: "https://gitlab.corp/grp/api/-/pipelines/10" });
+  const p20 = (status, o = {}) => pipeline({ id: 20, ref: "v1.0.0", status, created_at: "2026-11-22T10:10:00Z", web_url: "https://gitlab.corp/grp/api/-/pipelines/20", ...o });
+  let pipes = [p10("running")];
+  const { io, shared } = ciIo({
+    routes: {
+      [PIPES]: () => res(200, [pipes.find((p) => p.id === 10)]),
+      [SHAQ]: () => res(200, pipes),
+      [glJobs(10)]: () => res(200, jobsDone(F)),
+      [glJobs(20)]: res(200, [{ id: 960, name: "pack", stage: "build", status: "running" }]),
+    },
+  });
+  const c = createCollector(io);
+  const step = async (next) => { pipes = next; io.t += 300000; await c.tick(); };
+  await c.tick();
+  assert.equal(io.notes.length, 0);
+  await step([p10("failed")]);
+  assert.equal(io.notes.length, 1, "the branch pipeline fails: alert");
+  await step([p20("running"), p10("failed")]);
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(wtOf(c).pipeline.number, 20, "the newest pipeline is what the UI shows");
+  assert.equal(io.notes.length, 1, "a tag pipeline starting: no new alert");
+  await step([p20("success", { finished_at: "2026-11-22T10:20:00Z" }), p10("failed")]);
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 1, "the tag pipeline passing: no new alert");
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: [`10|${F}`] });
+});
+
+// Answers after the branch query has, so its success cannot clear a backoff the commit query set.
+const later = (r) => () => new Promise((ok) => setTimeout(() => ok(r), 5));
+
+test("the HEAD-commit query never backs off the host (GitLab): a 502 still lets the jobs through", async () => {
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: later(res(502, { message: "502 Bad Gateway" })), [glJobs(48213)]: res(200, JOBS) },
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(r.ok, true);
+  assert.equal(r.pipeline.status, "failed");
+  assert.deepEqual(r.pipeline.failedJobs.map((j) => j.name), ["unit"]);
+  assert.ok(io.fetches.some((f) => f.url === glJobs(48213)), "jobs fetched");
+  assert.equal(c.blocked("gitlab.corp", io.t), false);
+  assert.deepEqual(io.logs.filter((l) => l.includes("HEAD commit query")), ["CI: gitlab.corp/grp/api: HEAD commit query: HTTP 502"]);
+  assert.equal(io.logs.length, 1, "no 'blocked' jobs log");
+});
+
+test("the HEAD-commit query never backs off the host (GitHub)", async () => {
+  const SHA = "bbbb000000000000000000000000000000000002";
+  const { io, c } = await clientOf("github.com", {
+    origin: "https://github.com/o/r.git",
+    routes: {
+      "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": res(200, fx("github-runs.json")),
+      [`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=20`]: later(res(503, { message: "busy" })),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+    },
+  });
+  const r = await c.latest("github.com", "github", "o/r", { branch: "main", sha: SHA });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.pipeline.failedJobs.map((j) => j.name), ["test"]);
+  assert.equal(c.blocked("github.com", io.t), false);
+  assert.deepEqual(io.logs, ["CI: github.com/o/r: HEAD commit query: HTTP 503"]);
+});
+
+test("GitLab full: a token split by an escape sequence is redacted in the log line", async () => {
+  const { c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({
+      [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]),
+      [traceUrl(912)]: textRes(206, "start\nexport T=glpat-sec\x1b[0mret123 done\n"),
+    }),
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(r, 912), "export T=*** done");
+});
+
+test("GitLab full: a job that stops running drops its kept line", async () => {
+  let jobs = [RUNNING_JOBS[1]];
+  let trace = textRes(206, "a\nold line\n");
+  const { c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [glJobs(48213)]: () => res(200, jobs), [traceUrl(912)]: () => trace }),
+  });
+  const poll = () => c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(await poll(), 912), "old line");
+  jobs = [{ ...RUNNING_JOBS[1], status: "success" }];
+  assert.equal(lineOf(await poll(), 912), null);
+  jobs = [RUNNING_JOBS[1]];
+  trace = textRes(500, "");
+  assert.equal(lineOf(await poll(), 912), null, "not the old line");
+});
