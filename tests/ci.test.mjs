@@ -282,7 +282,7 @@ test("gitlabCommitPipeline: finishedAt is the latest over the entries, so an old
   assert.equal(gitlabCommitPipeline([{ pipeline: ok, jobs: [], bridges: [] }]).finishedAt, null);
 });
 
-test("lastLogLine strips ANSI, section markers and \r redraws", () => {
+test("lastLogLine strips ANSI, section markers and \\r redraws", () => {
   assert.equal(lastLogLine("a\n\x1b[32;1mok\x1b[0m\nsection_end:1700000000:step\r\x1b[0K\n"), "ok");
   assert.equal(lastLogLine("progress 10%\rprogress 55%\n"), "progress 55%");
   assert.equal(lastLogLine("x\n\n   \n"), "x");
@@ -310,4 +310,16 @@ test("finishedAt: an unparsable stamp never hides a later valid one", () => {
   assert.equal(gitlabCommitPipeline([{ pipeline: bad, jobs: [], bridges: [] }]).finishedAt, null);
   const run = (id, updated_at) => ({ id, name: "CI", head_branch: "main", head_sha: "x", status: "completed", conclusion: "failure", html_url: "R", created_at: "2026-11-26T09:00:00Z", updated_at });
   assert.equal(githubLatest({ workflow_runs: [run(1, "garbage"), run(2, "2026-11-26T09:30:00Z")] }, {}).finishedAt, "2026-11-26T09:30:00Z");
+});
+
+test("lastLogLine: CRLF lines keep their text, a redraw keeps its last draw", () => {
+  assert.equal(lastLogLine("a\r\nb\r\n"), "b");
+  assert.equal(lastLogLine("x\r\nprogress 10%\rprogress 55%\r\n"), "progress 55%");
+});
+
+test("lastLogLine: a tail cut mid-line drops the partial first line", () => {
+  assert.equal(lastLogLine("\x1b[3" + "q".repeat(5) + "\n" + "w".repeat(16384 - 9) + "\nreal last"), "real last");
+  const cut = "p".repeat(5000) + "\x1b[3" + "\nreal last";
+  assert.equal(lastLogLine("n".repeat(20000) + "\x1b[3\nreal last"), "real last");
+  assert.equal(lastLogLine(cut), "real last");
 });

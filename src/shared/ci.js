@@ -246,11 +246,15 @@ export function gitInterval({ open }) {
 // megabytes). Colour codes and GitLab's section markers are noise, and a line redrawn with \r keeps only its final draw.
 export function lastLogLine(text) {
   if (!text) return null;
-  const lines = text
-    .slice(-16384)
+  let tail = text.slice(-16384);
+  // A cut tail starts mid-line (maybe inside an escape or a marker), so its first, partial line goes.
+  if (tail.length < text.length && tail.includes("\n")) tail = tail.slice(tail.indexOf("\n") + 1);
+  const lines = tail
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
     .replace(/section_(start|end):\d+:[^\r\n]*/g, "")
     .split("\n")
+    // CRLF logs: drop the line's trailing \r first, or the redraw rule below would empty it.
+    .map((l) => l.replace(/\r+$/, ""))
     .map((l) => l.slice(l.lastIndexOf("\r") + 1).trim())
     .filter(Boolean);
   return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
