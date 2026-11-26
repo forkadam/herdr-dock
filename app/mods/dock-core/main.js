@@ -883,6 +883,8 @@ var SKIPPED_KEY = "dock.git.skipped";
 var HIDDEN_KEY = "dock.git.hidden";
 var STATE_KEY = "dock.git.state";
 var SELECTED_KEY = "dock.git.selected";
+var WATCHING_KEY = "dock.git.watching";
+var WATCHING_TTL = 15e3;
 var DETAIL_KEY = "dock.git.detail";
 var ALERTED_KEY = "dock.git.alerted";
 var basename = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
@@ -1010,7 +1012,9 @@ function createCollector(io) {
     hostFailure: false,
     target: null,
     prev: void 0,
-    retryError: null
+    retryError: null,
+    full: false
+    // whether the last completed poll was a full one (jobs and log lines)
   });
   const headOf = (wt, w) => wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head };
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
@@ -1046,7 +1050,8 @@ function createCollector(io) {
       const head = headOf(wt, w);
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
-      const got = await client.latest(origin.host, login.provider, origin.path, head);
+      const full = watched(wt.id);
+      const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (!got.ok) {
         log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
         return Object.assign(ci, { error: got.error, hint: got.hint ?? null, hostFailure: got.hostFailure, done: true });
@@ -1055,7 +1060,7 @@ function createCollector(io) {
       const cur = got.pipeline;
       const was = ci.pipeline;
       if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
-      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true, full });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? void 0;
     } finally {
@@ -1063,10 +1068,18 @@ function createCollector(io) {
       publish(io.now());
     }
   }
+  function watched(id) {
+    const at = io.shared(WATCHING_KEY)?.at;
+    return id === selected && typeof at === "number" && io.now() - at < WATCHING_TTL;
+  }
   function ciDue(wt, host, now) {
     if (wt.ci.busy || client.blocked(host, now)) return false;
     if (wt.ci.hostFailure) return true;
-    return now - wt.ci.at >= ciInterval({ status: wt.ci.pipeline?.status, upstreamChangedAt: wt.upstreamChangedAt, now });
+    const isWatched = watched(wt.id);
+    if (isWatched && !wt.ci.full) return true;
+    const p = wt.ci.pipeline;
+    const status = p?.busy ? "running" : p?.status;
+    return now - wt.ci.at >= ciInterval({ status, upstreamChangedAt: wt.upstreamChangedAt, now, watched: isWatched });
   }
   function pipelineSummary(wt) {
     const ci = wt?.ci;

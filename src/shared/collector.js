@@ -23,6 +23,8 @@ const SKIPPED_KEY = "dock.git.skipped";
 const HIDDEN_KEY = "dock.git.hidden";
 const STATE_KEY = "dock.git.state";
 const SELECTED_KEY = "dock.git.selected";
+const WATCHING_KEY = "dock.git.watching";
+const WATCHING_TTL = 15000;
 const DETAIL_KEY = "dock.git.detail";
 const ALERTED_KEY = "dock.git.alerted";
 
@@ -186,6 +188,7 @@ export function createCollector(io) {
   const newCi = () => ({
     at: -Infinity, busy: false, done: false, host: null, path: null, provider: null, pipeline: null, runIds: [],
     error: null, hint: null, hostFailure: false, target: null, prev: undefined, retryError: null,
+    full: false, // whether the last completed poll was a full one (jobs and log lines)
   });
   const headOf = (wt, w) => (wt.git ? { branch: wt.git.branch, sha: wt.git.oid } : { branch: w.branch, sha: w.head });
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
@@ -221,7 +224,9 @@ export function createCollector(io) {
       const head = headOf(wt, w);
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
-      const got = await client.latest(origin.host, login.provider, origin.path, head);
+      // Full only while the Pipelines panel is on screen on this worktree (a heartbeat fresh at poll time).
+      const full = watched(wt.id);
+      const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (!got.ok) {
         log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
         return Object.assign(ci, { error: got.error, hint: got.hint ?? null, hostFailure: got.hostFailure, done: true });
@@ -232,7 +237,7 @@ export function createCollector(io) {
       // A different pipeline (a new run, or its status moved) makes the last Retry error old news.
       const was = ci.pipeline;
       if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
-      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
+      Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true, full });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? undefined;
     } finally {
@@ -241,10 +246,22 @@ export function createCollector(io) {
     }
   }
 
+  // The panel writes { at } to dock.git.watching every 5 s while it is open; 15 s without one means it is closed
+  // (or its host died). Only the selected worktree is shown there, so only it is watched.
+  function watched(id) {
+    const at = io.shared(WATCHING_KEY)?.at;
+    return id === selected && typeof at === "number" && io.now() - at < WATCHING_TTL;
+  }
+
   function ciDue(wt, host, now) {
     if (wt.ci.busy || client.blocked(host, now)) return false;
     if (wt.ci.hostFailure) return true; // the host's backoff is over
-    return now - wt.ci.at >= ciInterval({ status: wt.ci.pipeline?.status, upstreamChangedAt: wt.upstreamChangedAt, now });
+    const isWatched = watched(wt.id);
+    if (isWatched && !wt.ci.full) return true; // the panel just opened: fetch the jobs now, not after the cadence
+    const p = wt.ci.pipeline;
+    // A pipeline that is failed on one build but still running on another (a tag) polls as running.
+    const status = p?.busy ? "running" : p?.status;
+    return now - wt.ci.at >= ciInterval({ status, upstreamChangedAt: wt.upstreamChangedAt, now, watched: isWatched });
   }
 
   // The published summary of a worktree's pipeline (full details only in dock.git.detail).

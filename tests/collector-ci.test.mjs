@@ -1169,3 +1169,117 @@ test("GitLab full: a job that stops running drops its kept line", async () => {
   trace = textRes(500, "");
   assert.equal(lineOf(await poll(), 912), null, "not the old line");
 });
+
+// --- Task 5: watched polls ----------------------------------------------------------------------------
+
+const passedRoutes = (o = {}) => ({
+  [PIPES]: res(200, [pipeline({ status: "success" })]), [SHAQ]: res(200, [pipeline({ status: "success" })]),
+  [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, []), ...o,
+});
+const jobsFetched = (io) => io.fetches.filter((f) => f.url === glJobs(48213)).length;
+const polls = (io) => io.fetches.filter((f) => f.url === PIPES).length;
+// Discovers the worktree, selects it, and ticks once more (a watched selection polls full at once).
+const boot = async (c) => { await c.tick(); await c.select(WT); await c.tick(); };
+
+test("watched: a fresh heartbeat makes the selected worktree's poll full", async () => {
+  const { io, shared } = ciIo({ routes: passedRoutes() });
+  shared.set("dock.git.watching", { at: io.t });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  await c.tick();
+  assert.ok(jobsFetched(io) >= 1, "jobs fetched for a passed pipeline");
+  assert.ok(io.fetches.some((f) => f.url === glBridges(48213)));
+});
+
+test("watched: a heartbeat 15 s old is not watched", async () => {
+  const { io, shared } = ciIo({ routes: passedRoutes() });
+  shared.set("dock.git.watching", { at: io.t - 15000 });
+  const c = createCollector(io);
+  await boot(c);
+  assert.equal(jobsFetched(io), 0);
+});
+
+test("watched: becoming watched polls at once when the last poll wasn't full", async () => {
+  const { io, shared } = ciIo({ routes: passedRoutes() });
+  const c = createCollector(io);
+  await boot(c);
+  assert.equal(polls(io), 1);
+  assert.equal(jobsFetched(io), 0);
+  io.t += 1000;
+  shared.set("dock.git.watching", { at: io.t });
+  await c.tick();
+  assert.equal(polls(io), 2, "a new poll ran");
+  assert.equal(jobsFetched(io), 1, "and it was full");
+  io.t += 1000;
+  await c.tick();
+  assert.equal(polls(io), 2, "the last poll was full: back on the cadence");
+});
+
+test("watched: only the selected worktree is watched", async () => {
+  const { io, shared } = ciIo({ routes: passedRoutes() });
+  shared.set("dock.git.watching", { at: io.t });
+  const c = createCollector(io);
+  await c.tick(); // nothing selected
+  assert.equal(jobsFetched(io), 0);
+});
+
+test("watched running pipeline re-polls after 10 s, unwatched after 30 s", async () => {
+  const run = async (watch) => {
+    const { io, shared } = ciIo({ routes: fullRoutes() });
+    const beat = () => { if (watch) shared.set("dock.git.watching", { at: io.t }); };
+    const c = createCollector(io);
+    beat();
+    await boot(c);
+    const base = polls(io);
+    const out = [];
+    for (const dt of [9000, 10000, 29000, 30000]) { io.t = T0 + dt; beat(); await c.tick(); out.push(polls(io) - base); }
+    return out;
+  };
+  assert.deepEqual(await run(true), [0, 1, 2, 2]); // polls at 10 s and 29 s (the next is due 10 s after that)
+  assert.deepEqual(await run(false), [0, 0, 0, 1]);
+});
+
+test("the selected worktree without a heartbeat polls like any other", async () => {
+  const { io } = ciIo({ routes: passedRoutes() });
+  await boot(createCollector(io));
+  assert.equal(jobsFetched(io), 0);
+});
+
+const busyRoutes = () => {
+  const tag = pipeline({ id: 20, ref: "v1.0.0", status: "running", web_url: "https://gitlab.corp/grp/api/-/pipelines/20" });
+  const branch = pipeline({ id: 10, ref: "main", status: "failed", web_url: "https://gitlab.corp/grp/api/-/pipelines/10" });
+  return {
+    [PIPES]: res(200, [branch]), [SHAQ]: res(200, [tag, branch]),
+    [glJobs(10)]: res(200, JOBS), [glJobs(20)]: res(200, [{ id: 950, name: "pack", stage: "build", status: "running" }]),
+    [glBridges(10)]: res(200, []), [glBridges(20)]: res(200, []),
+    [`${GL}/pipelines/10/retry`]: res(201, { id: 10, status: "running" }),
+    [`${GL}/pipelines/20/retry`]: res(201, { id: 20, status: "running" }),
+  };
+};
+
+test("cadence: a failed branch pipeline beside a running tag pipeline is busy: 30 s unwatched, 10 s watched", async () => {
+  for (const [watch, wait] of [[false, 30000], [true, 10000]]) {
+    const { io, shared } = ciIo({ routes: busyRoutes() });
+    const beat = () => { if (watch) shared.set("dock.git.watching", { at: io.t }); };
+    const c = createCollector(io);
+    beat();
+    await boot(c);
+    assert.equal(wtOf(c).pipeline.status, "failed");
+    const base = polls(io);
+    io.t = T0 + wait - 1; beat(); await c.tick();
+    assert.equal(polls(io), base, `${wait - 1} ms: not yet`);
+    io.t = T0 + wait; beat(); await c.tick();
+    assert.equal(polls(io), base + 1, `${wait} ms: due`);
+  }
+});
+
+test("retry() on a failed commit with a running tag pipeline posts to the failed pipeline's retry", async () => {
+  const { io } = ciIo({ routes: busyRoutes() });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.deepEqual(await c.retry(), { ok: true, error: null });
+  assert.ok(io.fetches.some((f) => f.url === `${GL}/pipelines/10/retry` && f.init.method === "POST"));
+  assert.ok(!io.fetches.some((f) => f.url === `${GL}/pipelines/20/retry`));
+});

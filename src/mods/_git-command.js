@@ -3,7 +3,7 @@
 //   gitCommand("git.refresh")                         re-poll every repo and pipeline now
 //   gitCommand("git.retry")                           retry the selected pipeline
 //   gitCommand("git.open")                            open the selected pipeline in the browser
-//   gitCommand("git.open.job", { index })             open failed job `index` of dock.git.detail.pipeline.failedJobs
+//   gitCommand("git.open.job", { index })             open job `index` of dock.git.detail.pipeline.jobs
 //   gitCommand("git.select", { worktree })            select a worktree (dock.git.selected, dock.git.detail)
 //   gitCommand("git.delete", { worktree })            delete that worktree from disk (git worktree remove)
 //   gitCommand("git.show", { worktree })              select it and reveal dock-pipelines (no worktree: the selection)
