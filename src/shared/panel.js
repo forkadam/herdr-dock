@@ -143,7 +143,9 @@ export function planSync({ mode, focus, leftIds, applied }) {
   let clearFocus = false;
   if (f !== null && !leftIds.includes(f)) { f = null; clearFocus = true; }
   const key = `${mode}|${f}`;
-  if (key === applied) return null;
+  // An unknown focus must be cleared even when the layout needn't change: features compare it against their own id,
+  // so a focus no feature has would leave every one of them collapsed.
+  if (key === applied && !clearFocus) return null;
   const appliedMode = typeof applied === "string" ? applied.split("|")[0] : null;
   if (mode !== "expanded" && focus != null && appliedMode === "expanded" && applied !== "expanded|null") clearFocus = true;
   return { key, focus: f, clearFocus };

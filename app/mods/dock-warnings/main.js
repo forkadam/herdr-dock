@@ -120,10 +120,22 @@ function warningsFor({ sample, gitState, quotaTop, now }) {
   return out;
 }
 
+// src/shared/layout.js
+var blockId = (region, index, mod) => `dock-${region}-${index}-${mod}`;
+function leftFeatureId(applied, mod) {
+  const features = Array.isArray(applied?.left?.features) ? applied.left.features : [];
+  const i = features.findIndex((f) => f?.mod === mod);
+  return i < 0 ? null : blockId("left", i, mod);
+}
+
 // src/mods/dock-warnings/main.js
+function showQuotas() {
+  const id = leftFeatureId(shared("dock.config.applied"), "dock-quotas");
+  if (id) requestFocus(id);
+}
 var CLICK = {
   pipelines: (w) => w.worktrees?.length === 1 ? gitCommand("git.show", { worktree: w.worktrees[0] }) : gitCommand("git.show"),
-  quota: () => requestFocus("dock-quotas")
+  quota: () => showQuotas()
 };
 var Warnings = class extends View {
   init(_props, cx) {

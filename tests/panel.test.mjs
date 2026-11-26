@@ -163,3 +163,8 @@ test("sizesSnapshot keeps only what sizeChanges compares, and detects an edit ma
   assert.equal(sizeChanges(snap, merged(268, 150)), null);
   assert.equal(sizesSnapshot(null), null);
 });
+
+test("planSync clears a focus no left feature has, even when the mode is unchanged (it would collapse them all)", () => {
+  const plan = planSync({ mode: "expanded", focus: "dock-quotas", leftIds: ids, applied: "expanded|null" });
+  assert.deepEqual(plan, { key: "expanded|null", focus: null, clearFocus: true });
+});

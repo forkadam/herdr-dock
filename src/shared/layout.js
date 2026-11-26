@@ -156,3 +156,11 @@ export function buildLayout(merged, state = {}) {
 export function leftFeatureIds(merged) {
   return merged.regions.left.features.map((f, i) => blockId("left", i, f.mod));
 }
+
+// The block id of a mod in the applied left panel (shared dock.config.applied), e.g. "dock-left-5-dock-quotas" — the
+// id features compare dock.left.focus against; null when the mod isn't in the left panel.
+export function leftFeatureId(applied, mod) {
+  const features = Array.isArray(applied?.left?.features) ? applied.left.features : [];
+  const i = features.findIndex((f) => f?.mod === mod);
+  return i < 0 ? null : blockId("left", i, mod);
+}

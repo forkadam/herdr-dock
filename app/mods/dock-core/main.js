@@ -2221,7 +2221,7 @@ function planSync({ mode, focus, leftIds, applied }) {
     clearFocus = true;
   }
   const key = `${mode}|${f}`;
-  if (key === applied) return null;
+  if (key === applied && !clearFocus) return null;
   const appliedMode = typeof applied === "string" ? applied.split("|")[0] : null;
   if (mode !== "expanded" && focus != null && appliedMode === "expanded" && applied !== "expanded|null") clearFocus = true;
   return { key, focus: f, clearFocus };
