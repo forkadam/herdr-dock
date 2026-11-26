@@ -9,7 +9,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
-import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip } from "../../shared/claude.js";
+import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
 import { showTerminal } from "../_page.js";
 
@@ -17,12 +17,6 @@ import { showTerminal } from "../_page.js";
 const CONTEXT_MS = 15000;
 const LIST_CHECK_MS = 1000;
 
-// A local Claude Code agent: its session record and the statusline cache are on this machine.
-const isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
-// What a row's cached context is tied to besides the address: a different program in the
-// terminal (or its pane) means the entry is not this agent's.
-const sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
-const claudeKey = () => agents().filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
 const sameEntry = (x, y) => x.sig === y.sig && x.pid === y.pid && x.createdMs === y.createdMs
   && x.sessionId === y.sessionId && x.usedPercent === y.usedPercent && x.stale === y.stale && x.seenMs === y.seenMs;
 
@@ -109,7 +103,7 @@ export default class Agents extends View {
     this.contextKey = null;
     if (checking()) return;
     cx.timer.every(CONTEXT_MS, (cx) => this.refreshContext(cx));
-    cx.timer.every(LIST_CHECK_MS, (cx) => { if (claudeKey() !== this.contextKey) this.refreshContext(cx); });
+    cx.timer.every(LIST_CHECK_MS, (cx) => { if (claudeKey(agents()) !== this.contextKey) this.refreshContext(cx); });
   }
 
   // The row's context entry, only while it is still the same local Claude agent it was read for.
@@ -146,7 +140,7 @@ export default class Agents extends View {
   // One read at a time; a request meanwhile runs once more after it. Entries for agents that
   // left the list or changed program are dropped before the read; any failure clears them all.
   refreshContext(cx) {
-    const key = claudeKey();
+    const key = claudeKey(agents());
     if (key !== this.contextKey) {
       const now = new Map(agents().filter(isLocalClaude).map((a) => [a.address, sigOf(a)]));
       for (const [addr, e] of this.context) if (now.get(addr) !== e.sig) this.context.delete(addr);

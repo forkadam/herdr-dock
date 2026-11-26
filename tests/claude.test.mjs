@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchSession, parseStatusline, formatPercent, formatAge, formatReset, contextEntry, keepEntry } from "../src/shared/claude.js";
+import { matchSession, parseStatusline, formatPercent, formatAge, formatReset, contextEntry, keepEntry, sessionNameOf, readPeerNames, isLocalClaude, sigOf, claudeKey } from "../src/shared/claude.js";
 
 const SID = "73636264-03cb-4b62-bb2d-36ccfbcbee15";
 const rec = (o) => JSON.stringify({ pid: 16604, sessionId: SID,
@@ -116,4 +116,45 @@ test("contextTooltip names the reading, its source and its age", async () => {
     "Context window: 42% used · Claude status line · 5m ago · Claude is idle");
   assert.equal(contextTooltip({ usedPercent: 7, seenMs: 0, stale: true }, now),
     "Context window: 7% used · Claude status line · reported at an unknown time · Claude is idle");
+});
+
+const claude = (address, o) => ({ address, app: "claude-code", program: { key: "claude" }, pane: "p" + address, ...o });
+test("sessionNameOf reads the peer name from a record proven to be this process's", () => {
+  assert.equal(sessionNameOf(info(), rec({ name: "amp-refine-ui-85" }), 2_000_000), "amp-refine-ui-85");
+  assert.equal(sessionNameOf(info(), rec({ name: " api-7a " }), 2_000_000), "api-7a");
+});
+test("sessionNameOf: null unless the record is this process's and has a name", () => {
+  assert.equal(sessionNameOf(info(), rec({ name: "x", pid: 1 }), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), rec({ name: "x", kind: "bg" }), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), rec({ name: "x", startedAt: 100 }), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), rec(), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), rec({ name: "  " }), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), rec({ name: 7 }), 2_000_000), null);
+  assert.equal(sessionNameOf(info(), "{oops", 2_000_000), null);
+  assert.equal(sessionNameOf(null, rec({ name: "x" }), 2_000_000), null);
+});
+test("readPeerNames: an entry per local Claude agent whose record proves its name", async () => {
+  const gets = [];
+  const io = {
+    get: async (addr) => { gets.push(addr); return addr === "t1" ? info() : addr === "t2" ? info({ foreground: { pid: 5 } }) : null; },
+    readRecord: async (pid) => (pid === 16604 ? rec({ name: "amp-refine-ui-85" }) : rec({ pid: 5, name: "other" })),
+  };
+  const codex = { address: "t9", app: "codex", program: { key: "codex" }, pane: "p9" };
+  const m = await readPeerNames([claude("t1"), claude("t2"), claude("vps/t7"), codex], io, 2_000_000);
+  assert.deepEqual(m.get("t1"), { sig: "claude-code|claude|pt1", pid: 16604, createdMs: 999_000, name: "amp-refine-ui-85" });
+  assert.deepEqual([...m.keys()], ["t1", "t2"]);
+  assert.deepEqual(gets, ["t1", "t2"]); // never asks hc about another machine's agent or a non-Claude one
+});
+test("readPeerNames: a lookup that throws costs only that agent its name", async () => {
+  const io = { get: async (addr) => { if (addr === "t1") throw new Error("busy"); return info(); }, readRecord: async () => rec({ name: "kept" }) };
+  const m = await readPeerNames([claude("t1"), claude("t2")], io, 2_000_000);
+  assert.deepEqual([...m].map(([k, v]) => [k, v.name]), [["t2", "kept"]]);
+});
+test("isLocalClaude, sigOf and claudeKey keep the Agents panel's rules", () => {
+  assert.equal(isLocalClaude(claude("t1")), true);
+  assert.equal(isLocalClaude({ address: "t3", app: null, program: { key: "claude" }, pane: "p3" }), true);
+  assert.equal(isLocalClaude(claude("vps/t7")), false);
+  assert.equal(isLocalClaude({ address: "t9", app: "codex", program: { key: "codex" } }), false);
+  assert.equal(sigOf(claude("t1")), "claude-code|claude|pt1");
+  assert.equal(claudeKey([claude("t1"), claude("vps/t7")]), "t1=claude-code|claude|pt1");
 });

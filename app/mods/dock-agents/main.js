@@ -111,6 +111,9 @@ function contextTooltip(ctx, nowMs) {
   const age = ctx.seenMs ? formatAge(nowMs - ctx.seenMs) : "reported at an unknown time";
   return `Context window: ${formatPercent(ctx.usedPercent)} \xB7 Claude status line \xB7 ${age}${ctx.stale ? " \xB7 Claude is idle" : ""}`;
 }
+var isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
+var sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
+var claudeKey = (list) => list.filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
 
 // src/shared/path.js
 function slashPath(p) {
@@ -135,9 +138,6 @@ function showTerminal() {
 // src/mods/dock-agents/main.js
 var CONTEXT_MS = 15e3;
 var LIST_CHECK_MS = 1e3;
-var isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
-var sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
-var claudeKey = () => agents().filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
 var sameEntry = (x, y) => x.sig === y.sig && x.pid === y.pid && x.createdMs === y.createdMs && x.sessionId === y.sessionId && x.usedPercent === y.usedPercent && x.stale === y.stale && x.seenMs === y.seenMs;
 function find(node, id) {
   if (node?.id === id) return node;
@@ -212,7 +212,7 @@ var Agents = class extends View {
     if (checking()) return;
     cx.timer.every(CONTEXT_MS, (cx2) => this.refreshContext(cx2));
     cx.timer.every(LIST_CHECK_MS, (cx2) => {
-      if (claudeKey() !== this.contextKey) this.refreshContext(cx2);
+      if (claudeKey(agents()) !== this.contextKey) this.refreshContext(cx2);
     });
   }
   // The row's context entry, only while it is still the same local Claude agent it was read for.
@@ -251,7 +251,7 @@ var Agents = class extends View {
   // One read at a time; a request meanwhile runs once more after it. Entries for agents that
   // left the list or changed program are dropped before the read; any failure clears them all.
   refreshContext(cx) {
-    const key = claudeKey();
+    const key = claudeKey(agents());
     if (key !== this.contextKey) {
       const now = new Map(agents().filter(isLocalClaude).map((a) => [a.address, sigOf(a)]));
       for (const [addr, e] of this.context) if (now.get(addr) !== e.sig) this.context.delete(addr);

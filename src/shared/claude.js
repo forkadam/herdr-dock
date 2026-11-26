@@ -107,3 +107,39 @@ export function contextTooltip(ctx, nowMs) {
   const age = ctx.seenMs ? formatAge(nowMs - ctx.seenMs) : "reported at an unknown time";
   return `Context window: ${formatPercent(ctx.usedPercent)} · Claude status line · ${age}${ctx.stale ? " · Claude is idle" : ""}`;
 }
+
+// A Claude Code agent on this machine: its session record is here (an address with "/" is another machine's).
+export const isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
+// What a cached entry is tied to besides the address: a different program in the terminal
+// (or its pane) means the entry is not this agent's.
+export const sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
+// The local Claude agents in `list` and what each one is now; a change means it's time to look again.
+export const claudeKey = (list) => list.filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
+
+// The peer name other sessions message this one by (`SendMessage`, `ListAgents`), from a record
+// proven to belong to the process hc reports for the terminal; null when anything doesn't match.
+export function sessionNameOf(info, recordText, nowMs) {
+  const id = identityOf(info);
+  if (!id || !matchSession(recordText, { pid: id.pid }, id.createdMs, nowMs)) return null;
+  const name = parseJson(recordText).name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+// address -> { sig, pid, createdMs, name } for each local Claude agent in `list` whose record
+// proves its name. io.get(address): the parsed `hc get <address> --json`, or null;
+// io.readRecord(pid): that pid's session record text, or null. One agent at a time; a lookup that
+// throws costs only that agent its name.
+export async function readPeerNames(list, io, nowMs) {
+  const out = new Map();
+  for (const a of list) {
+    if (!isLocalClaude(a)) continue;
+    try {
+      const info = await io.get(a.address);
+      const id = identityOf(info);
+      if (!id) continue;
+      const name = sessionNameOf(info, await io.readRecord(id.pid), nowMs);
+      if (name) out.set(a.address, { sig: sigOf(a), pid: id.pid, createdMs: id.createdMs, name });
+    } catch {}
+  }
+  return out;
+}
