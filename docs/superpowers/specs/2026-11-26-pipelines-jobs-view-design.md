@@ -43,7 +43,8 @@ and time, and the running job(s) standing out with a live elapsed time and a lin
 - Showing more than one log line, or a scrolling log.
 - Fetching full job lists for worktrees that aren't selected (approach C, rejected: several times the API calls
   for nothing on screen).
-- Changing the Git projects list, its summary badge, or alerts.
+- Changing the Git projects list or its summary badge. (Alerts and Retry did change, as a consequence of reading
+  every build of a commit: see "Alerts and Retry across a commit's builds" below.)
 
 ## Anti-goals
 
@@ -76,7 +77,12 @@ and time, and the running job(s) standing out with a live elapsed time and a lin
   logLine /* GitLab running job: string | null, filled by the client */ }
 ```
 
-- `failedJobs` stays as-is (alerts use it).
+- `failedJobs` stays (the alert body names its jobs).
+- **Alerts and Retry across a commit's builds** (added after the final review): a commit can have several failed
+  builds (a tag pipeline beside a branch pipeline, or two workflow runs). The Pipeline carries `failedKeys`, one
+  `<pipeline or run id>|<its finish stamp>` per failed build, and an alert fires only for a key not yet in
+  `dock.git.alerted` that is a new failure (or, for a build not seen on the previous poll, created after the dock
+  started). GitLab Retry retries every failed or canceled pipeline of the commit, as GitHub reruns every failed run.
 - Display status vs. normalized status *(call)*: `normalizeStatus` is unchanged (it feeds pipeline status,
   cadence and Retry). For display, `format.js` derives each job's bucket: GitLab `manual` and `scheduled` →
   **manual** (shown with its label, not counted as pending, and never holding a stage back); a failed job with
