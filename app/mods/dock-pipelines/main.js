@@ -234,9 +234,16 @@ var Pipelines = class extends View {
       cx2.notify();
     });
   }
+  // Herdr's lifecycle hook: its pane, tab, slot or overlay is already going, so this only stops the loop and drops
+  // the heartbeat (the collector goes back to light polls); closing the overlay again here would be wrong.
   close() {
     this.closed = true;
     setShared(WATCHING_KEY, null);
+  }
+  // The × button: stops the loop and drops the heartbeat at once, then closes the dialog. Herdr then calls close()
+  // as well, which only repeats the same two writes.
+  closeClicked() {
+    this.close();
     const id = props()?.overlay;
     if (id) closeOverlay(id);
   }
@@ -255,7 +262,7 @@ var Pipelines = class extends View {
       `\u2197 ${web}`,
       `Open the pipeline in ${web}`,
       () => gitCommand("git.open")
-    ))).when(overlay, (el) => el.child(div().id("pl-close").flex_none().size(22).rounded(5).flex().items_center().justify_center().text_size(15).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click(() => this.close()).child("\xD7")));
+    ))).when(overlay, (el) => el.child(div().id("pl-close").flex_none().size(22).rounded(5).flex().items_center().justify_center().text_size(15).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click(() => this.closeClicked()).child("\xD7")));
   }
   // The error, and the login command to run when there is one.
   warning(t, d) {

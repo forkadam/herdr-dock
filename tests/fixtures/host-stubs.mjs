@@ -4,7 +4,7 @@ import { register } from "node:module";
 
 const fresh = () => ({
   spaces: [], agents: [], panes: [], terminals: [], machines: [], layout: null,
-  props: { dockRegion: "left" }, shared: new Map(), files: new Map(), runs: [], checking: true,
+  props: { dockRegion: "left" }, shared: new Map(), files: new Map(), runs: [], closedOverlays: [], checking: true,
   hc: () => ({ code: 1, stdout: "", stderr: "no hc in tests" }),
 });
 globalThis.__herdr = fresh();

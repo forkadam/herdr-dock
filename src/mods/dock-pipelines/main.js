@@ -48,9 +48,9 @@ export default class Pipelines extends View {
     if (checking() || this.looping) return;
     this.looping = true;
     // One loop for the view's life: a redraw each second while a job runs (its elapsed time ticks), and the
-    // heartbeat at once and then every 5 s while the panel is on screen. Unverified: whether Herdr ends this loop
-    // when the dialog closes. close() (the ×) stops it; if it outlived a dialog closed some other way, it would keep
-    // writing the heartbeat (props().overlay stays set), so the collector would keep polling in full.
+    // heartbeat at once and then every 5 s while the panel is on screen. Herdr calls close() when the pane, tab,
+    // slot or overlay goes, however it was closed (×, Esc, a click beside the dialog), then cancels the view's
+    // unfinished tasks (AGENTS.md "Cleanup"); close() also ends the loop itself.
     cx.spawn(async (cx) => {
       try {
         for (let tick = 0; !this.closed; tick++) {
@@ -94,9 +94,17 @@ export default class Pipelines extends View {
     });
   }
 
+  // Herdr's lifecycle hook: its pane, tab, slot or overlay is already going, so this only stops the loop and drops
+  // the heartbeat (the collector goes back to light polls); closing the overlay again here would be wrong.
   close() {
     this.closed = true;
     setShared(WATCHING_KEY, null);
+  }
+
+  // The × button: stops the loop and drops the heartbeat at once, then closes the dialog. Herdr then calls close()
+  // as well, which only repeats the same two writes.
+  closeClicked() {
+    this.close();
     const id = props()?.overlay;
     if (id) closeOverlay(id);
   }
@@ -118,7 +126,7 @@ export default class Pipelines extends View {
       .when(overlay, (el) => el.child(div().id("pl-close").flex_none().size(22).rounded(5).flex().items_center()
         .justify_center().text_size(15).text_color(t.dim).cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close")
-        .on_click(() => this.close()).child("×")));
+        .on_click(() => this.closeClicked()).child("×")));
   }
 
   // The error, and the login command to run when there is one.

@@ -206,17 +206,37 @@ test("dock-pipelines: heartbeat: written when shown in the dialog (props().overl
   assert.equal(typeof herdr.data.shared.get("dock.git.watching")?.at, "number");
 });
 
-test("dock-pipelines: close() clears the heartbeat", async () => {
+test("dock-pipelines: the × click closes the overlay once and clears the heartbeat", async () => {
   resetHost();
   herdr.data.checking = false;
   herdr.data.props = { overlay: "pl" };
+  herdr.data.shared.set("dock.git.detail", tagDetail());
   const cx = loopCx();
   const v = new Pipelines();
   v.init({}, cx);
   assert.equal(typeof herdr.data.shared.get("dock.git.watching")?.at, "number");
-  v.close();
+  v.render(cx);
+  handlers()["pl-close:on_click"]({}, cx);
+  assert.deepEqual(herdr.data.closedOverlays, ["pl"]);
   assert.equal(herdr.data.shared.get("dock.git.watching"), null);
-  // A loop that outlives the dialog never writes it again.
+});
+
+test("dock-pipelines: Herdr's lifecycle close() clears the heartbeat and stops the loop, never closing the overlay", async () => {
+  resetHost();
+  herdr.data.checking = false;
+  herdr.data.props = { overlay: "pl" };
+  herdr.data.shared.set("dock.git.detail", tagDetail());
+  const cx = loopCx();
+  const v = new Pipelines();
+  v.init({}, cx);
+  assert.equal(typeof herdr.data.shared.get("dock.git.watching")?.at, "number");
+  await v.close(cx);
+  assert.equal(herdr.data.shared.get("dock.git.watching"), null);
+  assert.deepEqual(herdr.data.closedOverlays, [], "the overlay is already going");
+  // The loop stops: no heartbeat and no redraw after close, though a job is still running.
+  const notified = cx.notified;
   await cx.tick(10);
   assert.equal(herdr.data.shared.get("dock.git.watching"), null);
+  assert.equal(cx.notified, notified);
+  assert.equal(v.looping, false);
 });

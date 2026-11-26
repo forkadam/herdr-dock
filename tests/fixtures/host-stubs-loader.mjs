@@ -31,7 +31,8 @@ const STUBS = {
     export const window = () => ({ active: false, platform: "macos" });
     export const watchFolder = () => new Promise(() => {});
     const noop = () => {};
-    export const focused = () => null; export const setAgentOrder = noop; export const openOverlay = noop; export const closeOverlay = noop;
+    export const focused = () => null; export const setAgentOrder = noop; export const openOverlay = noop;
+    export const closeOverlay = (id) => d().closedOverlays.push(id);
     export const notify = noop; export const playSound = noop; export const nextCommand = () => new Promise(() => {});`,
 };
 export async function resolve(specifier, context, next) {
