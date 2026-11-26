@@ -504,11 +504,15 @@ var Spaces = class extends View {
     }
     cx.notify();
   }
-  // Fold or unfold a space's children; ids of spaces that are gone are dropped as folds change.
+  // Fold or unfold a space's children; ids of spaces that are gone are dropped as folds change. A
+  // remote space ("<machine>/<id>") counts as gone only while its machine is ready: an offline or
+  // connecting machine lists none of its spaces, and its folds wait for it.
   toggleFold(id, cx) {
     this.foldedSpaces.has(id) ? this.foldedSpaces.delete(id) : this.foldedSpaces.add(id);
     const ids = new Set(spaces().map((s) => s.id));
-    for (const k of this.foldedSpaces) if (!ids.has(k)) this.foldedSpaces.delete(k);
+    const ready = new Set(machines().filter((m) => m.name && m.layout === "ready").map((m) => m.name));
+    const judged = (k) => !k.includes("/") || ready.has(k.slice(0, k.indexOf("/")));
+    for (const k of this.foldedSpaces) if (!ids.has(k) && judged(k)) this.foldedSpaces.delete(k);
     localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
     this.foldMoved = true;
     cx.notify();

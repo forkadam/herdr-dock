@@ -230,3 +230,15 @@ test("dock-spaces: a folded parent wears the active highlight for its hidden wor
   assert.notEqual(bgs()["space-R"], "selected");
   localStorage.removeItem("spaces.folded");
 });
+
+test("dock-spaces: folding while a machine is offline keeps that machine's folds; local gone ids still go", () => {
+  localStorage.setItem("spaces.folded", JSON.stringify(["m1/X", "GONE"]));
+  three();
+  herdr.data.machines = [{ name: null, layout: "ready" }, { name: "m1", layout: "unavailable" }];
+  s3.toggleFold("A", cx);
+  assert.deepEqual(JSON.parse(localStorage.getItem("spaces.folded")), ["m1/X", "A"]);
+  herdr.data.machines = [{ name: null, layout: "ready" }, { name: "m1", layout: "ready" }];
+  s3.toggleFold("A", cx);
+  assert.deepEqual(JSON.parse(localStorage.getItem("spaces.folded")), []);
+  localStorage.removeItem("spaces.folded");
+});
