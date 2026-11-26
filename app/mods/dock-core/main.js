@@ -491,11 +491,17 @@ ${st.stderr ?? ""}`;
       if (isBlocked(h)) return { blocked: true };
       startedAt = io.now();
       return timed(async (signal) => {
-        const init = { method, headers: { ...headers(h.provider, h.token), ...opts.headers } };
+        const init = { method, headers: { ...opts.headers, ...headers(h.provider, h.token) } };
         if (signal) init.signal = signal;
         const r = await io.fetch(url, init);
         if (!r.ok) return { status: r.status, ok: false, data: null };
-        if (opts.text) return { status: r.status, ok: true, data: String(await r.text()) };
+        if (opts.text) {
+          try {
+            return { status: r.status, ok: true, data: String(await r.text()) };
+          } catch {
+            return { status: r.status, ok: false, data: null, bad: true };
+          }
+        }
         if (!wantJson) return { status: r.status, ok: true, data: null };
         try {
           return { status: r.status, ok: true, data: await r.json() };

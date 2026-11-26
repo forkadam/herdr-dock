@@ -723,7 +723,7 @@ const RANGE = { Range: "bytes=-16384" };
 const flush5 = () => new Promise((r) => setTimeout(r, 5));
 
 test("request text mode returns the body as a string (fetch), with extra headers merged", async () => {
-  const { io } = ciIo({ routes: { [`${GL.replace("/projects/grp%2Fapi", "")}/${TRACE}`]: textRes(200, "log\n") } });
+  const { io } = ciIo({ routes: { ["https://gitlab.corp/api/v4/" + TRACE]: textRes(200, "log\n") } });
   const c = createCiClient(io, () => {});
   await c.resolve("gitlab.corp");
   const r = await c.request("gitlab.corp", "GET", TRACE, { text: true, headers: RANGE });
@@ -781,4 +781,49 @@ test("noBackoff: HTTP 503 does not block the host; a 416 comes back with its sta
   assert.equal(s.ok, false);
   assert.equal(s.status, 416);
   assert.equal(s.hostFailure, false);
+});
+
+test("request: a caller's headers never replace the provider's auth headers", async () => {
+  const { io } = ciIo({ routes: { ["https://gitlab.corp/api/v4/" + TRACE]: textRes(200, "x") } });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  await c.request("gitlab.corp", "GET", TRACE, { text: true, headers: { "PRIVATE-TOKEN": "x", "User-Agent": "evil", Range: "bytes=-1" } });
+  const h = io.fetches[0].init.headers;
+  assert.equal(h["PRIVATE-TOKEN"], TOKEN);
+  assert.equal(h["User-Agent"], "herdr-dock");
+  assert.equal(h.Range, "bytes=-1");
+});
+
+test("request text mode: a body that can't be read is a bad response, not a switch to the CLI", async () => {
+  const url = "https://gitlab.corp/api/v4/" + TRACE;
+  const { io } = ciIo({ routes: { [url]: { status: 200, ok: true, text: async () => { throw new Error("body read failed"); } } } });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const r = await c.request("gitlab.corp", "GET", TRACE, { text: true });
+  assert.deepEqual([r.ok, r.error, r.hostFailure], [false, "bad response", false]);
+  assert.equal(c.via("gitlab.corp"), "fetch");
+  assert.equal(io.calls.filter((x) => x.args[0] === "api").length, 0);
+});
+
+test("request on the CLI route: noBackoff skips backoff, a 4xx sets status, text is not redacted", async () => {
+  const url = "https://gitlab.corp/api/v4/";
+  const tls = () => { throw Object.assign(new Error("fetch failed"), { cause: { code: "CERT" } }); };
+  const k = (p) => `glab api --hostname gitlab.corp ${p}`;
+  const { io } = ciIo({
+    routes: { [url + "projects/a"]: tls },
+    cli: {
+      [k("projects/a")]: { code: 1, stdout: "", stderr: "connection refused" },
+      [k("projects/b")]: { code: 1, stdout: "", stderr: "glab: HTTP 416 Range Not Satisfiable" },
+      [k("projects/c")]: ok(`token ${TOKEN} end`),
+    },
+  });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const a = await c.request("gitlab.corp", "GET", "projects/a", { text: true, noBackoff: true });
+  assert.deepEqual([a.ok, a.hostFailure], [false, true]);
+  assert.equal(c.blocked("gitlab.corp", io.t), false);
+  const b = await c.request("gitlab.corp", "GET", "projects/b", { text: true, noBackoff: true });
+  assert.deepEqual([b.ok, b.status, b.hostFailure], [false, 416, false]);
+  const d = await c.request("gitlab.corp", "GET", "projects/c", { text: true });
+  assert.equal(d.data, `token ${TOKEN} end`);
 });
