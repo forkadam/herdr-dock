@@ -1,0 +1,221 @@
+{
+ "total_count": 2,
+ "jobs": [
+  {
+   "id": 139917866822,
+   "run_id": 45822438336,
+   "name": "check-and-test (ubuntu-latest)",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-11-26T12:44:15Z",
+   "completed_at": "2026-11-26T12:50:40Z",
+   "html_url": "https://github.com/acme/app/actions/runs/45822438336/job/139917866822",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1
+    },
+    {
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2
+    },
+    {
+     "name": "Install Linux system dependencies",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3
+    },
+    {
+     "name": "Install FFmpeg on Windows",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 4
+    },
+    {
+     "name": "Setup Rust toolchain",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5
+    },
+    {
+     "name": "Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6
+    },
+    {
+     "name": "Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7
+    },
+    {
+     "name": "Build, lint, and type-check frontend",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8
+    },
+    {
+     "name": "Generate test video fixtures",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9
+    },
+    {
+     "name": "Check Rust formatting",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10
+    },
+    {
+     "name": "Run Clippy",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11
+    },
+    {
+     "name": "Run Rust workspace tests",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12
+    },
+    {
+     "name": "Post Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 22
+    },
+    {
+     "name": "Post Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 23
+    },
+    {
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 24
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 25
+    }
+   ]
+  },
+  {
+   "id": 139917867202,
+   "run_id": 45822438336,
+   "name": "check-and-test (windows-latest)",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-11-26T12:44:15Z",
+   "completed_at": "2026-11-26T12:50:36Z",
+   "html_url": "https://github.com/acme/app/actions/runs/45822438336/job/139917867202",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1
+    },
+    {
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2
+    },
+    {
+     "name": "Install Linux system dependencies",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 3
+    },
+    {
+     "name": "Install FFmpeg on Windows",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4
+    },
+    {
+     "name": "Setup Rust toolchain",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5
+    },
+    {
+     "name": "Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6
+    },
+    {
+     "name": "Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7
+    },
+    {
+     "name": "Build, lint, and type-check frontend",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8
+    },
+    {
+     "name": "Generate test video fixtures",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9
+    },
+    {
+     "name": "Check Rust formatting",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10
+    },
+    {
+     "name": "Run Clippy",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11
+    },
+    {
+     "name": "Run Rust workspace tests",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 12
+    },
+    {
+     "name": "Post Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 22
+    },
+    {
+     "name": "Post Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 23
+    },
+    {
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 24
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 25
+    }
+   ]
+  }
+ ]
+}

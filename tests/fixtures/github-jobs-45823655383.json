@@ -1,0 +1,179 @@
+{
+ "total_count": 2,
+ "jobs": [
+  {
+   "id": 139922093386,
+   "run_id": 45823655383,
+   "name": "publish (ubuntu-22.04, appimage)",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-11-26T12:52:04Z",
+   "completed_at": "2026-11-26T13:01:42Z",
+   "html_url": "https://github.com/acme/app/actions/runs/45823655383/job/139922093386",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1
+    },
+    {
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2
+    },
+    {
+     "name": "Install Linux system dependencies",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3
+    },
+    {
+     "name": "Setup Rust toolchain",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4
+    },
+    {
+     "name": "Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5
+    },
+    {
+     "name": "Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6
+    },
+    {
+     "name": "Build frontend",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7
+    },
+    {
+     "name": "Build and stage co-versioned vsplit CLI binary",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8
+    },
+    {
+     "name": "Build and sign Tauri desktop bundle",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9
+    },
+    {
+     "name": "Post Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16
+    },
+    {
+     "name": "Post Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17
+    },
+    {
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19
+    }
+   ]
+  },
+  {
+   "id": 139922094032,
+   "run_id": 45823655383,
+   "name": "publish (windows-latest, nsis)",
+   "status": "in_progress",
+   "conclusion": null,
+   "started_at": "2026-11-26T12:52:04Z",
+   "completed_at": null,
+   "html_url": "https://github.com/acme/app/actions/runs/45823655383/job/139922094032",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1
+    },
+    {
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2
+    },
+    {
+     "name": "Install Linux system dependencies",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 3
+    },
+    {
+     "name": "Setup Rust toolchain",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4
+    },
+    {
+     "name": "Run Swatinem/rust-cache@v2",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5
+    },
+    {
+     "name": "Setup Bun",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6
+    },
+    {
+     "name": "Build frontend",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7
+    },
+    {
+     "name": "Build and stage co-versioned vsplit CLI binary",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8
+    },
+    {
+     "name": "Build and sign Tauri desktop bundle",
+     "status": "in_progress",
+     "conclusion": null,
+     "number": 9
+    },
+    {
+     "name": "Post Setup Bun",
+     "status": "pending",
+     "conclusion": null,
+     "number": 16
+    },
+    {
+     "name": "Post Run Swatinem/rust-cache@v2",
+     "status": "pending",
+     "conclusion": null,
+     "number": 17
+    },
+    {
+     "name": "Post Run actions/checkout@v4",
+     "status": "pending",
+     "conclusion": null,
+     "number": 18
+    }
+   ]
+  }
+ ]
+}

@@ -2,13 +2,18 @@
 // kept in this closure only), API requests through the injected fetch with a glab/gh CLI fallback, a 401
 // re-login, timeouts on the collector's clock, and per-host backoff. (No Node built-ins: bundled into Herdr mods.)
 import { limiter } from "./limiter.js";
-import { normalizeStatus, gitlabPipeline, githubLatest } from "./ci.js";
+import { normalizeStatus, gitlabCommitPipeline, githubLatest, lastLogLine } from "./ci.js";
 
 const HTTP_LIMIT = 4; // HTTP requests (or CLI api calls) at once
 const TIMEOUT = 15000;
 const BACKOFF = [30000, 60000, 120000, 300000];
 const HOSTS_KEY = "dock.git.hosts";
 const RELOGIN = 300000; // a host with no login is checked again at the slow CI cadence
+const COMMIT_GROUPS = 3; // GitLab: pipelines of one commit shown, the newest per ref
+// Log tails per full poll. The HTTP limiter is shared by every host and worktree, so logs never take more than half.
+const LOG_JOBS = 2;
+const TRACE_TAIL = "bytes=-16384"; // lastLogLine reads only the last 16 KB
+const TRACE_TIMEOUT = 8000;
 // glab auth status output that clearly means "no login" (anything else non-zero may be the network).
 const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
@@ -34,6 +39,10 @@ export function createCiClient(io, log) {
     for (const k of secrets) t = t.split(k).join("***");
     return t;
   };
+  // Full GitLab polls: per "host|path", jobId -> { line, busy, failLogged } for the jobs still running. A failed
+  // trace call keeps the job's previous line, and is logged once until a call succeeds again.
+  const lastLog = new Map();
+  const rangeLogged = new Set(); // hosts whose answer to a Range request was logged (does GitLab honour it?)
   const rec = (host) => {
     if (!hosts.has(host)) hosts.set(host, {
       want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
@@ -243,7 +252,7 @@ export function createCiClient(io, log) {
       }
       if (r.bad) return fail(h, "bad response", false, startedAt, {}, opts);
       if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt, { status: r.status }, opts);
-      return good(h, r.data);
+      return { ...good(h, r.data), status: r.status }; // only this route knows it (206 vs 200 for a Range request)
     } catch (e) {
       if (e instanceof Timeout) return fail(h, "timeout", true, startedAt, {}, opts);
       // A network or TLS error (not an HTTP status): use the CLI for this host for the rest of the session.
@@ -253,49 +262,142 @@ export function createCiClient(io, log) {
     }
   }
 
-  // The latest GitLab pipeline of a ref (or sha), newest id first, with its jobs when failed or running.
-  async function gitlabLatest(host, path, { branch, sha }) {
-    const enc = encodeURIComponent(path);
-    const q = branch ? `ref=${encodeURIComponent(branch)}` : `sha=${encodeURIComponent(sha)}`;
-    const r = await request(host, "GET", `projects/${enc}/pipelines?${q}&per_page=1&order_by=id&sort=desc`);
-    if (!r.ok) return r;
-    if (!Array.isArray(r.data)) return { ok: false, error: "bad response", hostFailure: false };
-    const p = r.data[0];
-    if (!p) return { ok: true, pipeline: null };
-    let jobs = null;
-    if (["failed", "running"].includes(normalizeStatus("gitlab", p))) {
-      const j = await request(host, "GET", `projects/${enc}/pipelines/${encodeURIComponent(p.id)}/jobs?per_page=100`);
-      // Jobs may come newest first: sort by id so stage order and the first failed job are right. Without
-      // jobs the status (and an alert) still stand; only stages and failed jobs are missing.
-      if (j.ok && Array.isArray(j.data)) jobs = [...j.data].sort((a, b) => a.id - b.id);
-      else log(`CI: jobs of ${host}/${path} pipeline ${p.id}: ${j.error ?? "bad response"}`);
-    }
-    return { ok: true, pipeline: gitlabPipeline(p, jobs) };
+  // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has results
+  // (a tag build of HEAD is filed under the tag, not the branch); else the branch's newest, as before.
+  async function branchOrCommit(host, path, branchPath, commitPath, rows) {
+    const [b, c] = await Promise.all([request(host, "GET", branchPath), request(host, "GET", commitPath)]);
+    const found = c.ok ? rows(c.data) : null;
+    if (found?.length) return c;
+    if (!found) log(`CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+    return b;
   }
 
-  // GitHub: the branch's recent runs; the newest head_sha's runs make one pipeline (githubLatest).
-  async function githubLatestOf(host, path, { branch, sha }) {
-    const repo = path.split("/").map(encodeURIComponent).join("/");
-    const q = branch ? `branch=${encodeURIComponent(branch)}` : `head_sha=${encodeURIComponent(sha)}`;
-    const r = await request(host, "GET", `repos/${repo}/actions/runs?${q}&per_page=20`);
+  // A worktree's runs: by branch and HEAD commit; by sha alone when detached; by branch alone before a first commit.
+  const runsOf = (host, path, { branch, sha }, branchPath, commitPath, rows) =>
+    !branch ? request(host, "GET", commitPath)
+      : !sha ? request(host, "GET", branchPath)
+        : branchOrCommit(host, path, branchPath, commitPath, rows);
+
+  // A job (or bridge) list sorted by id, or null with a log line. Jobs may come newest first: stage order and the
+  // first failed job need id order. Without jobs the status (and an alert) still stand.
+  function listOf(r, what) {
+    if (!r) return null;
+    if (r.ok && Array.isArray(r.data)) return [...r.data].sort((a, b) => a.id - b.id);
+    log(`CI: ${what}: ${r.error ?? "bad response"}`);
+    return null;
+  }
+
+  // GitLab: the HEAD commit's pipelines (the newest per ref, at most 3), else the branch's newest. Jobs of a failed
+  // or running pipeline; full: every pipeline's jobs and bridges, and the running jobs' last log lines.
+  async function gitlabLatest(host, path, head, { full = false } = {}) {
+    const enc = encodeURIComponent(path);
+    const pipes = `projects/${enc}/pipelines?`;
+    const sha = encodeURIComponent(head.sha);
+    const rows = (d) => (Array.isArray(d) ? d : null);
+    const r = await runsOf(host, path, head,
+      `${pipes}ref=${encodeURIComponent(head.branch)}&per_page=1&order_by=id&sort=desc`,
+      head.branch ? `${pipes}sha=${sha}&order_by=id&sort=desc&per_page=5` : `${pipes}sha=${sha}&per_page=1&order_by=id&sort=desc`,
+      rows);
     if (!r.ok) return r;
-    if (!Array.isArray(r.data?.workflow_runs)) return { ok: false, error: "bad response", hostFailure: false };
+    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
+    const kept = [];
+    const refs = new Set();
+    for (const p of r.data) {
+      if (refs.has(p.ref) || kept.length >= COMMIT_GROUPS) continue;
+      refs.add(p.ref);
+      kept.push(p);
+    }
+    const entries = await Promise.all(kept.map(async (p) => {
+      const at = `projects/${enc}/pipelines/${encodeURIComponent(p.id)}`;
+      const wantJobs = full || ["failed", "running"].includes(normalizeStatus("gitlab", p));
+      const [j, b] = await Promise.all([
+        wantJobs ? request(host, "GET", `${at}/jobs?per_page=100`) : null,
+        full ? request(host, "GET", `${at}/bridges?per_page=100`) : null,
+      ]);
+      return {
+        pipeline: p,
+        jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
+        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`),
+      };
+    }));
+    const pipeline = gitlabCommitPipeline(entries);
+    if (full && pipeline) await logLines(host, path, pipeline);
+    return { ok: true, pipeline };
+  }
+
+  // Sets logLine on the most recently started running jobs (not bridges: they have no log of their own).
+  async function logLines(host, path, pipeline) {
+    const key = `${host}|${path}`;
+    const prev = lastLog.get(key) ?? new Map();
+    const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
+    const kept = new Map(); // a job no longer running drops its entry
+    for (const j of runningJobs) kept.set(j.id, prev.get(j.id) ?? { line: null, busy: false, failLogged: false });
+    lastLog.set(key, kept);
+    const started = (j) => Date.parse(j.startedAt) || 0;
+    const newest = [...runningJobs].sort((a, b) => started(b) - started(a)).slice(0, LOG_JOBS);
+    await Promise.all(newest.map(async (j) => {
+      const e = kept.get(j.id);
+      if (!e.busy) await fetchLogLine(host, path, j.id, e); // else its previous call is still in flight
+      j.logLine = e.line;
+    }));
+  }
+
+  // A trace call asks for the log's tail and never counts toward the host's backoff, so a big or slow log can't
+  // stop CI for the host. A 416 (the Range refused) is asked once more without it.
+  async function fetchLogLine(host, path, jobId, e) {
+    const trace = `projects/${encodeURIComponent(path)}/jobs/${encodeURIComponent(jobId)}/trace`;
+    const opts = { text: true, noBackoff: true, timeout: TRACE_TIMEOUT };
+    e.busy = true;
+    try {
+      let r = await request(host, "GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
+      if (r.ok && (r.status === 206 || r.status === 200) && !rangeLogged.has(host)) {
+        rangeLogged.add(host);
+        log(`CI: ${host} trace Range ${r.status === 206 ? "honoured" : "ignored"}`);
+      }
+      if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
+      if (r.ok) {
+        // Redacted before lastLogLine cuts the line to 200 characters, so a token split by the cut can't slip out.
+        e.line = lastLogLine(redact(r.data));
+        e.failLogged = false;
+      } else if (!e.failLogged) {
+        e.failLogged = true;
+        log(`CI: trace of ${host}/${path} job ${jobId}: ${r.error}`);
+      }
+    } finally {
+      e.busy = false;
+    }
+  }
+
+  // GitHub: the HEAD commit's runs, else the branch's recent runs; the newest head_sha's runs make one pipeline
+  // (githubLatest). Jobs of its failed runs; full: of every run.
+  async function githubLatestOf(host, path, head, { full = false } = {}) {
+    const repo = path.split("/").map(encodeURIComponent).join("/");
+    const runs = `repos/${repo}/actions/runs?`;
+    const rows = (d) => (Array.isArray(d?.workflow_runs) ? d.workflow_runs : null);
+    const r = await runsOf(host, path, head,
+      `${runs}branch=${encodeURIComponent(head.branch)}&per_page=20`,
+      `${runs}head_sha=${encodeURIComponent(head.sha)}&per_page=20`,
+      rows);
+    if (!r.ok) return r;
+    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
     const first = githubLatest(r.data, {});
     if (!first) return { ok: true, pipeline: null };
-    const failed = r.data.workflow_runs.filter((x) => x.head_sha === first.id && normalizeStatus("github", x) === "failed");
+    const ofHead = r.data.workflow_runs.filter((x) => x.head_sha === first.id);
+    const failed = ofHead.filter((x) => normalizeStatus("github", x) === "failed");
     const jobsByRunId = {};
-    await Promise.all(failed.map(async (run) => {
+    await Promise.all((full ? ofHead : failed).map(async (run) => {
       const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs`);
       if (j.ok) jobsByRunId[run.id] = j.data;
       else log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
-    const canceled = r.data.workflow_runs.filter((x) => x.head_sha === first.id && normalizeStatus("github", x) === "canceled");
+    const canceled = ofHead.filter((x) => normalizeStatus("github", x) === "canceled");
     return { ok: true, pipeline: githubLatest(r.data, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }
 
-  // The latest pipeline of a worktree's branch (or detached sha): { ok, pipeline: Pipeline | null, runIds }.
-  const latest = (host, provider, path, head) =>
-    (provider === "github" ? githubLatestOf : gitlabLatest)(host, path, head);
+  // A worktree's pipeline, every build of its HEAD commit (else its branch's newest): { ok, pipeline: Pipeline |
+  // null, runIds, canceledRunIds }. opts.full: every job (GitLab bridges too), with running jobs' last log lines.
+  const latest = (host, provider, path, head, opts) =>
+    (provider === "github" ? githubLatestOf : gitlabLatest)(host, path, head, opts);
 
   // Retry: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed run of that commit, and
   // reruns each canceled run whole (a canceled run has no failed jobs to rerun).

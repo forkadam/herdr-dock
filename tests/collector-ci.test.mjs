@@ -12,6 +12,10 @@ const TOKEN = "glpat-secret123";
 const WT = "|d:/work/api";
 const GL = "https://gitlab.corp/api/v4/projects/grp%2Fapi";
 const PIPES = `${GL}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`;
+// The HEAD-commit query beside the branch one (the harness's HEAD is c...c). Unrouted, it answers 404 and the
+// client falls back to the branch's pipeline.
+const HEAD_SHA = "c".repeat(40);
+const SHAQ = `${GL}/pipelines?sha=${HEAD_SHA}&order_by=id&sort=desc&per_page=5`;
 
 const status = (branch, { ab = "+0 -0", oid = "c".repeat(40) } = {}) =>
   ok([`# branch.oid ${oid}`, `# branch.head ${branch}`, `# branch.upstream origin/${branch}`, `# branch.ab ${ab}`].join("\n"));
@@ -123,7 +127,9 @@ test("(a) GitLab failed pipeline: state, detail, token header, no token anywhere
   assert.deepEqual(d.pipeline.stages.map((s) => s.name), ["build", "test", "deploy"]);
   assert.equal(d.pipeline.failedJobs[0].name, "unit");
   assert.equal(c.urlFor("pipeline"), "https://gitlab.corp/grp/api/-/pipelines/48213");
-  assert.equal(c.urlFor({ job: 0 }), "https://gitlab.corp/grp/api/-/jobs/902");
+  // An index into pipeline.jobs (every job, sorted by id), not into failedJobs.
+  assert.equal(c.urlFor({ job: 1 }), "https://gitlab.corp/grp/api/-/jobs/902");
+  assert.equal(c.urlFor({ job: 0 }), "https://gitlab.corp/grp/api/-/jobs/901");
   assert.equal(c.urlFor({ job: 5 }), null);
   noToken(io, c);
 });
@@ -184,6 +190,7 @@ test("(e) a TLS error switches the host to glab api for the session", async () =
     cli: {
       [`glab api --hostname gitlab.corp ${path}`]: ok(JSON.stringify([pipeline()])),
       "glab api --hostname gitlab.corp projects/grp%2Fapi/pipelines/48213/jobs?per_page=100": ok(JSON.stringify(JOBS)),
+      [`glab api --hostname gitlab.corp projects/grp%2Fapi/pipelines?sha=${HEAD_SHA}&order_by=id&sort=desc&per_page=5`]: ok("[]"),
     },
   });
   const c = createCollector(io);
@@ -194,12 +201,14 @@ test("(e) a TLS error switches the host to glab api for the session", async () =
   await c.select(WT);
   assert.equal(detailOf(io).via, "glab");
   assert.equal(detailOf(io).pipeline.failedJobs[0].name, "unit");
-  // The next poll for that host goes straight to glab.
+  // The next poll for that host goes straight to glab (the commit query, already sent by fetch on the first poll,
+  // too): branch, commit and jobs.
   const fetched = io.fetches.length;
   io.t += 300000;
   await c.tick();
   assert.equal(io.fetches.length, fetched);
-  assert.equal(io.calls.filter((x) => x.cmd === "glab" && x.args[0] === "api").length, 4);
+  assert.equal(io.calls.filter((x) => x.cmd === "glab" && x.args[0] === "api").length, 5);
+  assert.equal(detailOf(io).pipeline.failedJobs[0].name, "unit");
   noToken(io, c);
 });
 
@@ -216,7 +225,8 @@ test("(f2) a second 401 is 'not logged in', with the hint", async () => {
   const { io } = ciIo({ routes: { [PIPES]: res(401, { message: "401 Unauthorized" }) } });
   const c = createCollector(io);
   await c.tick();
-  assert.equal(io.fetches.length, 2);
+  // The branch query twice (the 401 retry), and the HEAD-commit query once.
+  assert.deepEqual(io.fetches.map((f) => f.url).sort(), [PIPES, PIPES, SHAQ].sort());
   assert.equal(wtOf(c).pipeline.status, "unknown");
   assert.equal(wtOf(c).pipeline.error, "not logged in");
 });
@@ -225,8 +235,9 @@ test("(g) a request that never resolves times out after 15 s of fake time", asyn
   let signal;
   const { io } = ciIo({ routes: { [PIPES]: (u, init) => { signal = init.signal; return new Promise(() => {}); } } });
   const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
   const first = c.tick();
-  await until(() => io.fetches.length === 1);
+  await until(() => n() === 1);
   io.t += 14999;
   await c.tick();
   assert.equal(wtOf(c).pipeline, null);
@@ -237,13 +248,13 @@ test("(g) a request that never resolves times out after 15 s of fake time", asyn
   assert.equal(w.pipeline.status, "unknown");
   assert.equal(w.pipeline.error, "timeout");
   assert.equal(signal?.aborted, true);
-  // The host backs off 30 s before the next try.
+  // The host backs off 30 s before the next try: nothing more than the first poll's two queries.
   io.t += 29000;
   await c.tick();
-  assert.equal(io.fetches.length, 1);
+  assert.deepEqual(io.fetches.map((f) => f.url), [PIPES, SHAQ]);
   io.t += 1000;
   c.tick();
-  await until(() => io.fetches.length === 2);
+  await until(() => n() === 2);
 });
 
 test("(h) alerts: running -> failed alerts once; no repeat on the next tick or after a restart", async () => {
@@ -334,11 +345,15 @@ test("(j) retry() on GitLab posts to .../pipelines/48213/retry", async () => {
 test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for the failed run", async () => {
   const RUNS = "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20";
   const RERUN = "https://api.github.com/repos/o/r/actions/runs/301/rerun-failed-jobs";
+  const SHA = "bbbb000000000000000000000000000000000002";
+  const HEAD_RUNS = `https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=20`;
+  const all = fx("github-runs.json");
   const { io } = ciIo({
     origin: "https://github.com/o/r.git",
-    st: status("main", { oid: "bbbb000000000000000000000000000000000002" }),
+    st: status("main", { oid: SHA }),
     routes: {
-      [RUNS]: res(200, fx("github-runs.json")),
+      [RUNS]: res(200, all),
+      [HEAD_RUNS]: res(200, { total_count: 2, workflow_runs: all.workflow_runs.filter((r) => r.head_sha === SHA) }),
       "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
       [RERUN]: res(201, {}),
     },
@@ -353,8 +368,8 @@ test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for th
   assert.equal(io.fetches[0].init.headers.Accept, "application/vnd.github+json");
   // GitHub refuses API requests with no User-Agent (HTTP 403), and Herdr's fetch sends none.
   assert.equal(io.fetches[0].init.headers["User-Agent"], "herdr-dock");
-  // Only the failed run's jobs are fetched.
-  assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs"]);
+  // The branch's runs, HEAD's runs, and only the failed run's jobs.
+  assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, HEAD_RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs"]);
   await c.select(WT);
   assert.deepEqual(detailOf(io).pipeline.failedJobs.map((j) => j.name), ["test"]);
   assert.deepEqual(await c.retry(), { ok: true, error: null });
@@ -372,6 +387,7 @@ test("detached HEAD queries by sha, and an older pipeline is marked stale", asyn
   const c = createCollector(io);
   await c.tick();
   assert.equal(io.fetches[0].url, url);
+  assert.equal(io.fetches.length, 1, "detached: the sha query only");
   assert.equal(wtOf(c).pipeline.stale, true);
   await c.select(WT);
   assert.equal(detailOf(io).olderThanHead, true);
@@ -727,7 +743,8 @@ test("request text mode returns the body as a string (fetch), with extra headers
   const c = createCiClient(io, () => {});
   await c.resolve("gitlab.corp");
   const r = await c.request("gitlab.corp", "GET", TRACE, { text: true, headers: RANGE });
-  assert.deepEqual(r, { ok: true, data: "log\n" });
+  // The fetch route carries the status too (206 vs 200 tells whether Range was honoured).
+  assert.deepEqual(r, { ok: true, data: "log\n", status: 200 });
   const h = io.fetches[0].init.headers;
   assert.equal(h.Range, "bytes=-16384");
   assert.equal(h["PRIVATE-TOKEN"], TOKEN);
@@ -826,4 +843,238 @@ test("request on the CLI route: noBackoff skips backoff, a 4xx sets status, text
   assert.deepEqual([b.ok, b.status, b.hostFailure], [false, 416, false]);
   const d = await c.request("gitlab.corp", "GET", "projects/c", { text: true });
   assert.equal(d.data, `token ${TOKEN} end`);
+});
+
+// --- every build of the HEAD commit; full mode -----------------------------------------------------
+
+const glJobs = (id) => `${GL}/pipelines/${id}/jobs?per_page=100`;
+const glBridges = (id) => `${GL}/pipelines/${id}/bridges?per_page=100`;
+const traceUrl = (id) => `${GL}/jobs/${id}/trace`;
+const MAIN = { branch: "main", sha: HEAD_SHA };
+// A client of its own (no collector), for full mode until the collector passes it.
+async function clientOf(host, opts) {
+  const { io } = ciIo(opts);
+  const c = createCiClient(io, (m) => io.logs.push(String(m)));
+  await c.resolve(host);
+  return { io, c };
+}
+
+const TAG_SHA = "72aae06acf525dfbdb5f50e749a2af205b6b36ee";
+const GH = "https://api.github.com/repos/acme/app/actions/runs";
+const GH_BRANCH = `${GH}?branch=main&per_page=20`;
+const GH_HEAD = (sha) => `${GH}?head_sha=${sha}&per_page=20`;
+const ghTag = { origin: "https://github.com/acme/app.git", st: status("main", { oid: TAG_SHA }) };
+const ciOnly = () => {
+  const all = fx("github-runs-tag.json");
+  return { total_count: 1, workflow_runs: all.workflow_runs.filter((r) => r.name === "CI") };
+};
+
+test("GitHub: a tag run of HEAD shows beside the branch run", async () => {
+  const { io } = ciIo({ ...ghTag, routes: { [GH_BRANCH]: res(200, ciOnly()), [GH_HEAD(TAG_SHA)]: res(200, fx("github-runs-tag.json")) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].url, GH_BRANCH);
+  assert.equal(wtOf(c).pipeline.status, "running");
+  await c.select(WT);
+  const d = detailOf(io);
+  assert.equal(d.pipeline.status, "running");
+  assert.deepEqual(d.pipeline.groups.map((g) => [g.name, g.ref]), [["Release", "v0.4.0-alpha.0"], ["CI", "main"]]);
+  assert.equal(d.olderThanHead, false);
+  assert.equal(io.logs.filter((l) => l.includes("HEAD commit query")).length, 0);
+});
+
+test("GitHub: no run for HEAD yet -> the branch's newest commit, older than HEAD", async () => {
+  const { io } = ciIo({
+    origin: "https://github.com/o/r.git", st: status("main", { oid: "f".repeat(40) }),
+    routes: {
+      "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": res(200, fx("github-runs.json")),
+      [`https://api.github.com/repos/o/r/actions/runs?head_sha=${"f".repeat(40)}&per_page=20`]: res(200, { total_count: 0, workflow_runs: [] }),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.id, "bbbb000000000000000000000000000000000002");
+  await c.select(WT);
+  assert.equal(detailOf(io).olderThanHead, true);
+});
+
+test("GitLab: the HEAD-commit query failing falls back to the branch pipeline", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline()]), [glJobs(48213)]: res(200, JOBS) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].url, PIPES);
+  assert.ok(io.fetches.some((f) => f.url === SHAQ), "the commit query was asked");
+  assert.equal(wtOf(c).pipeline.id, 48213);
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  const lines = io.logs.filter((l) => l.includes("HEAD commit query"));
+  assert.deepEqual(lines, ["CI: gitlab.corp/grp/api: HEAD commit query: HTTP 404"]);
+});
+
+test("GitLab: a tag pipeline of HEAD", async () => {
+  const tag = pipeline({ id: 20, ref: "v1.0.0", status: "running", web_url: "https://gitlab.corp/grp/api/-/pipelines/20" });
+  const branch = pipeline({ id: 10, ref: "main", status: "success", web_url: "https://gitlab.corp/grp/api/-/pipelines/10" });
+  const { io } = ciIo({
+    routes: {
+      [PIPES]: res(200, [branch]), [SHAQ]: res(200, [tag, branch]),
+      [glJobs(20)]: res(200, [{ id: 950, name: "build", stage: "build", status: "running" }]),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.fetches[0].url, PIPES);
+  assert.equal(wtOf(c).pipeline.id, 20);
+  assert.equal(wtOf(c).pipeline.status, "running");
+  await c.select(WT);
+  const d = detailOf(io);
+  assert.deepEqual(d.pipeline.groups.map((g) => [g.name, g.ref]), [["#20", "v1.0.0"], ["#10", "main"]]);
+  assert.equal(d.olderThanHead, false);
+  // Not full: the passed branch pipeline's jobs aren't fetched (today's rule), nor any bridges.
+  assert.ok(!io.fetches.some((f) => f.url === glJobs(10) || f.url.includes("/bridges")));
+});
+
+test("GitLab: the commit's newest pipeline per ref, at most 3 groups", async () => {
+  const p = (id, ref) => pipeline({ id, ref, status: "success" });
+  const { c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [p(30, "main")]), [SHAQ]: res(200, [p(50, "a"), p(40, "b"), p(30, "a"), p(20, "c"), p(10, "d")]) },
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.pipeline.groups.map((g) => [g.name, g.ref]), [["#50", "a"], ["#40", "b"], ["#20", "c"]]);
+});
+
+const passedJobs = JOBS.map((j) => ({ ...j, status: "success" }));
+const BRIDGE = {
+  id: 904, name: "child", stage: "deploy", status: "success", web_url: "https://gitlab.corp/grp/api/-/jobs/904",
+  pipeline: { id: 48213, project_id: 1 },
+  downstream_pipeline: { id: 7, project_id: 1, status: "success", web_url: "https://gitlab.corp/grp/api/-/pipelines/7" },
+};
+
+test("GitLab full: a passed pipeline still fetches its jobs and bridges; not full fetches none", async () => {
+  const routes = {
+    [PIPES]: res(200, [pipeline({ status: "success" })]), [SHAQ]: res(200, [pipeline({ status: "success" })]),
+    [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, [BRIDGE]),
+  };
+  const full = await clientOf("gitlab.corp", { routes });
+  const r = await full.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.pipeline.status, "passed");
+  assert.deepEqual(r.pipeline.jobs.map((j) => [j.id, j.bridge]), [[901, false], [902, false], [903, false], [904, true]]);
+  assert.deepEqual(full.io.fetches.map((f) => f.url).sort(), [PIPES, SHAQ, glBridges(48213), glJobs(48213)].sort());
+
+  const plain = await clientOf("gitlab.corp", { routes });
+  const q = await plain.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(q.pipeline.status, "passed");
+  assert.deepEqual(q.pipeline.jobs, []);
+  assert.deepEqual(plain.io.fetches.map((f) => f.url), [PIPES, SHAQ]);
+});
+
+const running = (o = {}) => pipeline({ status: "running", ...o });
+const RUNNING_JOBS = [
+  { id: 911, name: "a", stage: "test", status: "running", started_at: "2026-11-22T09:01:00Z" },
+  { id: 912, name: "b", stage: "test", status: "running", started_at: "2026-11-22T09:03:00Z" },
+  { id: 913, name: "c", stage: "test", status: "running", started_at: "2026-11-22T09:02:00Z" },
+];
+const RUNNING_BRIDGE = { ...BRIDGE, id: 914, status: "running", started_at: "2026-11-22T09:09:00Z",
+  downstream_pipeline: { ...BRIDGE.downstream_pipeline, status: "running" } };
+const fullRoutes = (o = {}) => ({
+  [PIPES]: res(200, [running()]), [SHAQ]: res(200, [running()]),
+  [glJobs(48213)]: res(200, RUNNING_JOBS), [glBridges(48213)]: res(200, []), ...o,
+});
+const lineOf = (r, id) => r.pipeline.jobs.find((j) => j.id === id).logLine;
+
+test("GitLab full: log lines for the 2 newest running jobs only", async () => {
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({
+      [glBridges(48213)]: res(200, [RUNNING_BRIDGE]),
+      [traceUrl(911)]: textRes(206, "step\nat 911\n"),
+      [traceUrl(912)]: textRes(206, "step\nat 912\n"),
+      [traceUrl(913)]: textRes(206, "step\nat 913\n"),
+    }),
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(r, 912), "at 912");
+  assert.equal(lineOf(r, 913), "at 913");
+  assert.equal(lineOf(r, 911), null);
+  assert.equal(lineOf(r, 914), null, "no log line for a bridge");
+  const traces = io.fetches.filter((f) => f.url.endsWith("/trace"));
+  assert.deepEqual(traces.map((f) => f.url).sort(), [traceUrl(912), traceUrl(913)]);
+  for (const t of traces) assert.equal(t.init.headers.Range, "bytes=-16384");
+  assert.deepEqual(io.logs.filter((l) => l.includes("trace Range")), ["CI: gitlab.corp trace Range honoured"]);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(io.logs.filter((l) => l.includes("trace Range")).length, 1, "once per host");
+});
+
+test("GitLab full: a 416 trace retries once without Range", async () => {
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({
+      [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]),
+      [traceUrl(912)]: (u, init) => (init.headers.Range ? textRes(416, "") : textRes(200, "whole\nlast line\n")),
+    }),
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(r, 912), "last line");
+  const traces = io.fetches.filter((f) => f.url === traceUrl(912));
+  assert.equal(traces.length, 2);
+  assert.equal(traces[0].init.headers.Range, "bytes=-16384");
+  assert.equal(traces[1].init.headers.Range, undefined);
+});
+
+test("GitLab full: a failed trace keeps the job's previous logLine, logged once", async () => {
+  let trace = textRes(206, "one\ntwo\n");
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]), [traceUrl(912)]: () => trace }),
+  });
+  assert.equal(lineOf(await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), 912), "two");
+  trace = textRes(500, "");
+  assert.equal(lineOf(await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), 912), "two");
+  assert.equal(lineOf(await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), 912), "two");
+  assert.deepEqual(io.logs.filter((l) => l.includes("trace of")), ["CI: trace of gitlab.corp/grp/api job 912: HTTP 500"]);
+  // A failed trace never blocks the host.
+  assert.equal(c.blocked("gitlab.corp", io.t), false);
+});
+
+test("GitLab full: the log line is redacted, even where the 200-character cut splits the token", async () => {
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({
+      [glJobs(48213)]: res(200, RUNNING_JOBS.slice(1)),
+      [traceUrl(912)]: textRes(200, `start\ncurl -H "PRIVATE-TOKEN: ${TOKEN}" https://x\n`),
+      [traceUrl(913)]: textRes(200, `start\n${"x".repeat(190)}${TOKEN}\n`),
+    }),
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(r, 912), 'curl -H "PRIVATE-TOKEN: ***" https://x');
+  assert.equal(lineOf(r, 913), `${"x".repeat(190)}***`);
+  assert.ok(!JSON.stringify(r).includes("glpat-"), "no token, whole or cut");
+  assert.deepEqual(io.logs.filter((l) => l.includes("trace Range")), ["CI: gitlab.corp trace Range ignored"]);
+});
+
+test("GitHub full: jobs of every run of HEAD are fetched; not full only failed runs'", async () => {
+  const routes = {
+    [GH_BRANCH]: res(200, ciOnly()), [GH_HEAD(TAG_SHA)]: res(200, fx("github-runs-tag.json")),
+    [`${GH}/45823655383/jobs`]: res(200, fx("github-jobs-45823655383.json")),
+    [`${GH}/45822438336/jobs`]: res(200, fx("github-jobs-45822438336.json")),
+  };
+  const head = { branch: "main", sha: TAG_SHA };
+  const full = await clientOf("github.com", { ...ghTag, routes });
+  const r = await full.c.latest("github.com", "github", "acme/app", head, { full: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.pipeline.status, "running");
+  assert.deepEqual(r.pipeline.groups.map((g) => g.name), ["Release", "CI"]);
+  assert.deepEqual(r.pipeline.jobs.map((j) => [j.group, j.name, j.status]), [
+    ["gh:45823655383", "publish (ubuntu-22.04, appimage)", "passed"],
+    ["gh:45823655383", "publish (windows-latest, nsis)", "running"],
+    ["gh:45822438336", "check-and-test (ubuntu-latest)", "passed"],
+    ["gh:45822438336", "check-and-test (windows-latest)", "passed"],
+  ]);
+  assert.equal(r.pipeline.jobs[1].step.index, 9);
+  assert.equal(r.pipeline.jobs[1].step.total, 12);
+  assert.deepEqual(full.io.fetches.slice(0, 2).map((f) => f.url), [GH_BRANCH, GH_HEAD(TAG_SHA)]);
+  assert.equal(full.io.fetches.filter((f) => f.url.endsWith("/jobs")).length, 2);
+
+  const plain = await clientOf("github.com", { ...ghTag, routes });
+  const q = await plain.c.latest("github.com", "github", "acme/app", head);
+  assert.equal(q.pipeline.status, "running");
+  assert.deepEqual(q.pipeline.jobs, []);
+  assert.deepEqual(plain.io.fetches.map((f) => f.url), [GH_BRANCH, GH_HEAD(TAG_SHA)]);
 });

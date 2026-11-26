@@ -584,12 +584,12 @@ export function createCollector(io) {
     return r;
   }
 
-  // The selected pipeline's web URL, or one of its failed jobs' (by index into failedJobs).
+  // The selected pipeline's web URL, or one of its jobs' (by index into pipeline.jobs, the jobs view's rows).
   function urlFor(target) {
     const p = wtRecs.get(selected)?.ci.pipeline;
     if (!p) return null;
     if (target === "pipeline") return p.webUrl ?? null;
-    const job = Number.isInteger(target?.job) ? p.failedJobs?.[target.job] : null;
+    const job = Number.isInteger(target?.job) ? p.jobs?.[target.job] : null;
     return job?.webUrl ?? null;
   }
 

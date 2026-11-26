@@ -1,0 +1,35 @@
+{
+ "total_count": 2,
+ "workflow_runs": [
+  {
+   "id": 45823655383,
+   "name": "Release",
+   "head_branch": "v0.4.0-alpha.0",
+   "head_sha": "72aae06acf525dfbdb5f50e749a2af205b6b36ee",
+   "run_number": 1,
+   "event": "push",
+   "status": "in_progress",
+   "conclusion": null,
+   "html_url": "https://github.com/acme/app/actions/runs/45823655383",
+   "created_at": "2026-11-26T12:52:02Z",
+   "updated_at": "2026-11-26T12:52:04Z",
+   "run_started_at": "2026-11-26T12:52:02Z",
+   "run_attempt": 1
+  },
+  {
+   "id": 45822438336,
+   "name": "CI",
+   "head_branch": "main",
+   "head_sha": "72aae06acf525dfbdb5f50e749a2af205b6b36ee",
+   "run_number": 2,
+   "event": "push",
+   "status": "completed",
+   "conclusion": "success",
+   "html_url": "https://github.com/acme/app/actions/runs/45822438336",
+   "created_at": "2026-11-26T12:44:13Z",
+   "updated_at": "2026-11-26T12:50:41Z",
+   "run_started_at": "2026-11-26T12:44:13Z",
+   "run_attempt": 1
+  }
+ ]
+}
