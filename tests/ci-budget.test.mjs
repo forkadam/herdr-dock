@@ -49,3 +49,34 @@ test("lru drops the least recently used", () => {
   c.delete("a");
   assert.equal(c.size, 1);
 });
+
+test("cliLimited: a bare 429 inside a URL or id is not a limit", () => {
+  assert.equal(cliLimited("HTTP 404: Not Found (https://api.github.com/repos/a/b/actions/runs/429)"), false);
+  assert.equal(cliLimited("HTTP 429: slow down"), true);
+  assert.equal(cliLimited("429 Too Many Requests"), true);
+});
+
+test("readLimit: no reset header keeps the pair; pauseFor falls to retryAfter", () => {
+  assert.deepEqual(readLimit(headers({ "x-ratelimit-remaining": "5", "x-ratelimit-limit": "10" }), "github"), { remaining: 5, limit: 10, resetAt: null });
+  assert.equal(pauseFor({ status: 429, resetAt: null, retryAfter: 7, now: 1000 }), 7000);
+});
+
+test("readLimit: only plain non-negative integers count", () => {
+  for (const bad of ["0x10", "1e3", "-1", "1.5", ""]) {
+    assert.equal(readLimit(headers({ "x-ratelimit-remaining": bad, "x-ratelimit-limit": "10" }), "github"), null, bad);
+    assert.equal(readLimit(headers({ "x-ratelimit-remaining": "5", "x-ratelimit-limit": bad }), "github"), null, bad);
+  }
+  assert.deepEqual(readLimit(headers({ "x-ratelimit-remaining": " 5 ", "x-ratelimit-limit": "10", "x-ratelimit-reset": "0x10" }), "github"), { remaining: 5, limit: 10, resetAt: null });
+});
+
+test("pauseFor: a string remaining of 0 still pauses a 403", () => {
+  assert.equal(pauseFor({ status: 403, remaining: "0", resetAt: 91000, now: 1000 }), 90000);
+});
+
+test("lru: setting an existing key refreshes its order without growing", () => {
+  const c = lru(2);
+  c.set("a", 1); c.set("b", 2); c.set("a", 3); c.set("c", 4);
+  assert.equal(c.get("b"), undefined);
+  assert.equal(c.get("a"), 3);
+  assert.equal(c.size, 2);
+});
