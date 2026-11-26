@@ -379,8 +379,8 @@ function alertFor(args) {
   const body = jobs.length ? `Pipeline failed: ${jobs[0]}${more > 0 ? ` (+${more} more)` : ""}` : "Pipeline failed";
   return { title: `${args.repo} \xB7 ${args.branch}`, body };
 }
-function ciInterval({ status, upstreamChangedAt, now, watched }) {
-  if (watched && (status === "running" || status === "pending")) return 1e4;
+function ciInterval({ status, upstreamChangedAt, now, watched, budgetLow }) {
+  if (watched && !budgetLow && (status === "running" || status === "pending")) return 1e4;
   if (status === "running" || status === "pending") return 3e4;
   if (now - upstreamChangedAt < 12e4) return 15e3;
   return 3e5;

@@ -288,9 +288,10 @@ export function alertFor(args) {
   return { title: `${args.repo} · ${args.branch}`, body };
 }
 
-export function ciInterval({ status, upstreamChangedAt, now, watched }) {
-  // A watched panel shows the running job live, so it polls faster than the background cadence.
-  if (watched && (status === "running" || status === "pending")) return 10000;
+export function ciInterval({ status, upstreamChangedAt, now, watched, budgetLow }) {
+  // A watched panel shows the running job live, so it polls faster than the background cadence, unless the
+  // host's API budget is low, when it falls back to the background cadence.
+  if (watched && !budgetLow && (status === "running" || status === "pending")) return 10000;
   if (status === "running" || status === "pending") return 30000;
   if (now - upstreamChangedAt < 120000) return 15000;
   return 300000;
