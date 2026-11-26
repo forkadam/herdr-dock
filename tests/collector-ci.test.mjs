@@ -2220,6 +2220,39 @@ test("low budget: a log line stored before the low stretch never comes back", as
   assert.equal(calls(io, traceUrl(912)), traces + 1);
 });
 
+test("low budget: plain polls alone also drop the stored log line", async () => {
+  let h = { "ratelimit-remaining": "4000", "ratelimit-limit": "5000" };
+  let trace = () => textRes(206, "one\nbefore\n");
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [PIPES]: () => hres(200, [running()], h), [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]), [traceUrl(912)]: () => trace() }),
+  });
+  assert.equal(lineOf(await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), 912), "before");
+  h = { "ratelimit-remaining": "100", "ratelimit-limit": "5000" };
+  for (let i = 0; i < 2; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN); // the panel closed: plain polls
+  assert.equal(c.budget("gitlab.corp").low, true);
+  h = { "ratelimit-remaining": "4000", "ratelimit-limit": "5000" };
+  trace = () => textRes(500, "");
+  assert.equal(lineOf(await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), 912), null);
+  assert.equal(calls(io, traceUrl(912)), 2);
+});
+
+test("low budget: a stretch spent at the limit (remaining 0) also drops the stored log line", async () => {
+  const reset = T0 + 60000;
+  let pipes = () => hres(200, [running()], { "ratelimit-remaining": "4000", "ratelimit-limit": "5000" });
+  let trace = () => textRes(206, "one\nbefore\n");
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [PIPES]: () => pipes(), [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]), [traceUrl(912)]: () => trace() }),
+  });
+  const poll = () => c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(await poll(), 912), "before");
+  pipes = () => hres(403, {}, { "ratelimit-remaining": "0", "ratelimit-limit": "5000", "ratelimit-reset": String(reset / 1000) });
+  assert.equal((await poll()).limited, true); // the lists hit the limit: the poll ends before any jobs
+  io.t = reset;
+  pipes = () => hres(200, [running()], { "ratelimit-remaining": "5000", "ratelimit-limit": "5000" });
+  trace = () => textRes(500, "");
+  assert.equal(lineOf(await poll(), 912), null);
+});
+
 test("a limit hit on the jobs call makes latest() return limited", async () => {
   const gl = await clientOf("gitlab.corp", {
     routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: res(200, [pipeline()]), [glJobs(48213)]: hres(429, {}, { "retry-after": "30" }) },

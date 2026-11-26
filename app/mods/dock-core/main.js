@@ -813,6 +813,9 @@ ${r.stdout ?? ""}`)) {
     const { remaining, limit, resetAt } = h.budget;
     return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
   }
+  const dropLinesIfLow = (host, path) => {
+    if (budget(host)?.low) lastLog.delete(`${host}|${path}`);
+  };
   async function branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
       req("GET", branchPath),
@@ -845,6 +848,7 @@ ${r.stdout ?? ""}`)) {
     return null;
   }
   async function gitlabLatest(host, path, head, { full = false } = {}) {
+    dropLinesIfLow(host, path);
     const poll = pollOf(host);
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
@@ -883,6 +887,7 @@ ${r.stdout ?? ""}`)) {
       if (stamp && jobs && !cached) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
+    dropLinesIfLow(host, path);
     if (poll.limited) return poll.limited;
     const pipeline = gitlabCommitPipeline(entries);
     if (full && pipeline) await logLines(host, path, pipeline, poll.req);
@@ -890,11 +895,8 @@ ${r.stdout ?? ""}`)) {
     return { ok: true, pipeline };
   }
   async function logLines(host, path, pipeline, req) {
+    if (budget(host)?.low) return;
     const key = `${host}|${path}`;
-    if (budget(host)?.low) {
-      lastLog.delete(key);
-      return;
-    }
     const prev = lastLog.get(key) ?? /* @__PURE__ */ new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
     const kept = /* @__PURE__ */ new Map();

@@ -409,6 +409,12 @@ export function createCiClient(io, log) {
     return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
   }
 
+  // A low budget drops the repo's kept log lines on any poll, plain or full, so a line from before the low stretch
+  // never comes back after it.
+  const dropLinesIfLow = (host, path) => {
+    if (budget(host)?.low) lastLog.delete(`${host}|${path}`);
+  };
+
   // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has builds of
   // that commit (a tag build of HEAD is filed under the tag, not the branch), and only those are kept: a server
   // that ignores the filter must not show another branch's builds. Else the branch's newest, as before. Only the
@@ -462,6 +468,7 @@ export function createCiClient(io, log) {
   // or running pipeline; full: every pipeline's jobs and bridges, and the running jobs' last log lines. A finished
   // pipeline's lists come from the job cache while its stamp stays.
   async function gitlabLatest(host, path, head, { full = false } = {}) {
+    dropLinesIfLow(host, path); // a low stretch may have been spent at the limit, with no poll reaching its jobs
     const poll = pollOf(host);
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
@@ -494,6 +501,7 @@ export function createCiClient(io, log) {
       if (stamp && jobs && !cached) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
+    dropLinesIfLow(host, path);
     if (poll.limited) return poll.limited;
     const pipeline = gitlabCommitPipeline(entries);
     if (full && pipeline) await logLines(host, path, pipeline, poll.req);
@@ -505,14 +513,10 @@ export function createCiClient(io, log) {
   // traces are awaited on purpose, so the poll publishes its jobs with their lines: a slow trace delays that
   // poll's publish by at most 8 s (16 s with a 416 retry). The in-flight skip guards overlapping polls of two
   // worktrees of one repo, which can happen after the selection moves between them. On a low budget there are no
-  // traces at all: the calls left go to the lists and jobs, and the repo's kept lines are dropped, so a line from
-  // before the low stretch never comes back after it.
+  // traces at all: the calls left go to the lists and jobs (gitlabLatest drops the kept lines).
   async function logLines(host, path, pipeline, req) {
+    if (budget(host)?.low) return;
     const key = `${host}|${path}`;
-    if (budget(host)?.low) {
-      lastLog.delete(key);
-      return;
-    }
     const prev = lastLog.get(key) ?? new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
     const kept = new Map(); // a job no longer running drops its entry
