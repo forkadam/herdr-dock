@@ -57,7 +57,7 @@ export default class Pipelines extends View {
           if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
           await cx.sleep(TICK_MS);
           // Hidden (the right panel on another feature, or closed), a redraw would only cost battery.
-          if (!this.closed && this.shown() && this.needsRedraw()) cx.notify();
+          if (!this.closed && this.shown() && this.takeRedraw()) cx.notify();
         }
       } finally {
         this.looping = false;
@@ -76,7 +76,8 @@ export default class Pipelines extends View {
 
   // A running job's elapsed time ticks; a limit pause's warn line must go when the pause ends, with no new detail
   // to trigger a draw, so the tick after it ends redraws once more.
-  needsRedraw() {
+  // Not a pure check: it also remembers whether this tick was limited, for the one redraw after the pause ends.
+  takeRedraw() {
     const until = shared("dock.git.detail")?.budget?.limitedUntil;
     const limited = typeof until === "number" && until > Date.now();
     const wasLimited = this.wasLimited;

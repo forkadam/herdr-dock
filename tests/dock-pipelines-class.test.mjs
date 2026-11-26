@@ -292,7 +292,7 @@ test("dock-pipelines: a limit pause redraws each second with no job running, onc
   herdr.data.props = { overlay: "pl" };
   const d = gitlabDetail();
   for (const j of d.pipeline.jobs) j.status = "passed";
-  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 2000 };
+  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 3600000 };
   herdr.data.shared.set("dock.git.detail", d);
   const cx = loopCx();
   const v = new Pipelines();
@@ -300,7 +300,7 @@ test("dock-pipelines: a limit pause redraws each second with no job running, onc
   await cx.tick(2);
   assert.equal(cx.notified, 2);
   // The pause ends: one more redraw so the warn line goes, then the loop is quiet again.
-  d.budget = { ...d.budget, limitedUntil: Date.now() - 1 };
+  d.budget = { ...d.budget, limitedUntil: Date.now() - 3600000 };
   await cx.tick(1);
   assert.equal(cx.notified, 3);
   await cx.tick(3);
