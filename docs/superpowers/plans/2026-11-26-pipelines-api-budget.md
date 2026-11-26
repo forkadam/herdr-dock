@@ -22,7 +22,7 @@ the limit warning.
 - Response headers are read only as `r.headers?.get?.(name)`; when unreadable, nothing in this plan engages (no ETag sent, no budget, no pause from headers) and behaviour equals today's.
 - ETag store: at most 300 entries; job cache: at most 100 entries; oldest dropped first.
 - Low budget: `remaining / limit < 0.10`. Limit pause: until `resetAt`, else `retry-after` seconds, else 60 s; a computed pause ≤ 0 becomes 30 s.
-- A pause is triggered by HTTP 429 (any headers), or 403 with `x-ratelimit-remaining: 0`; never by a 5xx. CLI route: text matching `/rate limit|too many requests|\b429\b/i` → 60 s pause.
+- A pause is triggered by HTTP 429 (any headers), or 403 with `x-ratelimit-remaining: 0`; never by a 5xx. CLI route: text matching `/rate limit|too many requests|\bHTTP 429\b/i` → 60 s pause.
 - A limit pause is not a host failure (no backoff ladder); `client.blocked(host, now)` is true while paused.
 - Panel copy: `GitHub API: 4,321 of 5,000 left` / `GitLab API: …`; `GitHub API limit reached — resumes at HH:MM` (local time).
 - Logs, once per host (or per pause / per low episode): `CI: <host> rate-limit headers seen` | `CI: <host> rate-limit headers not readable`; `CI: <host> API limit reached; paused until HH:MM:SS`; `CI: <host> API budget low (<remaining>/<limit>); slower polling`.

@@ -133,7 +133,7 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
    the host — and is not a host failure (no backoff ladder; the existing "429 backs off" behaviour is replaced and its
    tests updated). Pause length: until `resetAt`, else `retry-after`, else 60 s. A 5xx with `retry-after` stays an
    ordinary 5xx host failure (not shown as "limit reached").
-3. **CLI route (`gh api` / `glab api`):** stderr/stdout matching `/rate limit|too many requests|\b429\b/i` pauses
+3. **CLI route (`gh api` / `glab api`):** stderr/stdout matching `/rate limit|too many requests|\bHTTP 429\b/i` pauses
    the host for 60 s (no reset time there). **Unverified guess:** the exact gh/glab wording; the pattern is broad on
    purpose. The CLI route has no headers, so `budget()` is null there, the budget line is hidden and "low" never
    fires.
