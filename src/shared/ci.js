@@ -102,7 +102,7 @@ export function gitlabCommitPipeline(entries) {
   const base = parts[0];
   // Latest over all entries, like failedJobs: an older pipeline of the commit failing later must move the alert key.
   const stamps = parts.map((x) => x.finishedAt).filter(Boolean);
-  const finishedAt = stamps.length ? stamps.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
+  const finishedAt = latestStamp(stamps);
   const jobs = entries.flatMap((e) => {
     const key = `gl:${e.pipeline.id}`;
     const all = [
@@ -121,6 +121,10 @@ export function gitlabCommitPipeline(entries) {
     jobsTruncated: entries.some((e) => (e.jobs?.length ?? 0) >= GITLAB_PAGE || (e.bridges?.length ?? 0) >= GITLAB_PAGE),
   };
 }
+
+// The newest of some ISO stamps, skipping any that do not parse (one bad first stamp must not outrank later valid ones); null if none parse.
+const latestStamp = (stamps) =>
+  stamps.reduce((a, b) => (Number.isNaN(Date.parse(b)) || (a != null && Date.parse(a) >= Date.parse(b)) ? a : b), null);
 
 const secondsBetween = (a, b) => {
   const d = (Date.parse(b) - Date.parse(a)) / 1000;
@@ -163,7 +167,7 @@ export function githubLatest(runsJson, jobsByRunId) {
   // workflow still running beside a failed one doesn't change it. With no failed run, of all its runs.
   const failedRuns = same.filter((_, i) => stages[i].status === "failed");
   const stamps = (failedRuns.length ? failedRuns : same).map((r) => r.updated_at).filter(Boolean);
-  const finishedAt = stamps.length ? stamps.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
+  const finishedAt = latestStamp(stamps);
   const times = same.map(time).filter(Boolean);
   const earliest = same.find((r) => time(r) === Math.min(...times)) ?? newest;
   const newestFirst = [...same].sort((a, b) => time(b) - time(a));
@@ -226,7 +230,9 @@ export function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
   return { title: `${repo} · ${branch}`, body };
 }
 
-export function ciInterval({ status, upstreamChangedAt, now }) {
+export function ciInterval({ status, upstreamChangedAt, now, watched }) {
+  // A watched panel shows the running job live, so it polls faster than the background cadence.
+  if (watched && (status === "running" || status === "pending")) return 10000;
   if (status === "running" || status === "pending") return 30000;
   if (now - upstreamChangedAt < 120000) return 15000;
   return 300000;
@@ -234,4 +240,18 @@ export function ciInterval({ status, upstreamChangedAt, now }) {
 
 export function gitInterval({ open }) {
   return open ? 15000 : 60000;
+}
+
+// The last meaningful line of a job log, for the running job's live line. Only the tail is read (a log can be
+// megabytes). Colour codes and GitLab's section markers are noise, and a line redrawn with \r keeps only its final draw.
+export function lastLogLine(text) {
+  if (!text) return null;
+  const lines = text
+    .slice(-16384)
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/section_(start|end):\d+:[^\r\n]*/g, "")
+    .split("\n")
+    .map((l) => l.slice(l.lastIndexOf("\r") + 1).trim())
+    .filter(Boolean);
+  return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
 }

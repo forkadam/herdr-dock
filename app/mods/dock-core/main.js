@@ -176,6 +176,7 @@ function gitlabPipeline(p, jobs) {
     jobsTruncated: false
   };
 }
+var latestStamp = (stamps) => stamps.reduce((a, b) => Number.isNaN(Date.parse(b)) || a != null && Date.parse(a) >= Date.parse(b) ? a : b, null);
 var secondsBetween = (a, b) => {
   const d = (Date.parse(b) - Date.parse(a)) / 1e3;
   return Number.isFinite(d) ? d : null;
@@ -222,7 +223,7 @@ function githubLatest(runsJson, jobsByRunId) {
   const failedRun = same.find((_, i) => stages[i].status === "failed");
   const failedRuns = same.filter((_, i) => stages[i].status === "failed");
   const stamps = (failedRuns.length ? failedRuns : same).map((r) => r.updated_at).filter(Boolean);
-  const finishedAt = stamps.length ? stamps.reduce((a, b) => Date.parse(b) > Date.parse(a) ? b : a) : null;
+  const finishedAt = latestStamp(stamps);
   const times = same.map(time).filter(Boolean);
   const earliest = same.find((r) => time(r) === Math.min(...times)) ?? newest;
   const newestFirst = [...same].sort((a, b) => time(b) - time(a));
@@ -275,7 +276,8 @@ function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
   const body = jobs.length ? `Pipeline failed: ${jobs[0].name}${more > 0 ? ` (+${more} more)` : ""}` : "Pipeline failed";
   return { title: `${repo} \xB7 ${branch}`, body };
 }
-function ciInterval({ status, upstreamChangedAt, now }) {
+function ciInterval({ status, upstreamChangedAt, now, watched }) {
+  if (watched && (status === "running" || status === "pending")) return 1e4;
   if (status === "running" || status === "pending") return 3e4;
   if (now - upstreamChangedAt < 12e4) return 15e3;
   return 3e5;

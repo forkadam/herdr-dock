@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeStatus, gitlabJob, gitlabBridge, gitlabCommitPipeline, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval, nextAlerted } from "../src/shared/ci.js";
+import { normalizeStatus, gitlabJob, gitlabBridge, gitlabCommitPipeline, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, lastLogLine, gitInterval, nextAlerted } from "../src/shared/ci.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 
@@ -280,4 +280,34 @@ test("gitlabCommitPipeline: finishedAt is the latest over the entries, so an old
   assert.equal(gitlabCommitPipeline([{ pipeline: tag, jobs: [], bridges: [] }, { pipeline: branch, jobs: late, bridges: [] }]).finishedAt, "2026-11-26T11:00:00Z");
   const ok = { id: 5, status: "success", ref: "main", sha: "s" };
   assert.equal(gitlabCommitPipeline([{ pipeline: ok, jobs: [], bridges: [] }]).finishedAt, null);
+});
+
+test("lastLogLine strips ANSI, section markers and \r redraws", () => {
+  assert.equal(lastLogLine("a\n\x1b[32;1mok\x1b[0m\nsection_end:1700000000:step\r\x1b[0K\n"), "ok");
+  assert.equal(lastLogLine("progress 10%\rprogress 55%\n"), "progress 55%");
+  assert.equal(lastLogLine("x\n\n   \n"), "x");
+  assert.equal(lastLogLine(""), null);
+  assert.equal(lastLogLine(null), null);
+  assert.equal(lastLogLine("\n\n"), null);
+});
+
+test("lastLogLine reads only the tail and caps at 200 chars", () => {
+  assert.equal(lastLogLine("head\n" + "y".repeat(20000)), "y".repeat(200));
+  assert.equal(lastLogLine("z".repeat(20000)), "z".repeat(200));
+});
+
+test("ciInterval: watched running polls every 10 s", () => {
+  assert.equal(ciInterval({ status: "running", watched: true }), 10000);
+  assert.equal(ciInterval({ status: "pending", watched: true }), 10000);
+  assert.equal(ciInterval({ status: "running" }), 30000);
+  assert.equal(ciInterval({ status: "passed", watched: true, upstreamChangedAt: -Infinity, now: 0 }), 300000);
+});
+
+test("finishedAt: an unparsable stamp never hides a later valid one", () => {
+  const bad = { id: 20, status: "failed", ref: "v1", sha: "s", finished_at: "garbage" };
+  const good = { id: 10, status: "failed", ref: "main", sha: "s", finished_at: "2026-11-26T10:00:00Z" };
+  assert.equal(gitlabCommitPipeline([{ pipeline: bad, jobs: [], bridges: [] }, { pipeline: good, jobs: [], bridges: [] }]).finishedAt, "2026-11-26T10:00:00Z");
+  assert.equal(gitlabCommitPipeline([{ pipeline: bad, jobs: [], bridges: [] }]).finishedAt, null);
+  const run = (id, updated_at) => ({ id, name: "CI", head_branch: "main", head_sha: "x", status: "completed", conclusion: "failure", html_url: "R", created_at: "2026-11-26T09:00:00Z", updated_at });
+  assert.equal(githubLatest({ workflow_runs: [run(1, "garbage"), run(2, "2026-11-26T09:30:00Z")] }, {}).finishedAt, "2026-11-26T09:30:00Z");
 });
