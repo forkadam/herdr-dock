@@ -39,8 +39,7 @@ const DONE = new Set(["passed", "failed", "warn", "canceled", "skipped"]);
 export function bucketOf(job) {
   if (job.label === "manual" || job.label === "scheduled") return "manual";
   if (job.status === "failed") return job.allowFailure ? "warn" : "failed";
-  if (job.status === "unknown") return "pending";
-  return job.status;
+  return COUNT_ORDER.includes(job.status) ? job.status : "pending";
 }
 
 // "12 jobs · 1 running · 4 pending · 7 passed"; "100+ jobs" when the list was cut off; "" for no jobs.
@@ -72,20 +71,32 @@ export function elapsed(startedAt, now) {
 
 // The commit's builds as groups -> stages -> job rows, groups newest first as given. `index` is the job's place in
 // pipeline.jobs. A group whose only stage carries the group's own name (a GitHub workflow) gets no stage header.
+// Jobs that belong to no listed group (state written before groups existed) go in a trailing "Jobs" group.
 export function viewGroups(pipeline, branch) {
   const jobs = pipeline.jobs ?? [];
-  return (pipeline.groups ?? []).map((g) => {
+  const groups = pipeline.groups ?? [];
+  const known = new Set(groups.map((g) => g.key));
+  const build = (rows, groupName) => {
     const byStage = new Map();
-    jobs.forEach((job, index) => {
-      if (job.group !== g.key) return;
-      if (!byStage.has(job.stage)) byStage.set(job.stage, []);
-      byStage.get(job.stage).push({ job, index });
+    rows.forEach((row) => {
+      const stage = row.job.stage;
+      if (!byStage.has(stage)) byStage.set(stage, []);
+      byStage.get(stage).push(row);
     });
-    const stages = [...byStage].map(([name, rows]) => ({
-      name: byStage.size === 1 && name === g.name ? null : name,
-      summary: stageSummary(rows.map((r) => r.job)),
-      jobs: rows,
+    return [...byStage].map(([name, r]) => ({
+      name: groupName != null && byStage.size === 1 && name === groupName ? null : name,
+      summary: stageSummary(r.map((x) => x.job)),
+      jobs: r,
     }));
-    return { key: g.key, title: g.ref && g.ref !== branch ? `${g.name} · ${g.ref}` : g.name, webUrl: g.webUrl, stages };
-  });
+  };
+  const indexed = jobs.map((job, index) => ({ job, index }));
+  const out = groups.map((g) => ({
+    key: g.key,
+    title: g.ref && g.ref !== branch ? `${g.name} · ${g.ref}` : g.name,
+    webUrl: g.webUrl,
+    stages: build(indexed.filter((r) => r.job.group === g.key), g.name),
+  }));
+  const rest = indexed.filter((r) => !known.has(r.job.group));
+  if (rest.length) out.push({ key: "", title: "Jobs", webUrl: null, stages: build(rest, null) });
+  return out;
 }

@@ -133,3 +133,33 @@ test("viewGroups: GitLab titles and stages in first-appearance order", () => {
   assert.deepEqual(v[1].stages.map((s) => s.name), ["test", "build"]);
   assert.deepEqual(v[0].stages.map((s) => [s.name, s.summary.bucket]), [["build", "passed"], ["deploy", "manual"]]);
 });
+
+test("viewGroups: jobs without a matching group go in a trailing Jobs group", () => {
+  const jobs = [job({ id: 1, group: "a", stage: "x" }), job({ id: 2, group: "b", stage: "y" }), job({ id: 3, group: "a", stage: "y" })];
+  for (const groups of [[], undefined]) {
+    const v = viewGroups({ groups, jobs }, "main");
+    assert.equal(v.length, 1);
+    assert.deepEqual([v[0].key, v[0].title, v[0].webUrl], ["", "Jobs", null]);
+    assert.deepEqual(v[0].stages.map((s) => [s.name, s.jobs.map((r) => r.index)]), [["x", [0]], ["y", [1, 2]]]);
+  }
+  const v = viewGroups({ groups: [{ key: "gl:1", name: "#1", ref: "main", webUrl: "u" }], jobs: [job({ group: "gl:1" }), job({ group: "gl:99" })] }, "main");
+  assert.deepEqual(v.map((g) => g.title), ["#1", "Jobs"]);
+  assert.deepEqual(v[0].stages[0].jobs.map((r) => r.index), [0]);
+  assert.deepEqual(v[1].stages[0].jobs.map((r) => r.index), [1]);
+});
+
+test("viewGroups: no Jobs group when every job matches", () => {
+  const v = viewGroups({ groups: [{ key: "g", name: "#1", ref: "main", webUrl: "u" }], jobs: [job({ group: "g" })] }, "main");
+  assert.deepEqual(v.map((g) => g.key), ["g"]);
+});
+
+test("bucketOf: unrecognized status is pending; bridges and unknown", () => {
+  assert.equal(bucketOf(job({ status: "weird" })), "pending");
+  assert.equal(countLine([job(), job({ status: "weird" })], false), "2 jobs · 1 pending · 1 passed");
+  assert.equal(bucketOf(job({ label: "child pipeline", status: "running" })), "running");
+  assert.equal(bucketOf(job({ status: "unknown", group: "gh:1" })), "pending");
+});
+
+test("stageSummary: no jobs", () => {
+  assert.deepEqual(stageSummary([]), { bucket: "pending", done: 0, total: 0 });
+});
