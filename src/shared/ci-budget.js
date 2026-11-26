@@ -17,11 +17,18 @@ export function readLimit(get, provider) {
   return { remaining, limit, resetAt: Number.isFinite(reset) ? reset * 1000 : null };
 }
 
-// How long to stop calling the host, in ms; 0 when the answer is not a limit answer. A 403 only counts as a limit
-// when the budget is exhausted, since other 403s are permission errors that waiting won't fix.
+// How long to stop calling the host, in ms; 0 when the answer is not a limit answer. remaining and retryAfter
+// (seconds) may be raw header text. A spent budget (remaining 0) waits for the reset. With calls left, a 429 (or a
+// 403 with retry-after) is a short-term "secondary" limit: it waits retry-after, never the hourly reset. Any other
+// 403 is a permission error that waiting won't fix.
 export function pauseFor({ status, remaining, resetAt, retryAfter, now }) {
-  if (!(status === 429 || (status === 403 && plainInt(remaining) === 0))) return 0;
-  const ms = resetAt != null ? resetAt - now : retryAfter != null ? retryAfter * 1000 : 60000;
+  if (status !== 429 && status !== 403) return 0;
+  const wait = plainInt(retryAfter);
+  const after = Number.isFinite(wait) ? wait * 1000 : null;
+  let ms;
+  if (plainInt(remaining) === 0) ms = resetAt != null ? resetAt - now : after ?? 60000;
+  else if (status === 429 || after != null) ms = after ?? 60000;
+  else return 0;
   return ms > 0 ? ms : 30000;
 }
 

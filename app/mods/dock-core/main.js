@@ -427,8 +427,13 @@ function readLimit(get, provider) {
   return { remaining, limit, resetAt: Number.isFinite(reset) ? reset * 1e3 : null };
 }
 function pauseFor({ status, remaining, resetAt, retryAfter, now }) {
-  if (!(status === 429 || status === 403 && plainInt(remaining) === 0)) return 0;
-  const ms = resetAt != null ? resetAt - now : retryAfter != null ? retryAfter * 1e3 : 6e4;
+  if (status !== 429 && status !== 403) return 0;
+  const wait = plainInt(retryAfter);
+  const after = Number.isFinite(wait) ? wait * 1e3 : null;
+  let ms;
+  if (plainInt(remaining) === 0) ms = resetAt != null ? resetAt - now : after ?? 6e4;
+  else if (status === 429 || after != null) ms = after ?? 6e4;
+  else return 0;
   return ms > 0 ? ms : 3e4;
 }
 function isLow(b) {
@@ -525,6 +530,7 @@ function createCiClient(io, log) {
       budget: null,
       limitedUntil: 0,
       headers: void 0,
+      missing: 0,
       lowLogged: false
     });
     return hosts.get(host);
@@ -647,22 +653,24 @@ ${st.stderr ?? ""}`;
     const get = (name) => r.headers?.get?.(name);
     const limit = readLimit(get, h.provider);
     if (limit) h.budget = limit;
-    const seen = limit ? "seen" : "none";
-    if (h.headers !== "seen" && h.headers !== seen) {
-      h.headers = seen;
-      log(`CI: ${host} rate-limit headers ${limit ? "seen" : "not readable"}`);
+    if (limit && h.headers !== "seen") {
+      h.headers = "seen";
+      log(`CI: ${host} rate-limit headers seen`);
+    } else if (!limit && h.headers === void 0 && ++h.missing >= 3) {
+      h.headers = "none";
+      log(`CI: ${host} rate-limit headers not readable`);
     }
     if (limit) {
       const low = isLow(limit);
       if (low && !h.lowLogged) log(`CI: ${host} API budget low (${limit.remaining}/${limit.limit}); slower polling`);
       h.lowLogged = low;
     }
-    const retryAfter = plainInt(get("retry-after"));
     const ms = pauseFor({
       status: r.status,
       remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
       resetAt: limit?.resetAt ?? null,
-      retryAfter: Number.isFinite(retryAfter) ? retryAfter : null,
+      retryAfter: get("retry-after"),
+      // seconds; pauseFor ignores anything but a plain integer (e.g. a date)
       now: io.now()
     });
     if (ms > 0) pause(host, h, ms);
@@ -718,7 +726,7 @@ ${r.stdout ?? ""}`)) {
         const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
         if (signal) init.signal = signal;
         const r = await io.fetch(url, init);
-        if (noteHeaders(host, h, r)) return { limited: true };
+        if (r.status !== 401 && noteHeaders(host, h, r)) return { limited: true };
         if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
         if (!r.ok) return { status: r.status, ok: false, data: null };
         if (opts.text) {
@@ -750,7 +758,7 @@ ${r.stdout ?? ""}`)) {
         if (r.limited) return limitedResult(h);
         if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
-          Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
+          Object.assign(h, { token: null, budget: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
           return fail(h, "not logged in", false, startedAt, { hint: loginHint(h.provider, host) }, opts);
         }
       }

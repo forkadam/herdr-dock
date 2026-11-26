@@ -129,10 +129,14 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
    pipeline and its status (so the Git projects badge keeps showing it, not "unknown"), and publishes
    `detail.budget.limitedUntil`. A poll in which any request hits the limit is discarded whole: the previous
    pipeline stays as it was (no mix of fresh lists and stale jobs).
-2. **Which answers pause:** a 429 (with or without headers), or a 403 whose `x-ratelimit-remaining` is `0`, pauses
-   the host — and is not a host failure (no backoff ladder; the existing "429 backs off" behaviour is replaced and its
-   tests updated). Pause length: until `resetAt`, else `retry-after`, else 60 s. A 5xx with `retry-after` stays an
-   ordinary 5xx host failure (not shown as "limit reached").
+2. **Which answers pause:** a 429 (with or without headers), a 403 whose remaining is `0`, or a 403 carrying
+   `retry-after`, pauses the host — and is not a host failure (no backoff ladder; the existing "429 backs off"
+   behaviour is replaced and its tests updated). Pause length (revised after Task 2's review): when remaining is `0`
+   (the hourly/primary budget is spent), until `resetAt`, else `retry-after`, else 60 s; otherwise (GitHub's short-term
+   "secondary" limit, which answers 429 or 403 with `retry-after` while the hourly budget still has calls left) for
+   `retry-after` seconds, else 60 s — never until the hourly reset. **From memory, unverified:** GitHub's secondary-limit
+   answers carry `retry-after`. A 5xx with `retry-after` stays an ordinary 5xx host failure (not shown as "limit
+   reached"). Budget headers on a 401 answer are ignored (they describe an unauthenticated budget).
 3. **CLI route (`gh api` / `glab api`):** stderr/stdout matching `/rate limit|too many requests|\bHTTP 429\b/i` pauses
    the host for 60 s (no reset time there). **Unverified guess:** the exact gh/glab wording; the pattern is broad on
    purpose. The CLI route has no headers, so `budget()` is null there, the budget line is hidden and "low" never

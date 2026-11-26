@@ -3,7 +3,7 @@
 // re-login, timeouts on the collector's clock, per-host backoff, conditional GETs (ETags) and the host's API
 // rate limit (budget from the response headers, a pause at the limit). (No Node built-ins: bundled into Herdr mods.)
 import { limiter } from "./limiter.js";
-import { readLimit, pauseFor, isLow, cliLimited, lru, plainInt } from "./ci-budget.js";
+import { readLimit, pauseFor, isLow, cliLimited, lru } from "./ci-budget.js";
 import { normalizeStatus, gitlabCommitPipeline, githubLatest, lastLogLine } from "./ci.js";
 
 const HTTP_LIMIT = 4; // HTTP requests (or CLI api calls) at once
@@ -42,7 +42,8 @@ export function createCiClient(io, log) {
   // host -> { want, provider, login: Promise|null, loginDone, loginError, loginRetryAt, token, cli,
   //   failures, blockedUntil, windowEnd, lastError, budget, limitedUntil, headers, lowLogged }
   // budget: { remaining, limit, resetAt } from the latest answer that carried rate-limit headers; limitedUntil: the
-  // end of a limit pause (its own state, never the backoff ladder); headers: undefined | "seen" | "none" (logged).
+  // end of a limit pause (its own state, never the backoff ladder); headers: undefined | "seen" | "none" (logged),
+  // missing: answers without a rate-limit pair before the first log line.
   const hosts = new Map();
   // Fetch route only: url -> { etag, data } of the last JSON answer that carried an ETag. A 304 to the next GET
   // reuses data (GitHub doesn't count a 304 against the limit).
@@ -73,7 +74,7 @@ export function createCiClient(io, log) {
     if (!hosts.has(host)) hosts.set(host, {
       want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
       cli: false, failures: 0, blockedUntil: 0, windowEnd: 0, lastError: null,
-      budget: null, limitedUntil: 0, headers: undefined, lowLogged: false,
+      budget: null, limitedUntil: 0, headers: undefined, missing: 0, lowLogged: false,
     });
     return hosts.get(host);
   };
@@ -220,23 +221,25 @@ export function createCiClient(io, log) {
     const get = (name) => r.headers?.get?.(name);
     const limit = readLimit(get, h.provider);
     if (limit) h.budget = limit;
-    // Once per host: does Herdr's fetch expose them? A later answer with them still reports "seen".
-    const seen = limit ? "seen" : "none";
-    if (h.headers !== "seen" && h.headers !== seen) {
-      h.headers = seen;
-      log(`CI: ${host} rate-limit headers ${limit ? "seen" : "not readable"}`);
+    // Once per host: does Herdr's fetch expose them? "seen" on the first pair; "not readable" only after 3 answers
+    // without one (a single endpoint may lack them), and never once seen. A pair after "not readable" still logs.
+    if (limit && h.headers !== "seen") {
+      h.headers = "seen";
+      log(`CI: ${host} rate-limit headers seen`);
+    } else if (!limit && h.headers === undefined && ++h.missing >= 3) {
+      h.headers = "none";
+      log(`CI: ${host} rate-limit headers not readable`);
     }
     if (limit) {
       const low = isLow(limit);
       if (low && !h.lowLogged) log(`CI: ${host} API budget low (${limit.remaining}/${limit.limit}); slower polling`);
       h.lowLogged = low;
     }
-    const retryAfter = plainInt(get("retry-after"));
     const ms = pauseFor({
       status: r.status,
       remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
       resetAt: limit?.resetAt ?? null,
-      retryAfter: Number.isFinite(retryAfter) ? retryAfter : null,
+      retryAfter: get("retry-after"), // seconds; pauseFor ignores anything but a plain integer (e.g. a date)
       now: io.now(),
     });
     if (ms > 0) pause(host, h, ms);
@@ -299,7 +302,8 @@ export function createCiClient(io, log) {
           const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
           if (signal) init.signal = signal;
           const r = await io.fetch(url, init);
-          if (noteHeaders(host, h, r)) return { limited: true };
+          // A 401's rate-limit headers describe the unauthenticated budget, not this token's.
+          if (r.status !== 401 && noteHeaders(host, h, r)) return { limited: true };
           if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
           if (!r.ok) return { status: r.status, ok: false, data: null };
           if (opts.text) {
@@ -331,7 +335,7 @@ export function createCiClient(io, log) {
         if (r.limited) return limitedResult(h);
         if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
-          Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
+          Object.assign(h, { token: null, budget: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
           return fail(h, "not logged in", false, startedAt, { hint: loginHint(h.provider, host) }, opts);
         }
       }

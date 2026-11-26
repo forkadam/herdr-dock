@@ -1043,7 +1043,7 @@ test("logs: headers seen / not readable once per host; limit reached once per pa
   });
   await c.resolve("gitlab.corp");
   for (let i = 0; i < 3; i++) await c.request("github.com", "GET", RUNS_P);
-  for (let i = 0; i < 2; i++) await c.request("gitlab.corp", "GET", "projects/x");
+  for (let i = 0; i < 3; i++) await c.request("gitlab.corp", "GET", "projects/x");
   assert.deepEqual(io.logs.filter((l) => l.includes("rate-limit headers")), [
     "CI: github.com rate-limit headers seen",
     "CI: gitlab.corp rate-limit headers not readable",
@@ -1067,6 +1067,104 @@ test("logs: headers seen / not readable once per host; limit reached once per pa
   gate[2](hres(429, {}));
   await again;
   assert.equal(limitLogs(io).length, 2);
+});
+
+test("logs: 'not readable' only after 3 answers without the headers; then a pair still logs 'seen'", async () => {
+  let next = () => res(200, []);
+  const { io, c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: () => next() } });
+  const lines = () => io.logs.filter((l) => l.includes("rate-limit headers"));
+  await c.request("github.com", "GET", RUNS_P);
+  await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(lines(), []);
+  await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(lines(), ["CI: github.com rate-limit headers not readable"]);
+  await c.request("github.com", "GET", RUNS_P);
+  next = () => hres(200, [], { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000" });
+  await c.request("github.com", "GET", RUNS_P);
+  await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(lines(), ["CI: github.com rate-limit headers not readable", "CI: github.com rate-limit headers seen"]);
+});
+
+test("logs: 'seen' on the first pair; answers without them afterwards never log 'not readable'", async () => {
+  let next = () => hres(200, [], { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000" });
+  const { io, c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: () => next() } });
+  await c.request("github.com", "GET", RUNS_P);
+  next = () => res(200, []);
+  for (let i = 0; i < 5; i++) await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(io.logs.filter((l) => l.includes("rate-limit headers")), ["CI: github.com rate-limit headers seen"]);
+});
+
+test("budget: a 401 answer's headers are ignored (an unauthenticated budget)", async () => {
+  const { c } = await clientOf("github.com", {
+    ...ghOrigin,
+    routes: { [GH_API + RUNS_P]: (u, i, n) => (n === 1 ? hres(401, {}, { "x-ratelimit-remaining": "59", "x-ratelimit-limit": "60" }) : res(200, [])) },
+  });
+  assert.equal((await c.request("github.com", "GET", RUNS_P)).ok, true);
+  assert.equal(c.budget("github.com"), null);
+});
+
+test("budget: a 401 with x-ratelimit-remaining 59/limit 60 then a failed re-login -> budget() null", async () => {
+  let next = () => hres(200, [], { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000" });
+  const { c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: () => next() } });
+  await c.request("github.com", "GET", RUNS_P);
+  assert.equal(c.budget("github.com").remaining, 4000);
+  next = () => hres(401, {}, { "x-ratelimit-remaining": "59", "x-ratelimit-limit": "60" });
+  const r = await c.request("github.com", "GET", RUNS_P);
+  assert.equal(r.error, "not logged in");
+  assert.equal(c.budget("github.com"), null);
+});
+
+test("limit: a limit answer on the 401 re-login retry is a limit result", async () => {
+  const { io, c } = await clientOf("github.com", {
+    ...ghOrigin, routes: { [GH_API + RUNS_P]: (u, i, n) => (n === 1 ? hres(401, {}) : hres(429, {}, { "retry-after": "10" })) },
+  });
+  const r = await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(r, { ok: false, error: "API limit reached", limited: true, limitedUntil: io.t + 10000, hostFailure: false });
+  assert.equal(io.fetches.length, 2);
+  assert.equal(c.blocked("github.com", io.t + 9999), true);
+});
+
+test("limit: a request already queued in the limiter when a pause starts makes no fetch", async () => {
+  const gate = [];
+  const { io, c } = await clientOf("github.com", {
+    ...ghOrigin,
+    routes: { [GH_API + "slow"]: () => new Promise((resolve) => gate.push(resolve)), [GH_API + "queued"]: res(200, []) },
+  });
+  const inFlight = [0, 1, 2, 3].map(() => c.request("github.com", "GET", "slow"));
+  await until(() => gate.length === 4);
+  const queued = c.request("github.com", "GET", "queued"); // all 4 slots taken: it waits in the queue
+  gate[0](hres(429, {}));
+  assert.deepEqual(await queued, { ok: false, error: "API limit reached", limited: true, limitedUntil: io.t + 60000, hostFailure: false });
+  assert.equal(io.fetches.filter((f) => f.url === GH_API + "queued").length, 0);
+  gate.slice(1).forEach((resolve) => resolve(res(200, [])));
+  await Promise.all(inFlight);
+});
+
+test("limit: a GitLab 403 with ratelimit-remaining 0 pauses until its reset", async () => {
+  const reset = T0 + 90000;
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [GL_API + "projects/x"]: hres(403, {}, { "ratelimit-remaining": "0", "ratelimit-limit": "2000", "ratelimit-reset": String(reset / 1000) }) },
+  });
+  const r = await c.request("gitlab.corp", "GET", "projects/x");
+  assert.deepEqual(r, { ok: false, error: "API limit reached", limited: true, limitedUntil: reset, hostFailure: false });
+  assert.equal(c.blocked("gitlab.corp", reset - 1), true);
+  assert.equal(c.budget("gitlab.corp").limitedUntil, reset);
+  assert.equal(io.fetches.length, 1);
+});
+
+test("limit: a 429 whose retry-after is a date (not seconds) pauses 60 s", async () => {
+  const { io, c } = await clientOf("github.com", {
+    ...ghOrigin, routes: { [GH_API + RUNS_P]: hres(429, {}, { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }) },
+  });
+  assert.equal((await c.request("github.com", "GET", RUNS_P)).limitedUntil, io.t + 60000);
+});
+
+test("limit: a 403 secondary limit (calls left, retry-after) pauses retry-after, not until the hourly reset", async () => {
+  const { io, c } = await clientOf("github.com", {
+    ...ghOrigin,
+    routes: { [GH_API + RUNS_P]: hres(403, {}, { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000", "x-ratelimit-reset": String((T0 + 3000000) / 1000), "retry-after": "20" }) },
+  });
+  assert.equal((await c.request("github.com", "GET", RUNS_P)).limitedUntil, io.t + 20000);
 });
 
 // --- every build of the HEAD commit; full mode -----------------------------------------------------

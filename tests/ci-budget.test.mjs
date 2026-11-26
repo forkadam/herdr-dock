@@ -23,7 +23,26 @@ test("pauseFor", () => {
   assert.equal(pauseFor({ status: 403, remaining: 0, resetAt: now + 90000, now }), 90000);
   assert.equal(pauseFor({ status: 403, remaining: 5, now }), 0);
   assert.equal(pauseFor({ status: 503, retryAfter: 30, now }), 0);
-  assert.equal(pauseFor({ status: 429, resetAt: now - 5000, now }), 30000);
+  // Clock skew: a spent budget whose reset is already past still pauses 30 s.
+  assert.equal(pauseFor({ status: 429, remaining: 0, resetAt: now - 5000, now }), 30000);
+});
+
+test("pauseFor: a secondary limit (calls left) waits retry-after or 60 s, never the hourly reset", () => {
+  const now = 1000000;
+  assert.equal(pauseFor({ status: 429, remaining: 4000, resetAt: now + 3000000, retryAfter: 30, now }), 30000);
+  assert.equal(pauseFor({ status: 429, remaining: 4000, resetAt: now + 3000000, now }), 60000);
+  assert.equal(pauseFor({ status: 429, resetAt: now - 5000, now }), 60000);
+  assert.equal(pauseFor({ status: 403, remaining: 4000, retryAfter: 20, now }), 20000);
+  assert.equal(pauseFor({ status: 403, remaining: 4000, now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: "4000", retryAfter: "20", now }), 20000);
+  assert.equal(pauseFor({ status: 403, retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT", now }), 0);
+});
+
+test("pauseFor: a spent budget (remaining 0) waits for the reset first", () => {
+  const now = 1000000;
+  assert.equal(pauseFor({ status: 403, remaining: 0, resetAt: now + 90000, retryAfter: 5, now }), 90000);
+  assert.equal(pauseFor({ status: 429, remaining: "0", resetAt: null, retryAfter: 12, now }), 12000);
+  assert.equal(pauseFor({ status: 429, remaining: "0", resetAt: null, now }), 60000);
 });
 
 test("isLow", () => {
