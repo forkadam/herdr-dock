@@ -1,7 +1,9 @@
 // CI server access for the collector: the provider and login of each host (tokens borrowed from glab/gh and
 // kept in this closure only), API requests through the injected fetch with a glab/gh CLI fallback, a 401
-// re-login, timeouts on the collector's clock, and per-host backoff. (No Node built-ins: bundled into Herdr mods.)
+// re-login, timeouts on the collector's clock, per-host backoff, conditional GETs (ETags) and the host's API
+// rate limit (budget from the response headers, a pause at the limit). (No Node built-ins: bundled into Herdr mods.)
 import { limiter } from "./limiter.js";
+import { readLimit, pauseFor, isLow, cliLimited, lru, plainInt } from "./ci-budget.js";
 import { normalizeStatus, gitlabCommitPipeline, githubLatest, lastLogLine } from "./ci.js";
 
 const HTTP_LIMIT = 4; // HTTP requests (or CLI api calls) at once
@@ -18,6 +20,8 @@ const TRACE_TIMEOUT = 8000;
 // glab auth status output that clearly means "no login" (anything else non-zero may be the network).
 const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
+const ETAGS = 300; // URLs whose last ETag and answer are kept
+const CLI_PAUSE = 60000; // the CLI route has no reset time: a limit message pauses the host this long
 
 class Timeout extends Error {}
 
@@ -27,12 +31,22 @@ export function loginHint(provider, host) {
 }
 
 const firstLine = (s) => String(s ?? "").trim().split(/\r?\n/)[0];
+const pad = (n) => String(n).padStart(2, "0");
+const clock = (ms) => {
+  const d = new Date(ms);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
 
 export function createCiClient(io, log) {
   const http = limiter(HTTP_LIMIT);
   // host -> { want, provider, login: Promise|null, loginDone, loginError, loginRetryAt, token, cli,
-  //   failures, blockedUntil, windowEnd, lastError }
+  //   failures, blockedUntil, windowEnd, lastError, budget, limitedUntil, headers, lowLogged }
+  // budget: { remaining, limit, resetAt } from the latest answer that carried rate-limit headers; limitedUntil: the
+  // end of a limit pause (its own state, never the backoff ladder); headers: undefined | "seen" | "none" (logged).
   const hosts = new Map();
+  // Fetch route only: url -> { etag, data } of the last JSON answer that carried an ETag. A 304 to the next GET
+  // reuses data (GitHub doesn't count a 304 against the limit).
+  const etags = lru(ETAGS);
   const deadlines = new Set(); // in-flight requests: { deadline, reject, ctl }
   const secrets = new Set(); // every token seen, to scrub from any text that leaves this module
   const redact = (s) => {
@@ -59,6 +73,7 @@ export function createCiClient(io, log) {
     if (!hosts.has(host)) hosts.set(host, {
       want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
       cli: false, failures: 0, blockedUntil: 0, windowEnd: 0, lastError: null,
+      budget: null, limitedUntil: 0, headers: undefined, lowLogged: false,
     });
     return hosts.get(host);
   };
@@ -189,19 +204,63 @@ export function createCiClient(io, log) {
     h.windowEnd = 0; // the outage is over: the next failure starts a new window
     return { ok: true, data };
   };
+  // At the API limit the host is paused until its reset: requests fail fast with no network call, and it is not a
+  // host failure (the host answered; waiting is the fix).
+  const isLimited = (h) => io.now() < h.limitedUntil;
+  const limitedResult = (h) => ({ ok: false, error: "API limit reached", limited: true, limitedUntil: h.limitedUntil, hostFailure: false });
+  function pause(host, h, ms) {
+    const now = io.now();
+    if (now >= h.limitedUntil) log(`CI: ${host} API limit reached; paused until ${clock(now + ms)}`);
+    h.limitedUntil = Math.max(h.limitedUntil, now + ms);
+  }
+
+  // Reads what the client needs from an answer's headers (when this fetch exposes them): the host's budget, and
+  // the limit pause. Returns true when the answer was a limit answer.
+  function noteHeaders(host, h, r) {
+    const get = (name) => r.headers?.get?.(name);
+    const limit = readLimit(get, h.provider);
+    if (limit) h.budget = limit;
+    // Once per host: does Herdr's fetch expose them? A later answer with them still reports "seen".
+    const seen = limit ? "seen" : "none";
+    if (h.headers !== "seen" && h.headers !== seen) {
+      h.headers = seen;
+      log(`CI: ${host} rate-limit headers ${limit ? "seen" : "not readable"}`);
+    }
+    if (limit) {
+      const low = isLow(limit);
+      if (low && !h.lowLogged) log(`CI: ${host} API budget low (${limit.remaining}/${limit.limit}); slower polling`);
+      h.lowLogged = low;
+    }
+    const retryAfter = plainInt(get("retry-after"));
+    const ms = pauseFor({
+      status: r.status,
+      remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
+      resetAt: limit?.resetAt ?? null,
+      retryAfter: Number.isFinite(retryAfter) ? retryAfter : null,
+      now: io.now(),
+    });
+    if (ms > 0) pause(host, h, ms);
+    return ms > 0;
+  }
 
   async function viaCli(host, h, method, path, wantJson, opts = {}) {
     const cmd = h.provider === "github" ? "gh" : "glab";
     const hostArgs = cmd === "glab" || host !== "github.com" ? ["--hostname", host] : [];
     let startedAt = io.now();
     const r = await http(() => {
+      if (isLimited(h)) return { limited: true };
       if (isBlocked(h)) return null;
       startedAt = io.now();
       const extra = Object.entries(opts.headers ?? {}).flatMap(([k, v]) => ["-H", `${k}: ${v}`]);
       return cli(cmd, ["api", ...hostArgs, ...(method === "POST" ? ["-X", "POST"] : []), ...extra, path], opts.timeout);
     });
     if (!r) return blockedResult(h);
+    if (r.limited) return limitedResult(h);
     if (r.code !== 0) {
+      if (cliLimited(`${r.stderr ?? ""}\n${r.stdout ?? ""}`)) {
+        pause(host, h, CLI_PAUSE);
+        return limitedResult(h);
+      }
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
       // An HTTP 4xx answer isn't the host failing; anything else (no CLI, network, timeout) backs off.
       const code = /\b(4\d\d)\b/.exec(msg);
@@ -217,23 +276,31 @@ export function createCiClient(io, log) {
   }
 
   // One API call. `path` is relative to the API root ("projects/..." or "repos/..."). Resolves to
-  // { ok: true, data } or { ok: false, error, hint?, hostFailure }; never rejects.
+  // { ok: true, data, status?, notModified? } or { ok: false, error, hint?, hostFailure, limited?, limitedUntil? };
+  // never rejects.
   async function request(host, method, path, opts = {}) {
     const h = rec(host);
     const wantJson = method === "GET" && !opts.text;
     if (!h.provider || !h.token) return { ok: false, error: "not logged in", hint: loginHint(h.provider, host), hostFailure: false };
+    if (isLimited(h)) return limitedResult(h);
     if (isBlocked(h)) return blockedResult(h);
     if (h.cli) return viaCli(host, h, method, path, wantJson, opts);
     let startedAt = io.now();
     const url = baseUrl(host, h.provider) + path;
     const once = () =>
       http(() => {
+        if (isLimited(h)) return { limited: true };
         if (isBlocked(h)) return { blocked: true };
         startedAt = io.now();
         return timed(async (signal) => {
-          const init = { method, headers: { ...opts.headers, ...headers(h.provider, h.token) } };
+          // Only JSON GETs are conditional: a trace's Range answers vary, so they are never stored.
+          const stored = wantJson ? etags.get(url) : undefined;
+          const conditional = stored ? { "If-None-Match": stored.etag } : {};
+          const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
           if (signal) init.signal = signal;
           const r = await io.fetch(url, init);
+          if (noteHeaders(host, h, r)) return { limited: true };
+          if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
           if (!r.ok) return { status: r.status, ok: false, data: null };
           if (opts.text) {
             try {
@@ -244,7 +311,11 @@ export function createCiClient(io, log) {
           }
           if (!wantJson) return { status: r.status, ok: true, data: null };
           try {
-            return { status: r.status, ok: true, data: await r.json() };
+            const data = await r.json();
+            const etag = r.headers?.get?.("etag");
+            if (etag) etags.set(url, { etag, data });
+            else etags.delete(url);
+            return { status: r.status, ok: true, data };
           } catch {
             return { status: r.status, ok: false, data: null, bad: true };
           }
@@ -252,10 +323,12 @@ export function createCiClient(io, log) {
       });
     try {
       let r = await once();
+      if (r.limited) return limitedResult(h);
       if (r.blocked) return blockedResult(h);
       if (r.status === 401) {
         h.token = await readToken(host, h.provider);
         if (h.token) r = await once();
+        if (r.limited) return limitedResult(h);
         if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
           Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
@@ -263,8 +336,10 @@ export function createCiClient(io, log) {
         }
       }
       if (r.bad) return fail(h, "bad response", false, startedAt, {}, opts);
-      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt, { status: r.status }, opts);
-      return { ...good(h, r.data), status: r.status }; // only this route knows it (206 vs 200 for a Range request)
+      // A 429 never gets here: it is a limit answer (above), not a host failure.
+      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500, startedAt, { status: r.status }, opts);
+      // Only this route knows the status (206 vs 200 for a Range request). A 304 is a good answer like a 200.
+      return { ...good(h, r.data), status: r.status, ...(r.notModified ? { notModified: true } : {}) };
     } catch (e) {
       if (e instanceof Timeout) return fail(h, "timeout", true, startedAt, {}, opts);
       // A network or TLS error (not an HTTP status): use the CLI for this host for the rest of the session.
@@ -473,7 +548,19 @@ export function createCiClient(io, log) {
       const h = hosts.get(host);
       return h?.cli ? (h.provider === "github" ? "gh" : "glab") : "fetch";
     },
-    blocked: (host, now) => now < (hosts.get(host)?.blockedUntil ?? 0),
+    // Backed off, or paused at the API limit: either way a poll now would make no request.
+    blocked: (host, now) => {
+      const h = hosts.get(host);
+      return now < (h?.blockedUntil ?? 0) || now < (h?.limitedUntil ?? 0);
+    },
+    // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers)
+    // or before any were seen.
+    budget: (host) => {
+      const h = hosts.get(host);
+      if (!h || h.cli || !h.budget) return null;
+      const { remaining, limit, resetAt } = h.budget;
+      return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+    },
     // The refresh button: clear backoff, and let hosts without a login check again.
     reset() {
       for (const h of hosts.values()) {

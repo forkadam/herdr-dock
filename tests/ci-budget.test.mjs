@@ -86,6 +86,7 @@ test("pauseFor: only a real 0 remaining pauses a 403", () => {
   assert.equal(pauseFor({ status: 403, now }), 0);
   assert.equal(pauseFor({ status: 403, remaining: null, now }), 0);
   assert.equal(pauseFor({ status: 403, remaining: "", now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: " ", now }), 0);
   assert.equal(pauseFor({ status: 403, remaining: "0x0", now }), 0);
   assert.equal(pauseFor({ status: 403, remaining: "0", now }), 60000);
   assert.equal(pauseFor({ status: 403, remaining: 0, now }), 60000);

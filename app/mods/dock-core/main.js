@@ -414,6 +414,53 @@ function limiter(n) {
   });
 }
 
+// src/shared/ci-budget.js
+function plainInt(v) {
+  return v != null && /^\d+$/.test(String(v).trim()) ? Number(String(v).trim()) : NaN;
+}
+function readLimit(get, provider) {
+  const prefix = provider === "gitlab" ? "ratelimit-" : "x-ratelimit-";
+  const remaining = plainInt(get(`${prefix}remaining`));
+  const limit = plainInt(get(`${prefix}limit`));
+  if (!Number.isFinite(remaining) || !Number.isFinite(limit)) return null;
+  const reset = plainInt(get(`${prefix}reset`));
+  return { remaining, limit, resetAt: Number.isFinite(reset) ? reset * 1e3 : null };
+}
+function pauseFor({ status, remaining, resetAt, retryAfter, now }) {
+  if (!(status === 429 || status === 403 && plainInt(remaining) === 0)) return 0;
+  const ms = resetAt != null ? resetAt - now : retryAfter != null ? retryAfter * 1e3 : 6e4;
+  return ms > 0 ? ms : 3e4;
+}
+function isLow(b) {
+  return Boolean(b && b.limit > 0 && b.remaining / b.limit < 0.1);
+}
+function cliLimited(text) {
+  return /rate limit|too many requests|\bHTTP 429\b/i.test(String(text ?? ""));
+}
+function lru(max) {
+  const m = /* @__PURE__ */ new Map();
+  return {
+    get(k) {
+      if (!m.has(k)) return void 0;
+      const v = m.get(k);
+      m.delete(k);
+      m.set(k, v);
+      return v;
+    },
+    set(k, v) {
+      m.delete(k);
+      m.set(k, v);
+      if (m.size > max) m.delete(m.keys().next().value);
+    },
+    delete(k) {
+      m.delete(k);
+    },
+    get size() {
+      return m.size;
+    }
+  };
+}
+
 // src/shared/ci-client.js
 var HTTP_LIMIT = 4;
 var TIMEOUT = 15e3;
@@ -427,6 +474,8 @@ var TRACE_TAIL_CHARS = 16384;
 var TRACE_TIMEOUT = 8e3;
 var NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 var MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
+var ETAGS = 300;
+var CLI_PAUSE = 6e4;
 var Timeout = class extends Error {
 };
 function loginHint(provider, host) {
@@ -434,9 +483,15 @@ function loginHint(provider, host) {
   return `glab auth login --hostname ${host}`;
 }
 var firstLine = (s) => String(s ?? "").trim().split(/\r?\n/)[0];
+var pad = (n) => String(n).padStart(2, "0");
+var clock = (ms) => {
+  const d = new Date(ms);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
 function createCiClient(io, log) {
   const http = limiter(HTTP_LIMIT);
   const hosts = /* @__PURE__ */ new Map();
+  const etags = lru(ETAGS);
   const deadlines = /* @__PURE__ */ new Set();
   const secrets = /* @__PURE__ */ new Set();
   const redact = (s) => {
@@ -466,7 +521,11 @@ function createCiClient(io, log) {
       failures: 0,
       blockedUntil: 0,
       windowEnd: 0,
-      lastError: null
+      lastError: null,
+      budget: null,
+      limitedUntil: 0,
+      headers: void 0,
+      lowLogged: false
     });
     return hosts.get(host);
   };
@@ -577,18 +636,57 @@ ${st.stderr ?? ""}`;
     h.windowEnd = 0;
     return { ok: true, data };
   };
+  const isLimited = (h) => io.now() < h.limitedUntil;
+  const limitedResult = (h) => ({ ok: false, error: "API limit reached", limited: true, limitedUntil: h.limitedUntil, hostFailure: false });
+  function pause(host, h, ms) {
+    const now = io.now();
+    if (now >= h.limitedUntil) log(`CI: ${host} API limit reached; paused until ${clock(now + ms)}`);
+    h.limitedUntil = Math.max(h.limitedUntil, now + ms);
+  }
+  function noteHeaders(host, h, r) {
+    const get = (name) => r.headers?.get?.(name);
+    const limit = readLimit(get, h.provider);
+    if (limit) h.budget = limit;
+    const seen = limit ? "seen" : "none";
+    if (h.headers !== "seen" && h.headers !== seen) {
+      h.headers = seen;
+      log(`CI: ${host} rate-limit headers ${limit ? "seen" : "not readable"}`);
+    }
+    if (limit) {
+      const low = isLow(limit);
+      if (low && !h.lowLogged) log(`CI: ${host} API budget low (${limit.remaining}/${limit.limit}); slower polling`);
+      h.lowLogged = low;
+    }
+    const retryAfter = plainInt(get("retry-after"));
+    const ms = pauseFor({
+      status: r.status,
+      remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
+      resetAt: limit?.resetAt ?? null,
+      retryAfter: Number.isFinite(retryAfter) ? retryAfter : null,
+      now: io.now()
+    });
+    if (ms > 0) pause(host, h, ms);
+    return ms > 0;
+  }
   async function viaCli(host, h, method, path, wantJson, opts = {}) {
     const cmd = h.provider === "github" ? "gh" : "glab";
     const hostArgs = cmd === "glab" || host !== "github.com" ? ["--hostname", host] : [];
     let startedAt = io.now();
     const r = await http(() => {
+      if (isLimited(h)) return { limited: true };
       if (isBlocked(h)) return null;
       startedAt = io.now();
       const extra = Object.entries(opts.headers ?? {}).flatMap(([k, v]) => ["-H", `${k}: ${v}`]);
       return cli(cmd, ["api", ...hostArgs, ...method === "POST" ? ["-X", "POST"] : [], ...extra, path], opts.timeout);
     });
     if (!r) return blockedResult(h);
+    if (r.limited) return limitedResult(h);
     if (r.code !== 0) {
+      if (cliLimited(`${r.stderr ?? ""}
+${r.stdout ?? ""}`)) {
+        pause(host, h, CLI_PAUSE);
+        return limitedResult(h);
+      }
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
       const code = /\b(4\d\d)\b/.exec(msg);
       return fail(h, msg, !code, startedAt, code ? { status: Number(code[1]) } : {}, opts);
@@ -605,17 +703,23 @@ ${st.stderr ?? ""}`;
     const h = rec(host);
     const wantJson = method === "GET" && !opts.text;
     if (!h.provider || !h.token) return { ok: false, error: "not logged in", hint: loginHint(h.provider, host), hostFailure: false };
+    if (isLimited(h)) return limitedResult(h);
     if (isBlocked(h)) return blockedResult(h);
     if (h.cli) return viaCli(host, h, method, path, wantJson, opts);
     let startedAt = io.now();
     const url = baseUrl(host, h.provider) + path;
     const once = () => http(() => {
+      if (isLimited(h)) return { limited: true };
       if (isBlocked(h)) return { blocked: true };
       startedAt = io.now();
       return timed(async (signal) => {
-        const init = { method, headers: { ...opts.headers, ...headers(h.provider, h.token) } };
+        const stored = wantJson ? etags.get(url) : void 0;
+        const conditional = stored ? { "If-None-Match": stored.etag } : {};
+        const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
         if (signal) init.signal = signal;
         const r = await io.fetch(url, init);
+        if (noteHeaders(host, h, r)) return { limited: true };
+        if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
         if (!r.ok) return { status: r.status, ok: false, data: null };
         if (opts.text) {
           try {
@@ -626,7 +730,11 @@ ${st.stderr ?? ""}`;
         }
         if (!wantJson) return { status: r.status, ok: true, data: null };
         try {
-          return { status: r.status, ok: true, data: await r.json() };
+          const data = await r.json();
+          const etag = r.headers?.get?.("etag");
+          if (etag) etags.set(url, { etag, data });
+          else etags.delete(url);
+          return { status: r.status, ok: true, data };
         } catch {
           return { status: r.status, ok: false, data: null, bad: true };
         }
@@ -634,10 +742,12 @@ ${st.stderr ?? ""}`;
     });
     try {
       let r = await once();
+      if (r.limited) return limitedResult(h);
       if (r.blocked) return blockedResult(h);
       if (r.status === 401) {
         h.token = await readToken(host, h.provider);
         if (h.token) r = await once();
+        if (r.limited) return limitedResult(h);
         if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
           Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
@@ -645,8 +755,8 @@ ${st.stderr ?? ""}`;
         }
       }
       if (r.bad) return fail(h, "bad response", false, startedAt, {}, opts);
-      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt, { status: r.status }, opts);
-      return { ...good(h, r.data), status: r.status };
+      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500, startedAt, { status: r.status }, opts);
+      return { ...good(h, r.data), status: r.status, ...r.notModified ? { notModified: true } : {} };
     } catch (e) {
       if (e instanceof Timeout) return fail(h, "timeout", true, startedAt, {}, opts);
       h.cli = true;
@@ -823,7 +933,19 @@ ${st.stderr ?? ""}`;
       const h = hosts.get(host);
       return h?.cli ? h.provider === "github" ? "gh" : "glab" : "fetch";
     },
-    blocked: (host, now) => now < (hosts.get(host)?.blockedUntil ?? 0),
+    // Backed off, or paused at the API limit: either way a poll now would make no request.
+    blocked: (host, now) => {
+      const h = hosts.get(host);
+      return now < (h?.blockedUntil ?? 0) || now < (h?.limitedUntil ?? 0);
+    },
+    // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers)
+    // or before any were seen.
+    budget: (host) => {
+      const h = hosts.get(host);
+      if (!h || h.cli || !h.budget) return null;
+      const { remaining, limit, resetAt } = h.budget;
+      return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+    },
     // The refresh button: clear backoff, and let hosts without a login check again.
     reset() {
       for (const h of hosts.values()) {
