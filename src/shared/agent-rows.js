@@ -34,3 +34,22 @@ export function sharedNames(names) {
   }
   return twice;
 }
+
+// The Agents panel's space part of each row: the space's name, plus " · <branch>" where agents
+// from different spaces share that name (a checkout and its worktree are both "herdr-dock").
+// main and master say nothing, as in Spaces. branchOf(a): the branch at the agent's pane, or null.
+export function spaceTags(list, branchOf) {
+  const spacesByName = new Map();
+  for (const a of list) {
+    if (!a.space_name) continue;
+    if (!spacesByName.has(a.space_name)) spacesByName.set(a.space_name, new Set());
+    spacesByName.get(a.space_name).add(a.space);
+  }
+  const tags = new Map();
+  for (const a of list) {
+    const branch = branchOf(a);
+    const shared = (spacesByName.get(a.space_name)?.size ?? 0) > 1;
+    tags.set(a.address, shared && branch && branch !== "main" && branch !== "master" ? `${a.space_name} · ${branch}` : a.space_name);
+  }
+  return tags;
+}

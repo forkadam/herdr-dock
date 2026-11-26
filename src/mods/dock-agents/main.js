@@ -13,7 +13,7 @@ import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip
 import { slashPath } from "../../shared/path.js";
 import { showTerminal } from "../_page.js";
 import { agentIcon, agentStatus } from "../_agent.js";
-import { cleanTitle } from "../../shared/agent-rows.js";
+import { cleanTitle, spaceTags } from "../../shared/agent-rows.js";
 
 // herdr-dock: per-agent context, refreshed this often and when the Claude agents listed change.
 const CONTEXT_MS = 15000;
@@ -379,7 +379,12 @@ export default class Agents extends View {
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
     // Read the pane snapshot once: every host read copies the whole list into JS.
-    const leads = leadPanes(panes());
+    const ps = panes();
+    const leads = leadPanes(ps);
+    // herdr-dock: two spaces with one name (a checkout and its worktree) read apart by branch.
+    const branches = new Map(ps.map((p) => [p.pane, p.branch]));
+    const tags = spaceTags(list, (a) => branches.get(a.pane) ?? null);
+    const spaceName = (a) => tags.get(a.address) ?? a.space_name;
     const tabs = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, tab]));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
@@ -389,9 +394,9 @@ export default class Agents extends View {
     const label = (a) => labels.get(a.address);
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
     const seen = {};
-    for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
+    for (const a of list) { const k = `${spaceName(a)}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
     for (const a of list) {
-      if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, label(a));
+      if (detail.get(a.address) == null && seen[`${spaceName(a)}\u0000`] > 1) detail.set(a.address, label(a));
     }
 
     const row = (a, i, subs = []) => {
@@ -436,7 +441,7 @@ export default class Agents extends View {
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
       const full = byPriority || isPinned;
-      const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
+      const name = full ? spaceName(a) || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -482,7 +487,7 @@ export default class Agents extends View {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+      else groups.push({ id, label: byPriority ? SECTION[r] : spaceName(a) || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
     }
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.

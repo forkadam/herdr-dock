@@ -152,6 +152,21 @@ function agentStatus(t, a, compact = false) {
 
 // src/shared/agent-rows.js
 var cleanTitle = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
+function spaceTags(list, branchOf) {
+  const spacesByName = /* @__PURE__ */ new Map();
+  for (const a of list) {
+    if (!a.space_name) continue;
+    if (!spacesByName.has(a.space_name)) spacesByName.set(a.space_name, /* @__PURE__ */ new Set());
+    spacesByName.get(a.space_name).add(a.space);
+  }
+  const tags = /* @__PURE__ */ new Map();
+  for (const a of list) {
+    const branch = branchOf(a);
+    const shared3 = (spacesByName.get(a.space_name)?.size ?? 0) > 1;
+    tags.set(a.address, shared3 && branch && branch !== "main" && branch !== "master" ? `${a.space_name} \xB7 ${branch}` : a.space_name);
+  }
+  return tags;
+}
 
 // src/mods/dock-agents/main.js
 var CONTEXT_MS = 15e3;
@@ -421,7 +436,11 @@ var Agents = class extends View {
         cx2.notify();
       }).child(svg3(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none()).when(!open, (el) => el.child(String(subs.length)));
     };
-    const leads = leadPanes(panes());
+    const ps = panes();
+    const leads = leadPanes(ps);
+    const branches = new Map(ps.map((p) => [p.pane, p.branch]));
+    const tags = spaceTags(list, (a) => branches.get(a.pane) ?? null);
+    const spaceName = (a) => tags.get(a.address) ?? a.space_name;
     const tabs = new Map(spaces().flatMap((s) => s.tabs).map((tab) => [tab.id, tab]));
     const labels = new Map(list.map((a) => {
       const tab = tabs.get(a.tab);
@@ -432,11 +451,11 @@ var Agents = class extends View {
     const detail = new Map(list.map((a) => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
     const seen = {};
     for (const a of list) {
-      const k = `${a.space_name}\0${detail.get(a.address) ?? ""}`;
+      const k = `${spaceName(a)}\0${detail.get(a.address) ?? ""}`;
       seen[k] = (seen[k] ?? 0) + 1;
     }
     for (const a of list) {
-      if (detail.get(a.address) == null && seen[`${a.space_name}\0`] > 1) detail.set(a.address, label(a));
+      if (detail.get(a.address) == null && seen[`${spaceName(a)}\0`] > 1) detail.set(a.address, label(a));
     }
     const row = (a, i, subs = []) => {
       const pic = agentIcon(a.program, 16, t.foreground);
@@ -459,7 +478,7 @@ var Agents = class extends View {
         cx2.notify();
       }).child(svg3(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
       const full = byPriority || isPinned;
-      const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
+      const name = full ? spaceName(a) || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex().id(`ag-${a.address}`).px(8).h(30).flex_none().rounded(8).items_center().gap(9).when(a.focused, (el) => el.bg(t.selected)).cursor_pointer().hover((s) => s.bg(t.hover)).on_hover((on, cx2) => {
         if (on) this.hovered = a.address;
         else if (this.hovered === a.address) this.hovered = null;
@@ -478,7 +497,7 @@ var Agents = class extends View {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+      else groups.push({ id, label: byPriority ? SECTION[r] : spaceName(a) || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
     }
     const header = (g) => {
       const open = !this.folded.has(g.id);

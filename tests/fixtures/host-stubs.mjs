@@ -8,11 +8,15 @@ const fresh = () => ({
   hc: () => ({ code: 1, stdout: "", stderr: "no hc in tests" }),
 });
 globalThis.__herdr = fresh();
+globalThis.__texts = [];
 // Herdr gives mods localStorage; Node 22 has none.
 const store = new Map();
 globalThis.localStorage ??= {
   getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k), clear: () => store.clear(),
 };
-export const resetHost = () => Object.assign(globalThis.__herdr, fresh());
+export const resetHost = () => { Object.assign(globalThis.__herdr, fresh()); globalThis.__texts = []; };
+// The strings rendered since the last clearTexts(): what a row or header would read.
+export const texts = () => globalThis.__texts;
+export const clearTexts = () => { globalThis.__texts = []; };
 register("./host-stubs-loader.mjs", import.meta.url);

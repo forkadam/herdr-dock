@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { withAgents, rowLabel, sharedNames } from "../src/shared/agent-rows.js";
+import { withAgents, rowLabel, sharedNames, spaceTags } from "../src/shared/agent-rows.js";
 
 const row = (id, tree = null) => ({ w: { id, machine: null }, tree });
 const ag = (address, space) => ({ address, space });
@@ -21,4 +21,16 @@ test("rowLabel: the peer name, then pane name, title, a named tab, the program, 
 });
 test("sharedNames: only names two agents both have", () => {
   assert.deepEqual([...sharedNames(["account-center-mf-ff", "amp-refine-ui-85", "account-center-mf-ff", null, null])], ["account-center-mf-ff"]);
+});
+
+const sa = (address, space, space_name) => ({ address, space, space_name, pane: "p" + address });
+test("spaceTags adds the branch only where different spaces share a name, never main or master", () => {
+  const list = [sa("t1", "S1", "herdr-dock"), sa("t2", "S2", "herdr-dock"), sa("t3", "S3", "server"), sa("t4", "S3", "server")];
+  const branch = { t1: "main", t2: "changes-minors", t3: "feat/x", t4: "feat/x" };
+  assert.deepEqual([...spaceTags(list, (a) => branch[a.address])],
+    [["t1", "herdr-dock"], ["t2", "herdr-dock · changes-minors"], ["t3", "server"], ["t4", "server"]]);
+});
+test("spaceTags: no branch or master leaves the plain name", () => {
+  const tags = spaceTags([sa("t1", "S1", "api"), sa("t2", "S2", "api")], (a) => (a.address === "t1" ? "master" : null));
+  assert.deepEqual([...tags.values()], ["api", "api"]);
 });
