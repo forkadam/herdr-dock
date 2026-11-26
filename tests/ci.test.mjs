@@ -317,9 +317,7 @@ test("lastLogLine: CRLF lines keep their text, a redraw keeps its last draw", ()
   assert.equal(lastLogLine("x\r\nprogress 10%\rprogress 55%\r\n"), "progress 55%");
 });
 
-test("lastLogLine: a tail cut mid-line drops the partial first line", () => {
-  assert.equal(lastLogLine("\x1b[3" + "q".repeat(5) + "\n" + "w".repeat(16384 - 9) + "\nreal last"), "real last");
-  const cut = "p".repeat(5000) + "\x1b[3" + "\nreal last";
-  assert.equal(lastLogLine("n".repeat(20000) + "\x1b[3\nreal last"), "real last");
-  assert.equal(lastLogLine(cut), "real last");
+test("lastLogLine: a cut tail keeps its first line, whose end is real log text", () => {
+  assert.equal(lastLogLine("y".repeat(20000) + "\n"), "y".repeat(200));
+  assert.equal(lastLogLine("n".repeat(20000) + "\nreal last"), "real last");
 });
