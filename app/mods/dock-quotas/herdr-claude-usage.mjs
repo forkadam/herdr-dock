@@ -8,7 +8,9 @@
 //                                     seven_day_sonnet,model_scoped}}   or   {"ok":false,"error":"..."}
 //
 // Only the limits are passed on (utilization, resets_at, a model's display_name): nothing else from the CLI's answer.
-// HERDR_DOCK_CLAUDE: the command to run instead of `claude` (tests); HERDR_DOCK_CLAUDE_TIMEOUT_MS: how long to wait.
+// HERDR_DOCK_CLAUDE: the command to run instead of `claude` (tests): a JSON array [command, ...args], or one command
+// path used whole — never split on spaces, so paths like C:\Users\Jane Doe\... work. HERDR_DOCK_CLAUDE_TIMEOUT_MS: how
+// long to wait.
 import { spawn } from "node:child_process";
 
 const REQUEST = { type: "control_request", request_id: "herdr-dock-usage", request: { subtype: "get_usage", skip_behaviors: true } };
@@ -34,7 +36,17 @@ function finish(out, child) {
   process.exit(0);
 }
 
-const [command, ...pre] = (process.env.HERDR_DOCK_CLAUDE || "claude").split(" ").filter(Boolean);
+function commandOf(override) {
+  if (!override) return ["claude"];
+  if (override.trim().startsWith("[")) {
+    try {
+      const argv = JSON.parse(override);
+      if (Array.isArray(argv) && argv.length && argv.every((a) => typeof a === "string")) return argv;
+    } catch { /* not JSON: use it whole below */ }
+  }
+  return [override];
+}
+const [command, ...pre] = commandOf(process.env.HERDR_DOCK_CLAUDE);
 let child;
 try {
   // Windows installs claude as claude.cmd, which only a shell runs.

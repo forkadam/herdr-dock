@@ -2,14 +2,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CLI_STALE_MS, mergeClaude, paceOf, parseUsageOutput, planLabel } from "../src/shared/claude-usage.js";
 
 const HELPER = join(import.meta.dirname, "..", "scripts", "herdr-claude-usage.mjs");
 const FAKE = join(import.meta.dirname, "fixtures", "claude", "fake-claude.mjs");
 const runHelper = (env = {}) => spawnSync(process.execPath, [HELPER], { encoding: "utf8", timeout: 30000,
-  env: { ...process.env, HERDR_DOCK_CLAUDE: `${process.execPath} ${FAKE}`, ...env } });
+  env: { ...process.env, HERDR_DOCK_CLAUDE: JSON.stringify([process.execPath, FAKE]), ...env } });
 const NOW = Date.parse("2026-11-22T14:00:00Z");
+
+test("helper: a command whose path has a space runs (the override is never split on spaces)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "herdr dock "));
+  try {
+    const fake = join(dir, "fake claude.mjs");
+    copyFileSync(FAKE, fake);
+    const r = runHelper({ HERDR_DOCK_CLAUDE: JSON.stringify([process.execPath, fake]) });
+    assert.equal(JSON.parse(r.stdout).ok, true, r.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("helper: asks the CLI and prints only the limits (one JSON line), nothing else from the answer", () => {
   const r = runHelper();
