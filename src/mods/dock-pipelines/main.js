@@ -8,7 +8,7 @@ import { theme, shared, setShared, props, closeOverlay, checking } from "herdr";
 import { gitCommand } from "../_git-command.js";
 import { badgeOf } from "../dock-git/view.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
-import { ago, duration, canRetry, bucketOf, countLine, elapsed, viewGroups, budgetLine } from "./format.js";
+import { ago, duration, canRetry, bucketOf, countLine, elapsed, viewGroups, budgetLine, limitTip } from "./format.js";
 
 const MOD = "dock-pipelines";
 const WARN = "#d29922";
@@ -253,11 +253,12 @@ export default class Pipelines extends View {
     return v_flex().pt(8).gap(1).flex_none().children(rows);
   }
 
-  retryButton(t, p, retryError) {
+  retryButton(t, p, retryError, budget) {
     const busy = p.status === "running" || p.status === "pending";
-    const enabled = canRetry(p.status) && !this.retrying && p.id != null;
+    const limited = limitTip(budget, Date.now());
+    const enabled = canRetry(p.status) && !this.retrying && p.id != null && !limited;
     const label = this.retrying ? "Retrying…" : "Retry";
-    const tip = busy ? "The pipeline is still running" : canRetry(p.status) ? "Retry the failed jobs" : "Nothing to retry";
+    const tip = limited ?? (busy ? "The pipeline is still running" : canRetry(p.status) ? "Retry the failed jobs" : "Nothing to retry");
     return v_flex().px(16).pt(12).gap(6).flex_none()
       .child(div().id("pl-retry").flex_none().self_start().px(12).h(26).rounded(6).border(1).border_color(t.border).flex().items_center()
         .text_size(12.5).text_color(t.foreground)
@@ -274,21 +275,30 @@ export default class Pipelines extends View {
     return div().px(16).py(6).text_size(12).text_color(t.dim).child(text);
   }
 
+  // The API budget's dim line, or the warn line while the host is paused at its limit; null when nothing is known.
+  budgetRow(t, d) {
+    const budget = budgetLine(d.budget, Date.now());
+    if (!budget) return null;
+    return div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text);
+  }
+
   body(t, d) {
     if (!d?.worktree || !d.repo) return [this.message(t, "Select a worktree in Git projects.")];
     const out = [];
     if (d.error || d.hint) out.push(this.warning(t, d));
     const p = d.pipeline;
+    const addBudget = () => { const row = this.budgetRow(t, d); if (row) out.push(row); };
     if (!p) {
+      // A limit pause can come before the first pipeline (or after an error): the warn line still says why it waits.
       if (!d.error) out.push(this.message(t, emptyText(d)));
+      addBudget();
       return out;
     }
     out.push(this.pipelineLine(t, d));
-    const budget = budgetLine(d.budget, Date.now());
-    if (budget) out.push(div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text));
+    addBudget();
     const jobs = this.jobList(t, d);
     if (jobs) out.push(jobs);
-    out.push(this.retryButton(t, p, d.retryError));
+    out.push(this.retryButton(t, p, d.retryError, d.budget));
     return out;
   }
 

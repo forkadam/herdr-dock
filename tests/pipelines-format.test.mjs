@@ -208,3 +208,23 @@ test("budgetLine: a limit in the past gives the dim line; no usable numbers or n
   assert.equal(budgetLine(null, NOW), null);
   assert.equal(budgetLine(undefined, NOW), null);
 });
+
+test("M5: budgetLine rounds the resume time up to the next minute (never shows a time before the pause ends)", () => {
+  const at = (h, m, s, ms = 0) => new Date(2026, 10, 27, h, m, s, ms).getTime();
+  const now = at(15, 0, 0);
+  const text = (until) => budgetLine({ provider: "github", remaining: 0, limit: 5000, limitedUntil: until }, now).text;
+  assert.equal(text(at(15, 46, 50)), "GitHub API limit reached — resumes at 15:47");
+  assert.equal(text(at(15, 46, 0, 1)), "GitHub API limit reached — resumes at 15:47");
+  assert.equal(text(at(15, 46, 0)), "GitHub API limit reached — resumes at 15:46");
+  assert.equal(text(at(23, 59, 30)), "GitHub API limit reached — resumes at 00:00");
+});
+
+test("M6: limitTip says the limit and its resume time while the pause lasts; null otherwise", async () => {
+  const { limitTip } = await import("../src/mods/dock-pipelines/format.js");
+  const at = (h, m, s) => new Date(2026, 10, 27, h, m, s).getTime();
+  const now = at(15, 0, 0);
+  assert.equal(limitTip({ provider: "github", limitedUntil: at(15, 46, 50) }, now), "API limit reached — resumes at 15:47");
+  assert.equal(limitTip({ provider: "github", limitedUntil: now - 1 }, now), null);
+  assert.equal(limitTip({ provider: "github", limitedUntil: null }, now), null);
+  assert.equal(limitTip(null, now), null);
+});

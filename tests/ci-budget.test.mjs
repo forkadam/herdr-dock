@@ -110,3 +110,11 @@ test("pauseFor: only a real 0 remaining pauses a 403", () => {
   assert.equal(pauseFor({ status: 403, remaining: "0", now }), 60000);
   assert.equal(pauseFor({ status: 403, remaining: 0, now }), 60000);
 });
+
+test("bodyLimited: a 403 body that names a rate limit", async () => {
+  const { bodyLimited } = await import("../src/shared/ci-budget.js");
+  assert.equal(bodyLimited('{"message":"You have exceeded a secondary rate limit. Please wait."}'), true);
+  assert.equal(bodyLimited("API Rate Limit exceeded"), true);
+  assert.equal(bodyLimited('{"message":"Resource not accessible by integration"}'), false);
+  assert.equal(bodyLimited(null), false);
+});

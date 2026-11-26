@@ -55,6 +55,13 @@ function gitCommand(name, args) {
   run(`dock-core.${gitCommandName(name, args)}`);
 }
 
+// src/shared/ci-budget.js
+function resumeClock(ms) {
+  const d = new Date(Math.ceil(ms / 6e4) * 6e4);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // src/mods/dock-git/view.js
 function badgeOf(pipeline) {
   if (!pipeline) return { glyph: "", tone: "dim" };
@@ -167,17 +174,17 @@ function viewGroups(pipeline, branch) {
   return out;
 }
 var API_NAME = { github: "GitHub", gitlab: "GitLab" };
+var isPaused = (budget, now) => typeof budget?.limitedUntil === "number" && budget.limitedUntil > now;
+function limitTip(budget, now) {
+  return isPaused(budget, now) ? `API limit reached \u2014 resumes at ${resumeClock(budget.limitedUntil)}` : null;
+}
 function thousands(n) {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 function budgetLine(budget, now) {
   if (!budget) return null;
   const name = `${API_NAME[budget.provider] ?? budget.provider} API`;
-  if (typeof budget.limitedUntil === "number" && budget.limitedUntil > now) {
-    const at = new Date(budget.limitedUntil);
-    const pad = (n) => String(n).padStart(2, "0");
-    return { tone: "warn", text: `${name} limit reached \u2014 resumes at ${pad(at.getHours())}:${pad(at.getMinutes())}` };
-  }
+  if (isPaused(budget, now)) return { tone: "warn", text: `${name} limit reached \u2014 resumes at ${resumeClock(budget.limitedUntil)}` };
   const { remaining, limit } = budget;
   if (!Number.isFinite(remaining) || !Number.isFinite(limit)) return null;
   return { tone: "dim", text: `${name}: ${thousands(remaining)} of ${thousands(limit)} left` };
@@ -366,11 +373,12 @@ var Pipelines = class extends View {
     });
     return v_flex().pt(8).gap(1).flex_none().children(rows);
   }
-  retryButton(t, p, retryError) {
+  retryButton(t, p, retryError, budget) {
     const busy = p.status === "running" || p.status === "pending";
-    const enabled = canRetry(p.status) && !this.retrying && p.id != null;
+    const limited = limitTip(budget, Date.now());
+    const enabled = canRetry(p.status) && !this.retrying && p.id != null && !limited;
     const label = this.retrying ? "Retrying\u2026" : "Retry";
-    const tip = busy ? "The pipeline is still running" : canRetry(p.status) ? "Retry the failed jobs" : "Nothing to retry";
+    const tip = limited ?? (busy ? "The pipeline is still running" : canRetry(p.status) ? "Retry the failed jobs" : "Nothing to retry");
     return v_flex().px(16).pt(12).gap(6).flex_none().child(div().id("pl-retry").flex_none().self_start().px(12).h(26).rounded(6).border(1).border_color(t.border).flex().items_center().text_size(12.5).text_color(t.foreground).tooltip(tip).when(enabled, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
       cx.stop_propagation();
       this.retry(cx);
@@ -379,21 +387,31 @@ var Pipelines = class extends View {
   message(t, text) {
     return div().px(16).py(6).text_size(12).text_color(t.dim).child(text);
   }
+  // The API budget's dim line, or the warn line while the host is paused at its limit; null when nothing is known.
+  budgetRow(t, d) {
+    const budget = budgetLine(d.budget, Date.now());
+    if (!budget) return null;
+    return div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text);
+  }
   body(t, d) {
     if (!d?.worktree || !d.repo) return [this.message(t, "Select a worktree in Git projects.")];
     const out = [];
     if (d.error || d.hint) out.push(this.warning(t, d));
     const p = d.pipeline;
+    const addBudget = () => {
+      const row = this.budgetRow(t, d);
+      if (row) out.push(row);
+    };
     if (!p) {
       if (!d.error) out.push(this.message(t, emptyText(d)));
+      addBudget();
       return out;
     }
     out.push(this.pipelineLine(t, d));
-    const budget = budgetLine(d.budget, Date.now());
-    if (budget) out.push(div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text));
+    addBudget();
     const jobs = this.jobList(t, d);
     if (jobs) out.push(jobs);
-    out.push(this.retryButton(t, p, d.retryError));
+    out.push(this.retryButton(t, p, d.retryError, d.budget));
     return out;
   }
   render(cx) {

@@ -154,3 +154,13 @@ test("hideWorktree: adds { id, held } while others stay; hiding the last one rem
   const solo = gitRows({ repos: [R({})] }, null);
   assert.deepEqual(hideWorktree([], solo, solo[1]), { hidden: null, removeRepo: api.id });
 });
+
+test("M7: during a limit pause the badge tooltip says the status is from before and when it resumes", () => {
+  const at = (h, m, s) => new Date(2026, 10, 27, h, m, s).getTime();
+  const now = at(15, 0, 0);
+  const tip = (p) => gitRows({ repos: [R({ worktrees: [W({ pipeline: p })] })] }, null, now)[1].badgeTip;
+  assert.equal(tip(P("passed", { number: 58, limitedUntil: at(15, 46, 50) })),
+    "Pipeline #58 passed · API limit reached — status from before, resumes at 15:47 · click for details");
+  assert.equal(tip(P("passed", { number: 58, limitedUntil: now - 1 })), "Pipeline #58 passed · click for details");
+  assert.equal(tip(P("passed", { number: 58, limitedUntil: null })), "Pipeline #58 passed · click for details");
+});

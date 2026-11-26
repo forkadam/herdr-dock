@@ -282,7 +282,8 @@ export function createCollector(io) {
     return now - wt.ci.at >= ciInterval({ status, upstreamChangedAt: wt.upstreamChangedAt, now, watched: isWatched, budgetLow: !!client.budget(host)?.low });
   }
 
-  // The published summary of a worktree's pipeline (full details only in dock.git.detail).
+  // The published summary of a worktree's pipeline (full details only in dock.git.detail). limitedUntil: the end of
+  // the host's API limit pause, while it lasts (the status is then the last one fetched before it).
   function pipelineSummary(wt) {
     const ci = wt?.ci;
     if (!ci?.provider || !ci.done) return null;
@@ -298,6 +299,7 @@ export function createCollector(io) {
       stale: !!(p && head && p.sha && p.sha !== head),
       error: ci.error,
       hint: ci.hint,
+      limitedUntil: client.budget(ci.host)?.limitedUntil ?? null,
     };
   }
 

@@ -1,5 +1,5 @@
-// Pure rules for keeping CI polling inside a host's API rate limit. No I/O: the CI client reads the headers and
-// sleeps; these functions only decide.
+// Pure rules for keeping CI polling inside a host's API rate limit, and the resume time the dock shows for a pause.
+// No I/O: the CI client reads the headers and sleeps; these functions only decide.
 
 // Header values are untrusted text: only plain digits count, so "0x10", "1e3" and "-1" are treated as missing (NaN).
 export function plainInt(v) {
@@ -39,6 +39,21 @@ export function isLow(b) {
 // The CLI route (gh / glab) gives no headers, only text, so the limit is recognised from the message.
 export function cliLimited(text) {
   return /rate limit|too many requests|\bHTTP 429\b/i.test(String(text ?? ""));
+}
+
+// A 403 whose headers don't make it a limit (calls left, no retry-after) may still be one: GitHub's secondary limits
+// can answer that way and say so only in the message (from memory, unverified). A 403 without such text stays a
+// permission error.
+export function bodyLimited(text) {
+  return /rate limit/i.test(String(text ?? ""));
+}
+
+// The local HH:MM a limit pause ends (ms), rounded up to the next minute: a pause until 15:46:50 says 15:47, so the
+// time shown is never before the pause really ends.
+export function resumeClock(ms) {
+  const d = new Date(Math.ceil(ms / 60000) * 60000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // A small least-recently-used map; Map keeps insertion order, so re-inserting on get/set refreshes an entry.

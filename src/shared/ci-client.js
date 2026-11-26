@@ -3,8 +3,11 @@
 // re-login, timeouts on the collector's clock, per-host backoff, conditional GETs (ETags) and the host's API
 // rate limit (budget from the response headers, a pause at the limit). (No Node built-ins: bundled into Herdr mods.)
 import { limiter } from "./limiter.js";
-import { readLimit, pauseFor, isLow, cliLimited, lru } from "./ci-budget.js";
-import { normalizeStatus, gitlabCommitPipeline, githubLatest, lastLogLine } from "./ci.js";
+import { readLimit, pauseFor, isLow, cliLimited, bodyLimited, lru } from "./ci-budget.js";
+import {
+  normalizeStatus, gitlabCommitPipeline, githubLatest, lastLogLine,
+  keepGithubRuns, keepGithubJobs, keepGitlabPipelines, keepGitlabJobs, keepGitlabBridges,
+} from "./ci.js";
 
 const HTTP_LIMIT = 4; // HTTP requests (or CLI api calls) at once
 const TIMEOUT = 15000;
@@ -21,7 +24,8 @@ const TRACE_TIMEOUT = 8000;
 const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 const ETAGS = 300; // URLs whose last ETag and answer are kept
-const CLI_PAUSE = 60000; // the CLI route has no reset time: a limit message pauses the host this long
+// A limit known only from text (a CLI message, or a 403's body) has no reset time: the host pauses this long.
+const TEXT_PAUSE = 60000;
 const JOBS_CACHE = 100; // finished builds whose jobs are kept
 const FINISHED = new Set(["passed", "failed", "canceled", "skipped"]);
 
@@ -35,8 +39,35 @@ function finishedStamp(provider, b) {
   return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
 }
 
+// Whether every job of an answer is settled. The build's status and its jobs come from separate requests, so a
+// finished build can arrive with a job that is not (and GitLab's "canceling" job is still stopping): such an answer
+// is never cached, so the next poll asks again.
+function allSettled(provider, jobs) {
+  return jobs.every((j) => j?.status !== "canceling" && FINISHED.has(normalizeStatus(provider, j)));
+}
+
+// A fetch whose headers can't be read (a getter that throws) is treated like one without them: unknown, never a
+// network error that would move the host to the CLI.
+const headerReader = (r) => (name) => {
+  try {
+    return r.headers?.get?.(name);
+  } catch {
+    return undefined;
+  }
+};
+
+// The text of an answer already received (a 403's message), or "" when it can't be read.
+async function bodyText(r) {
+  try {
+    if (typeof r.text === "function") return String(await r.text());
+    return JSON.stringify(await r.json());
+  } catch {
+    return "";
+  }
+}
+
 // A deep copy that nothing can change: a cached list must answer later polls as it was fetched, whatever happens to
-// the answer it came from (the ETag store keeps that same object).
+// the answer it came from. The ETag store keeps one too, so a 200 and the 304s after it answer with the same object.
 function frozenCopy(v) {
   const freeze = (x) => {
     if (x && typeof x === "object") {
@@ -248,10 +279,9 @@ export function createCiClient(io, log) {
     h.limitedUntil = Math.max(h.limitedUntil, now + ms);
   }
 
-  // Reads what the client needs from an answer's headers (when this fetch exposes them): the host's budget, and
-  // the limit pause. Returns true when the answer was a limit answer.
-  function noteHeaders(host, h, r) {
-    const get = (name) => r.headers?.get?.(name);
+  // Reads what the client needs from an answer's headers (when this fetch exposes them; get never throws): the
+  // host's budget, and the limit pause. Returns true when the answer was a limit answer.
+  function noteHeaders(host, h, status, get) {
     const limit = readLimit(get, h.provider);
     if (limit) h.budget = limit;
     // Once per host: does Herdr's fetch expose them? "seen" on the first pair; "not readable" only after 3 answers
@@ -269,7 +299,7 @@ export function createCiClient(io, log) {
       h.lowLogged = low;
     }
     const ms = pauseFor({
-      status: r.status,
+      status,
       remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
       resetAt: limit?.resetAt ?? null,
       retryAfter: get("retry-after"), // seconds; pauseFor ignores anything but a plain integer (e.g. a date)
@@ -294,7 +324,7 @@ export function createCiClient(io, log) {
     if (r.limited) return limitedResult(h);
     if (r.code !== 0) {
       if (cliLimited(`${r.stderr ?? ""}\n${r.stdout ?? ""}`)) {
-        pause(host, h, CLI_PAUSE);
+        pause(host, h, TEXT_PAUSE);
         return limitedResult(h);
       }
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
@@ -305,7 +335,8 @@ export function createCiClient(io, log) {
     if (opts.text) return good(h, String(r.stdout ?? ""));
     if (!wantJson) return good(h, null);
     try {
-      return good(h, JSON.parse(String(r.stdout ?? "")));
+      const data = JSON.parse(String(r.stdout ?? ""));
+      return good(h, opts.keep ? opts.keep(data) : data);
     } catch {
       return fail(h, "bad response", false, startedAt, {}, opts);
     }
@@ -313,7 +344,8 @@ export function createCiClient(io, log) {
 
   // One API call. `path` is relative to the API root ("projects/..." or "repos/..."). Resolves to
   // { ok: true, data, status?, notModified? } or { ok: false, error, hint?, hostFailure, limited?, limitedUntil? };
-  // never rejects.
+  // never rejects. opts.keep(data): what to keep of a JSON answer (ci.js keep*), on both routes; it is what the ETag
+  // store holds, frozen, and what a 200 and the 304s after it return.
   async function request(host, method, path, opts = {}) {
     const h = rec(host);
     const wantJson = method === "GET" && !opts.text;
@@ -335,8 +367,13 @@ export function createCiClient(io, log) {
           const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
           if (signal) init.signal = signal;
           const r = await io.fetch(url, init);
+          const get = headerReader(r);
           // A 401's rate-limit headers describe the unauthenticated budget, not this token's.
-          if (r.status !== 401 && noteHeaders(host, h, r)) return { limited: true };
+          if (r.status !== 401 && noteHeaders(host, h, r.status, get)) return { limited: true };
+          if (r.status === 403 && bodyLimited(await bodyText(r))) {
+            pause(host, h, TEXT_PAUSE);
+            return { limited: true };
+          }
           if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
           if (!r.ok) return { status: r.status, ok: false, data: null };
           if (opts.text) {
@@ -348,11 +385,16 @@ export function createCiClient(io, log) {
           }
           if (!wantJson) return { status: r.status, ok: true, data: null };
           try {
-            const data = await r.json();
-            const etag = r.headers?.get?.("etag");
-            if (etag) etags.set(url, { etag, data });
-            else etags.delete(url);
-            return { status: r.status, ok: true, data };
+            const raw = await r.json();
+            const data = opts.keep ? opts.keep(raw) : raw;
+            const etag = get("etag");
+            if (!etag) {
+              etags.delete(url);
+              return { status: r.status, ok: true, data };
+            }
+            const kept = frozenCopy(data);
+            etags.set(url, { etag, data: kept });
+            return { status: r.status, ok: true, data: kept };
           } catch {
             return { status: r.status, ok: false, data: null, bad: true };
           }
@@ -477,7 +519,8 @@ export function createCiClient(io, log) {
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
-    const r = await runsOf(poll.req, host, path, head,
+    const listReq = (method, p, opts) => poll.req(method, p, { ...opts, keep: keepGitlabPipelines });
+    const r = await runsOf(listReq, host, path, head,
       `${pipes}ref=${encodeURIComponent(head.branch)}&per_page=1&order_by=id&sort=desc`,
       head.branch ? `${pipes}sha=${sha}&order_by=id&sort=desc&per_page=5` : `${pipes}sha=${sha}&per_page=1&order_by=id&sort=desc`,
       (d) => (Array.isArray(d) ? d : null), (p) => p.sha === head.sha);
@@ -497,12 +540,12 @@ export function createCiClient(io, log) {
       const stamp = finishedStamp("gitlab", p);
       const cached = wantJobs ? cachedJobs(key, stamp) : undefined;
       const [j, b] = await Promise.all([
-        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`),
-        full ? poll.req("GET", `${at}/bridges?per_page=100`) : null,
+        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`, { keep: keepGitlabJobs }),
+        full ? poll.req("GET", `${at}/bridges?per_page=100`, { keep: keepGitlabBridges }) : null,
       ]);
       const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
       const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
-      if (stamp && jobs && !cached) remember(key, stamp, jobs);
+      if (stamp && jobs && !cached && allSettled("gitlab", jobs)) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
     dropLinesIfLow(host, path);
@@ -573,7 +616,8 @@ export function createCiClient(io, log) {
     const poll = pollOf(host);
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
-    const r = await runsOf(poll.req, host, path, head,
+    const listReq = (method, p, opts) => poll.req(method, p, { ...opts, keep: keepGithubRuns });
+    const r = await runsOf(listReq, host, path, head,
       `${runs}branch=${encodeURIComponent(head.branch)}&per_page=20`,
       `${runs}head_sha=${encodeURIComponent(head.sha)}&per_page=20`,
       (d) => (Array.isArray(d?.workflow_runs) ? d.workflow_runs : null), (x) => x.head_sha === head.sha);
@@ -593,10 +637,10 @@ export function createCiClient(io, log) {
         jobsByRunId[run.id] = cached;
         return;
       }
-      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`);
+      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`, { keep: keepGithubJobs });
       if (j.ok) {
         jobsByRunId[run.id] = j.data;
-        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, j.data);
+        if (stamp && Array.isArray(j.data?.jobs) && allSettled("github", j.data.jobs)) remember(key, stamp, j.data);
       } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
     if (poll.limited) return poll.limited;

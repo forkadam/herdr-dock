@@ -335,3 +335,35 @@ test("dock-pipelines: a limit that has already passed draws the dim line with th
   assert.ok(all.includes("GitLab API: 15 of 2,000 left"), all.join(" | "));
   assert.equal(all.some((s) => s.includes("limit reached")), false);
 });
+
+test("I1: a limit pause before any pipeline draws the warn line under the waiting message", () => {
+  const d = { ...gitlabDetail(), pipeline: null, budget: { provider: "github", remaining: 0, limit: 5000, limitedUntil: Date.now() + 3600000 } };
+  d.provider = "github";
+  draw(d);
+  const all = texts();
+  const warn = all.findIndex((s) => s.startsWith("GitHub API limit reached — resumes at "));
+  assert.ok(all.indexOf("Checking the pipeline…") >= 0, all.join(" | "));
+  assert.ok(warn > all.indexOf("Checking the pipeline…"), all.join(" | "));
+});
+
+test("I1: a limit pause with an error and no pipeline draws both the error and the warn line", () => {
+  const d = { ...gitlabDetail(), pipeline: null, error: "HTTP 500", budget: { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 3600000 } };
+  draw(d);
+  const all = texts();
+  const err = all.indexOf("Pipeline: HTTP 500");
+  const warn = all.findIndex((s) => s.startsWith("GitLab API limit reached — resumes at "));
+  assert.ok(err >= 0 && warn > err, all.join(" | "));
+});
+
+test("M6: Retry is disabled while a limit pause lasts, and enabled again after it", () => {
+  const d = gitlabDetail();
+  d.pipeline = { ...d.pipeline, status: "failed", busy: false };
+  draw(d);
+  assert.equal(typeof handlers()["pl-retry:on_click"], "function", "a failed pipeline can be retried");
+  d.budget = { provider: "gitlab", remaining: 0, limit: 2000, limitedUntil: Date.now() + 600000 };
+  draw(d);
+  assert.equal(handlers()["pl-retry:on_click"], undefined, "no click while paused");
+  d.budget = { ...d.budget, limitedUntil: Date.now() - 1000 };
+  draw(d);
+  assert.equal(typeof handlers()["pl-retry:on_click"], "function");
+});

@@ -448,3 +448,51 @@ test("ciInterval: a low budget slows the watched poll to 30 s and nothing else",
   const now = 1000000;
   assert.equal(ciInterval({ status: "passed", upstreamChangedAt: now - 1000, now, budgetLow: true }), 15000);
 });
+
+// --- what the CI client keeps of an answer (final review M3) ---
+test("keep*: the kept fields give the same Pipeline as the whole answer (no field a normalizer reads is dropped)", async () => {
+  const { keepGithubRuns, keepGithubJobs, keepGitlabPipelines, keepGitlabJobs, keepGitlabBridges, githubJob } = await import("../src/shared/ci.js");
+  const runs = fx("github-runs-tag.json");
+  const jobs = { 45823655383: fx("github-jobs-45823655383.json"), 45822438336: fx("github-jobs-45822438336.json") };
+  const keptJobs = Object.fromEntries(Object.entries(jobs).map(([k, v]) => [k, keepGithubJobs(v)]));
+  assert.deepEqual(githubLatest(keepGithubRuns(runs), keptJobs), githubLatest(runs, jobs));
+  const gh = fx("github-runs.json");
+  assert.deepEqual(githubLatest(keepGithubRuns(gh), { 301: keepGithubJobs(fx("github-jobs-301.json")) }), githubLatest(gh, { 301: fx("github-jobs-301.json") }));
+  const steps = fx("github-jobs-steps.json");
+  const run = runs.workflow_runs[0];
+  assert.deepEqual(keepGithubJobs(steps).jobs.map((j) => githubJob(j, run)), steps.jobs.map((j) => githubJob(j, run)));
+  const p = fx("gitlab-pipeline.json");
+  const [kp] = keepGitlabPipelines([p]);
+  const entries = (pipe, keep) => [{ pipeline: pipe, jobs: keep ? keepGitlabJobs(fx("gitlab-jobs.json")) : fx("gitlab-jobs.json"),
+    bridges: keep ? keepGitlabBridges(fx("gitlab-bridges.json")) : fx("gitlab-bridges.json") }];
+  assert.deepEqual(gitlabCommitPipeline(entries(kp, true)), gitlabCommitPipeline(entries(p, false)));
+  // updated_at feeds the job cache's stamp: kept too.
+  assert.equal(kp.updated_at, p.updated_at);
+});
+
+test("keep*: only the listed fields are kept", async () => {
+  const { keepGithubRuns, keepGithubJobs, keepGitlabPipelines, keepGitlabJobs, keepGitlabBridges } = await import("../src/shared/ci.js");
+  const big = "x".repeat(1000);
+  assert.deepEqual(keepGithubRuns({ total_count: 1, workflow_runs: [{ id: 1, name: "CI", head_branch: "main", head_sha: "s", run_number: 3,
+    event: "push", status: "completed", conclusion: "success", html_url: "u", created_at: "c", updated_at: "u2", repository: { big }, head_commit: { big } }] }),
+  { workflow_runs: [{ id: 1, name: "CI", head_branch: "main", head_sha: "s", run_number: 3, event: "push", status: "completed",
+    conclusion: "success", html_url: "u", created_at: "c", updated_at: "u2" }] });
+  assert.deepEqual(keepGithubJobs({ total_count: 1, jobs: [{ id: 2, name: "j", status: "completed", conclusion: "failure", started_at: "a",
+    completed_at: "b", html_url: "h", runner_name: big, labels: [big], steps: [{ name: "s", status: "completed", conclusion: "success", number: 1, started_at: "a" }] }] }),
+  { total_count: 1, jobs: [{ id: 2, name: "j", status: "completed", conclusion: "failure", started_at: "a", completed_at: "b", html_url: "h",
+    steps: [{ name: "s", status: "completed", conclusion: "success", number: 1 }] }] });
+  assert.deepEqual(keepGitlabPipelines([{ id: 1, status: "success", ref: "main", sha: "s", web_url: "w", created_at: "c", updated_at: "u",
+    finished_at: "f", source: "push", project_id: 9, user: { big } }]),
+  [{ id: 1, status: "success", ref: "main", sha: "s", web_url: "w", created_at: "c", updated_at: "u", finished_at: "f", source: "push" }]);
+  assert.deepEqual(keepGitlabJobs([{ id: 1, name: "n", stage: "s", status: "failed", allow_failure: false, duration: 3, started_at: "a",
+    finished_at: "b", web_url: "w", user: { big }, commit: { big }, runner: { big } }]),
+  [{ id: 1, name: "n", stage: "s", status: "failed", allow_failure: false, duration: 3, started_at: "a", finished_at: "b", web_url: "w" }]);
+  assert.deepEqual(keepGitlabBridges([{ id: 1, name: "n", stage: "s", status: "success", web_url: "w", user: { big },
+    pipeline: { id: 5, project_id: 1, big }, downstream_pipeline: { id: 7, project_id: 2, status: "running", web_url: "d", project_path: "g/p", big } }]),
+  [{ id: 1, name: "n", stage: "s", status: "success", web_url: "w", pipeline: { project_id: 1 },
+    downstream_pipeline: { project_id: 2, status: "running", web_url: "d", project_path: "g/p" } }]);
+  // A malformed answer is left as it was, so the caller still sees it as malformed.
+  assert.deepEqual(keepGithubRuns({ message: "x" }), { message: "x" });
+  assert.equal(keepGitlabJobs(null), null);
+  assert.deepEqual(keepGitlabPipelines({ message: "x" }), { message: "x" });
+});

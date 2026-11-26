@@ -1,6 +1,7 @@
 // Pure view model for the Git projects feature (no host imports: node --test runs it).
 import { worktreeId } from "../../shared/git.js";
 import { slashPath } from "../../shared/path.js";
+import { resumeClock } from "../../shared/ci-budget.js";
 
 export const EMPTY_TEXT = "No repos yet: + Add repo, or open a terminal in a repo.";
 
@@ -18,21 +19,25 @@ export function badgeOf(pipeline) {
   }
 }
 
-// The badge's tooltip: the status, and why it's unknown or stale.
-function pipelineTip(p) {
+// The badge's tooltip: the status, why it's unknown or stale, and, while the host is paused at its API limit, that
+// the status is the last one fetched before the pause.
+function pipelineTip(p, now) {
   if (!p) return "No pipeline";
-  if (p.error) return `Pipeline: ${p.error}${p.hint ? ` · run ${p.hint}` : ""}`;
+  const limited = typeof p.limitedUntil === "number" && p.limitedUntil > now
+    ? ` · API limit reached — status from before, resumes at ${resumeClock(p.limitedUntil)}` : "";
+  if (p.error) return `Pipeline: ${p.error}${p.hint ? ` · run ${p.hint}` : ""}${limited}`;
   const s = p.status === "none" ? "no pipeline yet" : p.status;
   // number is the display number (GitHub: run_number); id is a 40-char sha on GitHub, so never shown.
-  return `Pipeline ${p.number != null ? `#${p.number} ` : ""}${s}${p.stale ? " · older commit than local HEAD" : ""} · click for details`;
+  return `Pipeline ${p.number != null ? `#${p.number} ` : ""}${s}${p.stale ? " · older commit than local HEAD" : ""}${limited} · click for details`;
 }
 
 export function repoWebUrl(repo) {
   return repo?.host && repo?.path ? `https://${repo.host}/${repo.path}` : null;
 }
 
-// dock.git.state + dock.git.selected -> rows: each repo, then its worktrees; one "empty" row with no repos.
-export function gitRows(state, selected) {
+// dock.git.state + dock.git.selected -> rows: each repo, then its worktrees; one "empty" row with no repos. now (ms)
+// tells whether a worktree's limit pause is still on.
+export function gitRows(state, selected, now = Date.now()) {
   const repos = Array.isArray(state?.repos) ? state.repos : [];
   if (!repos.length) return [{ kind: "empty", text: EMPTY_TEXT }];
   const rows = [];
@@ -52,7 +57,7 @@ export function gitRows(state, selected) {
       rows.push({
         kind: "worktree", id: w.id, repoId: r.id, branch, path: w.path,
         open: Boolean(w.open), space: w.space ?? null, selected: w.id === selected,
-        badge: badgeOf(w.pipeline), badgeTip: pipelineTip(w.pipeline),
+        badge: badgeOf(w.pipeline), badgeTip: pipelineTip(w.pipeline, now),
         ahead: w.ahead > 0 ? `↑${w.ahead}` : null,
         behind: w.behind > 0 ? `↓${w.behind}` : null,
         noUpstream: !w.upstream && !w.detached,

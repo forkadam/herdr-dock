@@ -72,7 +72,9 @@ standard one; the once-per-host log line settles it on deploy.
   notModified: true }` and counts as success (clears backoff like any good answer).
 - A 200 with an `etag` stores `{ etag, data }`; without one, the entry is removed.
 - Text (trace) requests are excluded (Range answers vary).
-- Stored data is the parsed JSON; it never leaves the client except as the answer it was.
+- Stored data is the parsed JSON cut down to the fields the normalizers and the job cache read (`ci.js` keep*; a
+  real GitHub run-list page is ~13 KB per run), deep-frozen; a 200 and the 304s after it return that same object. It
+  never leaves the client except as the answer it was. *(Final review M3, M4.)*
 
 ### Finished-build job cache
 
@@ -81,7 +83,9 @@ standard one; the once-per-host log line settles it on deploy.
   pipeline may not move the parent's `updated_at`), so they are fetched on every full poll and revalidated by ETag.
 - Stamp: GitLab pipeline `updated_at` + status; GitHub run `updated_at` + status + conclusion.
 - A build whose normalized status is finished (passed, failed, canceled, skipped) and whose stamp matches its cache
-  entry reuses the cached jobs with no request. A running/pending build always fetches (with its ETag).
+  entry reuses the cached jobs with no request. A jobs answer is kept only when every job in it is settled too
+  (passed, failed, canceled, skipped; not GitLab "canceling"), so a job still running in a finished build is asked
+  again next poll. *(Final review M2.)* A running/pending build always fetches (with its ETag).
 - A Retry (or any change) moves `updated_at`, so the stamp no longer matches and the jobs are fetched again.
 - Applies to full and non-full polls and to both routes (fetch and CLI).
 
@@ -107,7 +111,11 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
 - Under the pipeline line, one dim line when `detail.budget` is known: `GitHub API: 4,321 of 5,000 left`
   (GitLab: `GitLab API: …`); thousands separated.
 - When `detail.budget.limitedUntil` is in the future, a warn line instead:
-  `GitHub API limit reached — resumes at HH:MM` (local time), and the job list stays as last fetched.
+  `GitHub API limit reached — resumes at HH:MM` (local time, rounded up to the next minute), and the job list stays
+  as last fetched. The line shows also before the first pipeline and under an error. Retry is disabled meanwhile, with
+  the tooltip `API limit reached — resumes at HH:MM`.
+- The Git projects badge: the worktree summary in `dock.git.state` carries `limitedUntil`, and the badge tooltip adds
+  `API limit reached — status from before, resumes at HH:MM` while it lasts. *(Final review I1, M5–M7.)*
 
 ### Logs
 
@@ -140,7 +148,11 @@ Per host the client keeps `{ remaining, limit, resetAt, limited }` from the late
    (the hourly/primary budget is spent), until `resetAt`, else `retry-after`, else 60 s; otherwise (GitHub's short-term
    "secondary" limit, which answers 429 or 403 with `retry-after` while the hourly budget still has calls left) for
    `retry-after` seconds, else 60 s — never until the hourly reset. **From memory, unverified:** GitHub's secondary-limit
-   answers carry `retry-after`. A 5xx with `retry-after` stays an ordinary 5xx host failure (not shown as "limit
+   answers carry `retry-after`. A 403 whose headers decide nothing (calls left, no `retry-after`) but whose body
+   text (fetch route: the received body, e.g. the JSON `message`) matches `/rate limit/i` also pauses, for 60 s; a
+   403 without such text stays an ordinary 403 *(final review I2; from memory, unverified: GitHub secondary limits can
+   answer 403 without `retry-after`)*. A header read that throws counts as no header (unknown), never as a network
+   error that would move the host to the CLI *(final review M1)*. A 5xx with `retry-after` stays an ordinary 5xx host failure (not shown as "limit
    reached"). Budget headers on a 401 answer are ignored (they describe an unauthenticated budget).
 3. **CLI route (`gh api` / `glab api`):** stderr/stdout matching `/rate limit|too many requests|\bHTTP 429\b/i` pauses
    the host for 60 s (no reset time there). **Unverified guess:** the exact gh/glab wording; the pattern is broad on

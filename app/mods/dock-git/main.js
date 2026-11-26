@@ -105,6 +105,13 @@ function worktreeId(machine, path, platform) {
   return `${machine ?? ""}|${p}`;
 }
 
+// src/shared/ci-budget.js
+function resumeClock(ms) {
+  const d = new Date(Math.ceil(ms / 6e4) * 6e4);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // src/mods/dock-git/view.js
 var EMPTY_TEXT = "No repos yet: + Add repo, or open a terminal in a repo.";
 var PROVIDER = { gitlab: "GitLab", github: "GitHub" };
@@ -123,16 +130,17 @@ function badgeOf(pipeline) {
       return { glyph: "\u2013", tone: "dim" };
   }
 }
-function pipelineTip(p) {
+function pipelineTip(p, now) {
   if (!p) return "No pipeline";
-  if (p.error) return `Pipeline: ${p.error}${p.hint ? ` \xB7 run ${p.hint}` : ""}`;
+  const limited = typeof p.limitedUntil === "number" && p.limitedUntil > now ? ` \xB7 API limit reached \u2014 status from before, resumes at ${resumeClock(p.limitedUntil)}` : "";
+  if (p.error) return `Pipeline: ${p.error}${p.hint ? ` \xB7 run ${p.hint}` : ""}${limited}`;
   const s = p.status === "none" ? "no pipeline yet" : p.status;
-  return `Pipeline ${p.number != null ? `#${p.number} ` : ""}${s}${p.stale ? " \xB7 older commit than local HEAD" : ""} \xB7 click for details`;
+  return `Pipeline ${p.number != null ? `#${p.number} ` : ""}${s}${p.stale ? " \xB7 older commit than local HEAD" : ""}${limited} \xB7 click for details`;
 }
 function repoWebUrl(repo) {
   return repo?.host && repo?.path ? `https://${repo.host}/${repo.path}` : null;
 }
-function gitRows(state, selected) {
+function gitRows(state, selected, now = Date.now()) {
   const repos = Array.isArray(state?.repos) ? state.repos : [];
   if (!repos.length) return [{ kind: "empty", text: EMPTY_TEXT }];
   const rows = [];
@@ -165,7 +173,7 @@ function gitRows(state, selected) {
         space: w.space ?? null,
         selected: w.id === selected,
         badge: badgeOf(w.pipeline),
-        badgeTip: pipelineTip(w.pipeline),
+        badgeTip: pipelineTip(w.pipeline, now),
         ahead: w.ahead > 0 ? `\u2191${w.ahead}` : null,
         behind: w.behind > 0 ? `\u2193${w.behind}` : null,
         noUpstream: !w.upstream && !w.detached,

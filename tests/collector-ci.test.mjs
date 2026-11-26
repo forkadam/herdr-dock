@@ -2452,3 +2452,164 @@ test("detail.budget carries limitedUntil for a bare 429 with no headers", async 
   await c.select(WT);
   assert.deepEqual(detailOf(io).budget, { provider: "gitlab", remaining: null, limit: null, limitedUntil: T0 + 60000 });
 });
+
+// --- final review fixes ---
+
+test("I2: a 403 with calls left, no retry-after and a body naming a rate limit pauses 60 s, not a host failure", async () => {
+  const body = { message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again." };
+  const { io, c } = await clientOf("github.com", {
+    ...ghOrigin, routes: { [GH_API + RUNS_P]: hres(403, body, { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000", "x-ratelimit-reset": String((T0 + 3000000) / 1000) }) },
+  });
+  const r = await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(r, { ok: false, error: "API limit reached", limited: true, limitedUntil: T0 + 60000, hostFailure: false });
+  assert.equal(c.blocked("github.com", T0 + 59999), true);
+  assert.equal(c.blocked("github.com", T0 + 60000), false);
+  assert.deepEqual(limitLogs(io), [`CI: github.com API limit reached; paused until ${clock(T0 + 60000)}`]);
+  // Not the backoff ladder: right after the pause a request goes out.
+  io.t = T0 + 60000;
+  await c.request("github.com", "GET", RUNS_P);
+  assert.equal(io.fetches.length, 2);
+});
+
+test("I2: a 403 with calls left whose body names no rate limit stays an ordinary 403", async () => {
+  const { c } = await clientOf("github.com", {
+    ...ghOrigin, routes: { [GH_API + RUNS_P]: hres(403, { message: "Resource not accessible by integration" }, { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000" }) },
+  });
+  assert.deepEqual(await c.request("github.com", "GET", RUNS_P), { ok: false, error: "HTTP 403", hostFailure: false, status: 403 });
+  assert.equal(c.blocked("github.com", T0), false);
+});
+
+test("I2: a 403 body that cannot be read stays an ordinary 403", async () => {
+  const broken = { ...hres(403, {}, { "x-ratelimit-remaining": "4000", "x-ratelimit-limit": "5000" }), text: async () => { throw new Error("gone"); }, json: async () => { throw new Error("gone"); } };
+  const { c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: broken } });
+  assert.deepEqual(await c.request("github.com", "GET", RUNS_P), { ok: false, error: "HTTP 403", hostFailure: false, status: 403 });
+  assert.equal(c.via("github.com"), "fetch");
+});
+
+test("M1: headers whose get throws are unknown: the request still succeeds, the host stays on fetch, no budget", async () => {
+  const throwing = { ...res(200, [1]), headers: { get: () => { throw new Error("no headers here"); } } };
+  const { io, c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: throwing } });
+  assert.deepEqual(await c.request("github.com", "GET", RUNS_P), { ok: true, data: [1], status: 200 });
+  assert.equal(c.via("github.com"), "fetch");
+  assert.equal(c.budget("github.com"), null);
+  assert.equal(io.calls.filter((x) => x.cmd === "gh" && x.args[0] === "api").length, 0);
+  assert.ok(!io.logs.some((l) => l.includes("using gh api")), io.logs.join("\n"));
+});
+
+test("M2: a completed run whose jobs answer still has a job in progress is not cached (asked again next poll)", async () => {
+  const runs = fx("github-runs.json");
+  runs.workflow_runs = runs.workflow_runs.map((r) => ({ ...r, updated_at: U1 }));
+  const jobs = fx("github-jobs-301.json");
+  jobs.jobs[1] = { ...jobs.jobs[1], status: "in_progress", conclusion: null };
+  const url = `${GH_R}/301/jobs?per_page=100`;
+  const { io, c } = await clientOf("github.com", { ...ghFailed, routes: { [`${GH_R}?branch=main&per_page=20`]: res(200, runs), [url]: res(200, jobs) } });
+  await c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  await c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  assert.equal(calls(io, url), 2);
+});
+
+test("M2: a finished GitLab pipeline whose jobs answer still has a running job is not cached", async () => {
+  const done = pipeline({ status: "success", updated_at: U1 });
+  const stillGoing = passedJobs.map((j) => (j.id === 902 ? { ...j, status: "running" } : j));
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, stillGoing), [glBridges(48213)]: res(200, []) },
+  });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 2);
+});
+
+test("M3: a 200 with extra fields stores and returns only the kept fields; a later 304 returns the same object", async () => {
+  const { keepGithubRuns } = await import("../src/shared/ci.js");
+  const row = { id: 1, name: "CI", head_branch: "main", head_sha: "s", run_number: 3, event: "push", status: "completed",
+    conclusion: "success", html_url: "u", created_at: "c", updated_at: "d" };
+  const answers = [
+    () => hres(200, { total_count: 1, workflow_runs: [{ ...row, repository: { big: "x".repeat(5000) }, head_commit: { message: "m" } }] }, { etag: '"r"' }),
+    (init) => (init.headers["If-None-Match"] === '"r"' ? hres(304, null) : hres(200, { wrong: true })),
+  ];
+  const { c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: (u, init, n) => answers[n - 1](init) } });
+  const first = await c.request("github.com", "GET", RUNS_P, { keep: keepGithubRuns });
+  assert.deepEqual(first.data, { workflow_runs: [row] });
+  const second = await c.request("github.com", "GET", RUNS_P, { keep: keepGithubRuns });
+  assert.equal(second.notModified, true);
+  assert.equal(second.data, first.data);
+});
+
+// A field the client must not keep, as a getter: reading it (to store or copy it) is recorded.
+function watchedExtra(o, seen) {
+  Object.defineProperty(o, "extra", { enumerable: true, get() { seen.push(o.id); return "x".repeat(5000); } });
+  return o;
+}
+
+test("M3: latest() keeps only the normalizers' fields of GitHub run lists and jobs answers (the extras are never read)", async () => {
+  const seen = [];
+  const runs = fx("github-runs.json");
+  runs.workflow_runs = runs.workflow_runs.map((r) => watchedExtra({ ...r, updated_at: U1 }, seen));
+  const jobs = fx("github-jobs-301.json");
+  jobs.jobs = jobs.jobs.map((j) => watchedExtra({ ...j }, seen));
+  const { c } = await clientOf("github.com", {
+    ...ghFailed,
+    routes: { [`${GH_R}?branch=main&per_page=20`]: hres(200, runs, { etag: '"a"' }), [`${GH_R}/301/jobs?per_page=100`]: hres(200, jobs, { etag: '"b"' }) },
+  });
+  const r = await c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  assert.equal(r.ok, true);
+  assert.deepEqual(seen, []);
+});
+
+test("M3: latest() keeps only the normalizers' fields of GitLab pipelines, jobs and bridges", async () => {
+  const seen = [];
+  const done = () => [watchedExtra(pipeline({ status: "success", updated_at: U1 }), seen)];
+  const { c } = await clientOf("gitlab.corp", {
+    routes: {
+      [PIPES]: () => hres(200, done(), { etag: '"p"' }), [SHAQ]: () => hres(200, done(), { etag: '"s"' }),
+      [glJobs(48213)]: hres(200, passedJobs.map((j) => watchedExtra({ ...j }, seen)), { etag: '"j"' }),
+      [glBridges(48213)]: hres(200, [watchedExtra({ ...BRIDGE }, seen)], { etag: '"b"' }),
+    },
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.pipeline.jobs.length, 4);
+  assert.deepEqual(seen, []);
+});
+
+test("M3: a GitHub poll answered 200 and then 304 gives the same pipeline", async () => {
+  const runs = fx("github-runs.json");
+  runs.workflow_runs = runs.workflow_runs.map((r) => ({ ...r, updated_at: U1, repository: { big: "x" } }));
+  const list = (u, init) => (init.headers["If-None-Match"] === '"a"' ? hres(304, null) : hres(200, runs, { etag: '"a"' }));
+  const jobs = (u, init) => (init.headers["If-None-Match"] === '"b"' ? hres(304, null) : hres(200, fx("github-jobs-301.json"), { etag: '"b"' }));
+  const { io, c } = await clientOf("github.com", { ...ghFailed, routes: { [`${GH_R}?branch=main&per_page=20`]: list, [`${GH_R}/301/jobs?per_page=100`]: jobs } });
+  const first = await c.latest("github.com", "github", "o/r", F_HEAD);
+  const second = await c.latest("github.com", "github", "o/r", F_HEAD);
+  assert.equal(io.fetches.filter((f) => f.url === `${GH_R}?branch=main&per_page=20` && f.init.headers["If-None-Match"]).length, 1, "the second list was a 304");
+  assert.deepEqual(second.pipeline, first.pipeline);
+});
+
+test("M4: what the ETag store keeps is frozen: changing a returned answer throws and the next 304 is as fetched", async () => {
+  const answers = [() => hres(200, { list: [{ id: 1, name: "a" }] }, { etag: '"f"' }), () => hres(304, null)];
+  const { c } = await clientOf("github.com", { ...ghOrigin, routes: { [GH_API + RUNS_P]: (u, init, n) => answers[n - 1]() } });
+  const first = await c.request("github.com", "GET", RUNS_P);
+  assert.throws(() => { first.data.list[0].name = "changed"; }, TypeError);
+  assert.throws(() => { first.data.list.push({ id: 2 }); }, TypeError);
+  const second = await c.request("github.com", "GET", RUNS_P);
+  assert.deepEqual(second.data, { list: [{ id: 1, name: "a" }] });
+});
+
+test("M7: the published worktree summary carries limitedUntil during a limit pause; null otherwise", async () => {
+  let answer = () => hres(200, [pipeline({ status: "success" })], GL_HDR(1500, 1795707975));
+  const { io } = ciIo({ routes: { [PIPES]: () => answer(), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.limitedUntil, null);
+  answer = () => hres(429, {}, { "retry-after": "120" });
+  io.t = T0 + 301000;
+  await c.tick();
+  await until(() => io.fetches.filter((f) => f.url === PIPES).length === 2);
+  const limitedUntil = io.t + 120000;
+  assert.equal(wtOf(c).pipeline.limitedUntil, limitedUntil);
+  assert.equal(wtOf(c).pipeline.status, "passed");
+  answer = () => hres(200, [pipeline({ status: "success" })], GL_HDR(1500, 1795707975));
+  io.t = limitedUntil;
+  await c.tick();
+  await until(() => io.fetches.filter((f) => f.url === PIPES).length === 3);
+  assert.equal(wtOf(c).pipeline.limitedUntil, null);
+});

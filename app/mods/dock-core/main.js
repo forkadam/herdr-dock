@@ -352,6 +352,52 @@ function githubLatest(runsJson, jobsByRunId) {
     jobsTruncated
   };
 }
+var pick = (o, keys) => {
+  if (!o || typeof o !== "object") return o;
+  const out = {};
+  for (const k of keys) if (k in o) out[k] = o[k];
+  return out;
+};
+var pickAll = (list, f) => Array.isArray(list) ? list.map(f) : list;
+var GITHUB_RUN = [
+  "id",
+  "name",
+  "head_branch",
+  "head_sha",
+  "run_number",
+  "event",
+  "status",
+  "conclusion",
+  "html_url",
+  "created_at",
+  "updated_at"
+];
+var GITHUB_JOB = ["id", "name", "status", "conclusion", "started_at", "completed_at", "html_url"];
+var GITHUB_STEP = ["name", "status", "conclusion", "number"];
+var GITLAB_PIPE = ["id", "status", "ref", "sha", "web_url", "created_at", "updated_at", "finished_at", "source"];
+var GITLAB_JOB = ["id", "name", "stage", "status", "allow_failure", "duration", "started_at", "finished_at", "web_url"];
+var GITLAB_DOWNSTREAM = ["project_id", "status", "web_url", "project_path"];
+function keepGithubRuns(d) {
+  if (!Array.isArray(d?.workflow_runs)) return d;
+  return { workflow_runs: d.workflow_runs.map((r) => pick(r, GITHUB_RUN)) };
+}
+function keepGithubJobs(d) {
+  if (!Array.isArray(d?.jobs)) return d;
+  const job = (j) => {
+    const kept = pick(j, GITHUB_JOB);
+    if (kept && j.steps !== void 0) kept.steps = pickAll(j.steps, (s) => pick(s, GITHUB_STEP));
+    return kept;
+  };
+  return { ..."total_count" in d ? { total_count: d.total_count } : {}, jobs: d.jobs.map(job) };
+}
+var keepGitlabPipelines = (d) => pickAll(d, (p) => pick(p, GITLAB_PIPE));
+var keepGitlabJobs = (d) => pickAll(d, (j) => pick(j, GITLAB_JOB));
+var keepGitlabBridges = (d) => pickAll(d, (b) => {
+  const kept = pick(b, GITLAB_JOB);
+  if (kept && b.pipeline !== void 0) kept.pipeline = pick(b.pipeline, ["project_id"]);
+  if (kept && b.downstream_pipeline !== void 0) kept.downstream_pipeline = pick(b.downstream_pipeline, GITLAB_DOWNSTREAM);
+  return kept;
+});
 var ALERTED_MAX = 20;
 var alertedList = (v) => Array.isArray(v) ? v : v == null ? [] : [v];
 function nextAlerted(prev, key) {
@@ -442,6 +488,9 @@ function isLow(b) {
 function cliLimited(text) {
   return /rate limit|too many requests|\bHTTP 429\b/i.test(String(text ?? ""));
 }
+function bodyLimited(text) {
+  return /rate limit/i.test(String(text ?? ""));
+}
 function lru(max) {
   const m = /* @__PURE__ */ new Map();
   return {
@@ -480,7 +529,7 @@ var TRACE_TIMEOUT = 8e3;
 var NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 var MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 var ETAGS = 300;
-var CLI_PAUSE = 6e4;
+var TEXT_PAUSE = 6e4;
 var JOBS_CACHE = 100;
 var FINISHED = /* @__PURE__ */ new Set(["passed", "failed", "canceled", "skipped"]);
 var Timeout = class extends Error {
@@ -488,6 +537,24 @@ var Timeout = class extends Error {
 function finishedStamp(provider, b) {
   if (!b?.updated_at || b.status === "canceling" || !FINISHED.has(normalizeStatus(provider, b))) return null;
   return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
+}
+function allSettled(provider, jobs) {
+  return jobs.every((j) => j?.status !== "canceling" && FINISHED.has(normalizeStatus(provider, j)));
+}
+var headerReader = (r) => (name) => {
+  try {
+    return r.headers?.get?.(name);
+  } catch {
+    return void 0;
+  }
+};
+async function bodyText(r) {
+  try {
+    if (typeof r.text === "function") return String(await r.text());
+    return JSON.stringify(await r.json());
+  } catch {
+    return "";
+  }
 }
 function frozenCopy(v) {
   const freeze = (x) => {
@@ -671,8 +738,7 @@ ${st.stderr ?? ""}`;
     if (now >= h.limitedUntil) log(`CI: ${host} API limit reached; paused until ${clock(now + ms)}`);
     h.limitedUntil = Math.max(h.limitedUntil, now + ms);
   }
-  function noteHeaders(host, h, r) {
-    const get = (name) => r.headers?.get?.(name);
+  function noteHeaders(host, h, status, get) {
     const limit = readLimit(get, h.provider);
     if (limit) h.budget = limit;
     if (limit && h.headers !== "seen") {
@@ -688,7 +754,7 @@ ${st.stderr ?? ""}`;
       h.lowLogged = low;
     }
     const ms = pauseFor({
-      status: r.status,
+      status,
       remaining: get(h.provider === "gitlab" ? "ratelimit-remaining" : "x-ratelimit-remaining"),
       resetAt: limit?.resetAt ?? null,
       retryAfter: get("retry-after"),
@@ -714,7 +780,7 @@ ${st.stderr ?? ""}`;
     if (r.code !== 0) {
       if (cliLimited(`${r.stderr ?? ""}
 ${r.stdout ?? ""}`)) {
-        pause(host, h, CLI_PAUSE);
+        pause(host, h, TEXT_PAUSE);
         return limitedResult(h);
       }
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
@@ -724,7 +790,8 @@ ${r.stdout ?? ""}`)) {
     if (opts.text) return good(h, String(r.stdout ?? ""));
     if (!wantJson) return good(h, null);
     try {
-      return good(h, JSON.parse(String(r.stdout ?? "")));
+      const data = JSON.parse(String(r.stdout ?? ""));
+      return good(h, opts.keep ? opts.keep(data) : data);
     } catch {
       return fail(h, "bad response", false, startedAt, {}, opts);
     }
@@ -748,7 +815,12 @@ ${r.stdout ?? ""}`)) {
         const init = { method, headers: { ...opts.headers, ...conditional, ...headers(h.provider, h.token) } };
         if (signal) init.signal = signal;
         const r = await io.fetch(url, init);
-        if (r.status !== 401 && noteHeaders(host, h, r)) return { limited: true };
+        const get = headerReader(r);
+        if (r.status !== 401 && noteHeaders(host, h, r.status, get)) return { limited: true };
+        if (r.status === 403 && bodyLimited(await bodyText(r))) {
+          pause(host, h, TEXT_PAUSE);
+          return { limited: true };
+        }
         if (r.status === 304 && stored) return { status: 304, ok: true, data: stored.data, notModified: true };
         if (!r.ok) return { status: r.status, ok: false, data: null };
         if (opts.text) {
@@ -760,11 +832,16 @@ ${r.stdout ?? ""}`)) {
         }
         if (!wantJson) return { status: r.status, ok: true, data: null };
         try {
-          const data = await r.json();
-          const etag = r.headers?.get?.("etag");
-          if (etag) etags.set(url, { etag, data });
-          else etags.delete(url);
-          return { status: r.status, ok: true, data };
+          const raw = await r.json();
+          const data = opts.keep ? opts.keep(raw) : raw;
+          const etag = get("etag");
+          if (!etag) {
+            etags.delete(url);
+            return { status: r.status, ok: true, data };
+          }
+          const kept = frozenCopy(data);
+          etags.set(url, { etag, data: kept });
+          return { status: r.status, ok: true, data: kept };
         } catch {
           return { status: r.status, ok: false, data: null, bad: true };
         }
@@ -855,8 +932,9 @@ ${r.stdout ?? ""}`)) {
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
+    const listReq = (method, p, opts) => poll.req(method, p, { ...opts, keep: keepGitlabPipelines });
     const r = await runsOf(
-      poll.req,
+      listReq,
       host,
       path,
       head,
@@ -881,12 +959,12 @@ ${r.stdout ?? ""}`)) {
       const stamp = finishedStamp("gitlab", p);
       const cached = wantJobs ? cachedJobs(key, stamp) : void 0;
       const [j, b] = await Promise.all([
-        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`),
-        full ? poll.req("GET", `${at}/bridges?per_page=100`) : null
+        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`, { keep: keepGitlabJobs }),
+        full ? poll.req("GET", `${at}/bridges?per_page=100`, { keep: keepGitlabBridges }) : null
       ]);
       const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
       const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
-      if (stamp && jobs && !cached) remember(key, stamp, jobs);
+      if (stamp && jobs && !cached && allSettled("gitlab", jobs)) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
     dropLinesIfLow(host, path);
@@ -942,8 +1020,9 @@ ${r.stdout ?? ""}`)) {
     const poll = pollOf(host);
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
+    const listReq = (method, p, opts) => poll.req(method, p, { ...opts, keep: keepGithubRuns });
     const r = await runsOf(
-      poll.req,
+      listReq,
       host,
       path,
       head,
@@ -968,10 +1047,10 @@ ${r.stdout ?? ""}`)) {
         jobsByRunId[run2.id] = cached;
         return;
       }
-      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`);
+      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`, { keep: keepGithubJobs });
       if (j.ok) {
         jobsByRunId[run2.id] = j.data;
-        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, j.data);
+        if (stamp && Array.isArray(j.data?.jobs) && allSettled("github", j.data.jobs)) remember(key, stamp, j.data);
       } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run2.id}: ${j.error}`);
     }));
     if (poll.limited) return poll.limited;
@@ -1356,7 +1435,8 @@ function createCollector(io) {
       createdAt: p?.createdAt ?? null,
       stale: !!(p && head && p.sha && p.sha !== head),
       error: ci.error,
-      hint: ci.hint
+      hint: ci.hint,
+      limitedUntil: client.budget(ci.host)?.limitedUntil ?? null
     };
   }
   function locate(id) {

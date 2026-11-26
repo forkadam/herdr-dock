@@ -231,6 +231,49 @@ export function githubLatest(runsJson, jobsByRunId) {
   };
 }
 
+// What the CI client keeps of an answer: only the fields the normalizers above and its job cache read. A GitHub
+// run-list page is about 13 KB per run, and the client keeps up to 300 answers for their ETags. Keep these lists in
+// step with the normalizers: a field read there but missing here would silently read as absent. A malformed answer
+// is left as it was, so the caller still sees it as malformed.
+const pick = (o, keys) => {
+  if (!o || typeof o !== "object") return o;
+  const out = {};
+  for (const k of keys) if (k in o) out[k] = o[k];
+  return out;
+};
+const pickAll = (list, f) => (Array.isArray(list) ? list.map(f) : list);
+const GITHUB_RUN = ["id", "name", "head_branch", "head_sha", "run_number", "event", "status", "conclusion", "html_url",
+  "created_at", "updated_at"];
+const GITHUB_JOB = ["id", "name", "status", "conclusion", "started_at", "completed_at", "html_url"];
+const GITHUB_STEP = ["name", "status", "conclusion", "number"];
+const GITLAB_PIPE = ["id", "status", "ref", "sha", "web_url", "created_at", "updated_at", "finished_at", "source"];
+const GITLAB_JOB = ["id", "name", "stage", "status", "allow_failure", "duration", "started_at", "finished_at", "web_url"];
+const GITLAB_DOWNSTREAM = ["project_id", "status", "web_url", "project_path"];
+
+export function keepGithubRuns(d) {
+  if (!Array.isArray(d?.workflow_runs)) return d;
+  return { workflow_runs: d.workflow_runs.map((r) => pick(r, GITHUB_RUN)) };
+}
+
+export function keepGithubJobs(d) {
+  if (!Array.isArray(d?.jobs)) return d;
+  const job = (j) => {
+    const kept = pick(j, GITHUB_JOB);
+    if (kept && j.steps !== undefined) kept.steps = pickAll(j.steps, (s) => pick(s, GITHUB_STEP));
+    return kept;
+  };
+  return { ...("total_count" in d ? { total_count: d.total_count } : {}), jobs: d.jobs.map(job) };
+}
+
+export const keepGitlabPipelines = (d) => pickAll(d, (p) => pick(p, GITLAB_PIPE));
+export const keepGitlabJobs = (d) => pickAll(d, (j) => pick(j, GITLAB_JOB));
+export const keepGitlabBridges = (d) => pickAll(d, (b) => {
+  const kept = pick(b, GITLAB_JOB);
+  if (kept && b.pipeline !== undefined) kept.pipeline = pick(b.pipeline, ["project_id"]);
+  if (kept && b.downstream_pipeline !== undefined) kept.downstream_pipeline = pick(b.downstream_pipeline, GITLAB_DOWNSTREAM);
+  return kept;
+});
+
 // A dock.git.alerted key: an id plus when it finished, so a Retry that fails again (same id) is a new failure. Each
 // failed pipeline / run has one (Pipeline.failedKeys); this is the key of a Pipeline taken as one failure.
 export const alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;

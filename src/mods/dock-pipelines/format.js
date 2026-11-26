@@ -1,4 +1,5 @@
 // Pure formatting for the Pipelines panel (no host imports: node --test runs it).
+import { resumeClock } from "../../shared/ci-budget.js";
 
 // "3m ago" for an ISO time before `now` (ms). Under a minute, or a little ahead (clock skew): "just now".
 // A missing or unparsable time gives "".
@@ -105,6 +106,13 @@ export function viewGroups(pipeline, branch) {
 }
 
 const API_NAME = { github: "GitHub", gitlab: "GitLab" };
+const isPaused = (budget, now) => typeof budget?.limitedUntil === "number" && budget.limitedUntil > now;
+
+// The Retry button's tooltip while the host is paused at its API limit (the button is then disabled: its POST would
+// fail fast); null when it isn't.
+export function limitTip(budget, now) {
+  return isPaused(budget, now) ? `API limit reached — resumes at ${resumeClock(budget.limitedUntil)}` : null;
+}
 
 // 4321 -> "4,321" by a fixed rule, not the machine's locale, so the line reads the same everywhere.
 function thousands(n) {
@@ -113,15 +121,11 @@ function thousands(n) {
 
 // The API budget under the pipeline line: a warn line while the host is paused at its limit (whatever numbers are
 // known), else a dim "left" line when remaining and limit are both numbers. A pause without readable headers has
-// no numbers, so it can only warn. `limitedUntil` and `now` are ms; the time is local, HH:MM.
+// no numbers, so it can only warn. `limitedUntil` and `now` are ms; the time is local, HH:MM, rounded up.
 export function budgetLine(budget, now) {
   if (!budget) return null;
   const name = `${API_NAME[budget.provider] ?? budget.provider} API`;
-  if (typeof budget.limitedUntil === "number" && budget.limitedUntil > now) {
-    const at = new Date(budget.limitedUntil);
-    const pad = (n) => String(n).padStart(2, "0");
-    return { tone: "warn", text: `${name} limit reached — resumes at ${pad(at.getHours())}:${pad(at.getMinutes())}` };
-  }
+  if (isPaused(budget, now)) return { tone: "warn", text: `${name} limit reached — resumes at ${resumeClock(budget.limitedUntil)}` };
   const { remaining, limit } = budget;
   if (!Number.isFinite(remaining) || !Number.isFinite(limit)) return null;
   return { tone: "dim", text: `${name}: ${thousands(remaining)} of ${thousands(limit)} left` };
