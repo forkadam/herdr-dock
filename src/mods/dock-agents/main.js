@@ -5,13 +5,15 @@
 //
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
 
-import { View, div, image, svg } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
 import { showTerminal } from "../_page.js";
+import { agentIcon, agentStatus } from "../_agent.js";
+import { cleanTitle } from "../../shared/agent-rows.js";
 
 // herdr-dock: per-agent context, refreshed this often and when the Claude agents listed change.
 const CONTEXT_MS = 15000;
@@ -34,11 +36,6 @@ function find(node, id) {
 // modes belong to dock-core and its top-bar toggle / Ctrl+Alt+B.)
 const narrow = () => (find(layout(), "dock-left")?.size?.px ?? Infinity) < 160;
 
-// Drops what an agent puts before its title: a status glyph or spinner and the separator
-// after it ("✦  Working", "⠋ - Thinking"), and Codex's blinking "[ ! ] " / "[ . ] " mark.
-// Stops at an opening bracket or quote, so a title that starts with one ("[web] login") keeps it.
-const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
-
 function leadPanes(all) {
   const leads = new Map();
   for (const p of all) {
@@ -52,8 +49,8 @@ function leadPanes(all) {
 
 function title(tab, l) {
   const prog = l?.program?.name;
-  const live = clean(l?.title);
-  // clean() would strip a path's leading ~ or /: test the title with only its status glyph gone.
+  const live = cleanTitle(l?.title);
+  // cleanTitle() would strip a path's leading ~ or /: test the title with only its status glyph gone.
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
   const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
@@ -79,12 +76,6 @@ function duration(ms) {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
-
-// The agent's icon from the app's program table: a one-color glyph or a picture.
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
 export default class Agents extends View {
@@ -258,7 +249,7 @@ export default class Agents extends View {
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
-    const pic = icon(k.program, 14, t.foreground);
+    const pic = agentIcon(k.program, 14, t.foreground);
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
@@ -283,14 +274,9 @@ export default class Agents extends View {
 
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
-    const color = t[a.status] ?? t.dim;
-    if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
-    // Idle: a ring; done: a dot.
-    if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
-    return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+    return agentStatus(t, a, compact);
   }
+
 
   // The "Agents" header with the sort button (the sort menu opens on this mod). `onTitle`
   // (collapsed): the title takes focus, and the row is 31 px instead of 41 so it fits the
@@ -409,7 +395,7 @@ export default class Agents extends View {
     }
 
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
+      const pic = agentIcon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;

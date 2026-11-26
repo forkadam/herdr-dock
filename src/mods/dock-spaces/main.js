@@ -9,9 +9,13 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props } from "herdr";
+import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, readTextFile, home, checking } from "herdr";
 import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { showTerminal } from "../_page.js";
+import { agentIcon, agentStatus } from "../_agent.js";
+import { readPeerNames, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
+import { withAgents, rowLabel, sharedNames } from "../../shared/agent-rows.js";
+import { slashPath } from "../../shared/path.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -47,6 +51,10 @@ const FALLBACK = 60000;
 // run out of the app's open files (256 when started from the Dock on macOS) or
 // past a machine core's 16 running execs, and those spaces wait for FALLBACK.
 const AT_ONCE = 6;
+// herdr-dock: agents' peer names (the name other sessions message one by) are looked up this
+// often, and within NAMES_CHECK_MS when the local Claude agents change.
+const NAMES_MS = 15000;
+const NAMES_CHECK_MS = 1000;
 
 // Both runs, finished: a place isn't done while one of its runs still holds a slot.
 async function both(a, b) {
@@ -98,6 +106,51 @@ export default class Spaces extends View {
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Refresh only when the refs could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
+    // herdr-dock: each agent's peer name, only while agent rows are drawn (render sets drawsAgents).
+    this.names = new Map(); // address -> { sig, pid, createdMs, name }
+    this.namesKey = null; // claudeKey() at the last pass; null while agent rows aren't drawn
+    this.drawsAgents = false;
+    this.hoveredAgent = null;
+    this.copiedAgent = null;
+    if (checking()) return;
+    cx.timer.every(NAMES_MS, (cx) => this.refreshNames(cx));
+    cx.timer.every(NAMES_CHECK_MS, (cx) => { if (this.drawsAgents && claudeKey(agents()) !== this.namesKey) this.refreshNames(cx); });
+  }
+
+  // One pass at a time; a request meanwhile runs once more after it. A pass replaces the names, so
+  // a session that ended or was restarted in its terminal never keeps its old name.
+  refreshNames(cx) {
+    if (!this.drawsAgents || checking()) return;
+    this.namesKey = claudeKey(agents());
+    if (this.fetchingNames) { this.namesAgain = true; return; }
+    this.fetchingNames = true;
+    cx.spawn(async (cx) => {
+      const root = slashPath(home());
+      const io = {
+        get: async (address) => {
+          const r = await hc(["get", address, "--json"]);
+          return r.code === 0 ? JSON.parse(r.stdout) : null;
+        },
+        readRecord: (pid) => readTextFile(`${root}/.claude/sessions/${pid}.json`),
+      };
+      try {
+        do {
+          this.namesAgain = false;
+          const next = await readPeerNames(agents(), io, Date.now());
+          const same = next.size === this.names.size && [...next].every(([k, v]) => this.names.get(k)?.name === v.name && this.names.get(k)?.sig === v.sig);
+          this.names = next;
+          if (!same) cx.notify();
+        } while (this.namesAgain);
+      } finally {
+        this.fetchingNames = false;
+      }
+    });
+  }
+
+  // The agent's peer name, only while the entry is still the same local Claude agent it was read for.
+  nameFor(a) {
+    const e = this.names.get(a.address);
+    return e && isLocalClaude(a) && e.sig === sigOf(a) ? e.name : null;
   }
 
   checkNew(cx) {
@@ -344,8 +397,10 @@ export default class Spaces extends View {
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
-    const rows = this.ordered();
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+    // herdr-dock: each space's agents under it (not in the narrow rail).
+    const rows = collapsed ? this.ordered() : withAgents(this.ordered(), agents());
+    const dupes = sharedNames(rows.filter((r) => r.agent).map((r) => this.nameFor(r.agent)));
+    const draw = (r) => (r.agent ? this.agentRow(r, t, dupes) : collapsed ? this.compact(r, t) : this.row(r, t));
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
@@ -505,6 +560,44 @@ export default class Spaces extends View {
       );
   }
 
+  // herdr-dock: an agent under its space: its icon, its name (the peer name when proven), a Copy
+  // pill on hover when it has one, and its state. A click goes to the agent.
+  agentRow({ agent: a, depth }, t, dupes) {
+    const name = this.nameFor(a);
+    const hovered = this.hoveredAgent === a.address;
+    const copied = this.copiedAgent === a.address;
+    const idle = a.status === "idle" && !a.focused;
+    return h_flex()
+      .id(`space-agent-${a.address}`)
+      .h(26)
+      .px(8)
+      .flex_none()
+      .rounded(8)
+      .items_center()
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_hover((on, cx) => {
+        if (on) this.hoveredAgent = a.address;
+        else if (this.hoveredAgent === a.address) {
+          this.hoveredAgent = null;
+          if (this.copiedAgent === a.address) this.copiedAgent = null;
+        }
+        cx.notify();
+      })
+      .on_click(() => { showTerminal(); run("pane.focus", { pane: a.pane }); })
+      .child(h_flex().flex_1().min_w(0).gap(9).items_center().pl(depth === 1 ? 22 : 44)
+        .child(agentIcon(a.program, 13, t.muted) ?? div().size(13).flex_none())
+        .child(div().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(rowLabel(a, name)))
+        .when(Boolean(name) && dupes.has(name), (el) => el.child(div().id(`space-agent-same-${a.address}`).flex_none().text_size(11).text_color(t.dim)
+          .tooltip("Another session has this name too: a message by name may reach either").child("same name"))))
+      .when(Boolean(name) && hovered, (el) => el.child(div().id(`space-agent-copy-${a.address}`).flex_none().ml(5).px(5).py(2).rounded(4)
+        .text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover))
+        .tooltip("Copy the name other sessions message it by")
+        .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(name); this.copiedAgent = a.address; cx.notify(); })
+        .child(copied ? "Copied" : "Copy")))
+      .child(h_flex().w(16).ml(5).flex_none().items_center().justify_center().child(agentStatus(t, a, true)));
+  }
+
   compact({ w, i }, t) {
     return railCell(h_flex()
       .id(`space-${w.id}`)
@@ -552,10 +645,15 @@ export default class Spaces extends View {
     const myId = props()?.dockFeature ?? "dock-spaces";
     const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
     if (face !== "full") {
+      this.drawsAgents = false;
+      this.namesKey = null;
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));
       return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, false, () => requestFocus(myId)));
     }
+    // herdr-dock: names are looked up only while agent rows are drawn; coming back looks again within a second.
+    this.drawsAgents = !collapsed;
+    if (!this.drawsAgents) this.namesKey = null;
     const list = this.grouped(t, collapsed);
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;

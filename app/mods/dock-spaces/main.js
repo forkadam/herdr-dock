@@ -1,7 +1,7 @@
 // src/mods/dock-spaces/main.js
-import { View, div as div2, svg as svg2 } from "gpui-kit";
+import { View, div as div3, svg as svg3 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared as shared2, setShared as setShared3, watchFolder, window, layout, props } from "herdr";
+import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared as shared2, setShared as setShared3, watchFolder, window, layout, props, readTextFile, home, checking } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
@@ -40,6 +40,105 @@ function showTerminal() {
   if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
+// src/mods/_agent.js
+import { div as div2, image, svg as svg2 } from "gpui-kit";
+function agentIcon(p, size, color) {
+  if (!p?.icon) return null;
+  return p.tint ? svg2(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
+}
+function agentStatus(t, a, compact = false) {
+  const color = t[a.status] ?? t.dim;
+  if (a.status === "working") return svg2("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
+  if (a.status === "blocked" && compact) return div2().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+  if (a.status === "blocked") return div2().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+  if (a.status === "idle") return div2().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
+  return div2().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+}
+
+// src/shared/claude.js
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function parseJson(text) {
+  if (typeof text !== "string") return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isNum = (v) => typeof v === "number" && Number.isFinite(v);
+function matchSession(recordText, fg, terminalCreatedMs, nowMs) {
+  const r = parseJson(recordText);
+  if (!isObj(r) || !fg) return null;
+  if (r.pid !== fg.pid || r.kind !== "interactive") return null;
+  if (typeof r.sessionId !== "string" || !UUID_RE.test(r.sessionId)) return null;
+  if (!isNum(r.startedAt)) return null;
+  if (r.startedAt < terminalCreatedMs - 5e3 || r.startedAt > nowMs + 6e4) return null;
+  return r.sessionId.toLowerCase();
+}
+function identityOf(info) {
+  const pid = isObj(info) && isObj(info.foreground) ? info.foreground.pid : void 0;
+  if (!isNum(pid) || !isNum(info.created_ms)) return null;
+  return { pid, createdMs: info.created_ms };
+}
+var isLocalClaude = (a) => !a.address.includes("/") && (a.app === "claude-code" || a.program?.key === "claude");
+var sigOf = (a) => `${a.app ?? ""}|${a.program?.key ?? ""}|${a.pane}`;
+var claudeKey = (list) => list.filter(isLocalClaude).map((a) => `${a.address}=${sigOf(a)}`).join(",");
+function sessionNameOf(info, recordText, nowMs) {
+  const id = identityOf(info);
+  if (!id || !matchSession(recordText, { pid: id.pid }, id.createdMs, nowMs)) return null;
+  const name = parseJson(recordText).name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+async function readPeerNames(list, io, nowMs) {
+  const out = /* @__PURE__ */ new Map();
+  for (const a of list) {
+    if (!isLocalClaude(a)) continue;
+    try {
+      const info = await io.get(a.address);
+      const id = identityOf(info);
+      if (!id) continue;
+      const name = sessionNameOf(info, await io.readRecord(id.pid), nowMs);
+      if (name) out.set(a.address, { sig: sigOf(a), pid: id.pid, createdMs: id.createdMs, name });
+    } catch {
+    }
+  }
+  return out;
+}
+
+// src/shared/agent-rows.js
+var cleanTitle = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
+function withAgents(rows, agents2) {
+  const bySpace = /* @__PURE__ */ new Map();
+  for (const a of agents2) {
+    if (!bySpace.has(a.space)) bySpace.set(a.space, []);
+    bySpace.get(a.space).push(a);
+  }
+  return rows.flatMap((r) => [r, ...(bySpace.get(r.w.id) ?? []).map((agent) => ({ w: r.w, agent, depth: r.tree ? 2 : 1 }))]);
+}
+function rowLabel(a, peerName) {
+  const tab = a.tab_name && !/^\d+$/.test(a.tab_name) ? a.tab_name : "";
+  return peerName || a.pane_name || cleanTitle(a.title) || tab || a.program?.name || a.address;
+}
+function sharedNames(names) {
+  const seen = /* @__PURE__ */ new Set(), twice = /* @__PURE__ */ new Set();
+  for (const n of names) {
+    if (n == null) continue;
+    if (seen.has(n)) twice.add(n);
+    seen.add(n);
+  }
+  return twice;
+}
+
+// src/shared/path.js
+function slashPath(p) {
+  let s = String(p).replace(/\\/g, "/");
+  s = s.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ":");
+  if (s.length > 1 && !/^[A-Z]:\/$/.test(s)) s = s.replace(/\/+$/, "");
+  if (/^[A-Z]:$/.test(s)) s += "/";
+  return s === "" ? "/" : s;
+}
+
 // src/mods/dock-spaces/main.js
 function find(node, id) {
   if (node?.id === id) return node;
@@ -62,6 +161,8 @@ var where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 var base = (path) => path.replace(/\/+$/, "").split("/").pop();
 var FALLBACK = 6e4;
 var AT_ONCE = 6;
+var NAMES_MS = 15e3;
+var NAMES_CHECK_MS = 1e3;
 async function both(a, b) {
   const done = await Promise.allSettled([a, b]);
   const failed = done.find((d) => d.status === "rejected");
@@ -107,6 +208,53 @@ var Spaces = class extends View {
     this.refreshMachines(cx);
     cx.timer.every(15e3, (cx2) => this.refreshMachines(cx2));
     cx.timer.every(250, (cx2) => this.checkNew(cx2));
+    this.names = /* @__PURE__ */ new Map();
+    this.namesKey = null;
+    this.drawsAgents = false;
+    this.hoveredAgent = null;
+    this.copiedAgent = null;
+    if (checking()) return;
+    cx.timer.every(NAMES_MS, (cx2) => this.refreshNames(cx2));
+    cx.timer.every(NAMES_CHECK_MS, (cx2) => {
+      if (this.drawsAgents && claudeKey(agents()) !== this.namesKey) this.refreshNames(cx2);
+    });
+  }
+  // One pass at a time; a request meanwhile runs once more after it. A pass replaces the names, so
+  // a session that ended or was restarted in its terminal never keeps its old name.
+  refreshNames(cx) {
+    if (!this.drawsAgents || checking()) return;
+    this.namesKey = claudeKey(agents());
+    if (this.fetchingNames) {
+      this.namesAgain = true;
+      return;
+    }
+    this.fetchingNames = true;
+    cx.spawn(async (cx2) => {
+      const root = slashPath(home());
+      const io = {
+        get: async (address) => {
+          const r = await hc(["get", address, "--json"]);
+          return r.code === 0 ? JSON.parse(r.stdout) : null;
+        },
+        readRecord: (pid) => readTextFile(`${root}/.claude/sessions/${pid}.json`)
+      };
+      try {
+        do {
+          this.namesAgain = false;
+          const next = await readPeerNames(agents(), io, Date.now());
+          const same = next.size === this.names.size && [...next].every(([k, v]) => this.names.get(k)?.name === v.name && this.names.get(k)?.sig === v.sig);
+          this.names = next;
+          if (!same) cx2.notify();
+        } while (this.namesAgain);
+      } finally {
+        this.fetchingNames = false;
+      }
+    });
+  }
+  // The agent's peer name, only while the entry is still the same local Claude agent it was read for.
+  nameFor(a) {
+    const e = this.names.get(a.address);
+    return e && isLocalClaude(a) && e.sig === sigOf(a) ? e.name : null;
   }
   checkNew(cx) {
     const now = Date.now();
@@ -340,8 +488,9 @@ var Spaces = class extends View {
   }
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
-    const rows = this.ordered();
-    const draw = (r) => collapsed ? this.compact(r, t) : this.row(r, t);
+    const rows = collapsed ? this.ordered() : withAgents(this.ordered(), agents());
+    const dupes = sharedNames(rows.filter((r) => r.agent).map((r) => this.nameFor(r.agent)));
+    const draw = (r) => r.agent ? this.agentRow(r, t, dupes) : collapsed ? this.compact(r, t) : this.row(r, t);
     this.activeAt = -1;
     let before = 0;
     const remote = [.../* @__PURE__ */ new Set([...rows.map((r) => r.w.machine).filter(Boolean), ...this.machines.map((m) => m.name), ...Object.keys(this.reconnecting)])].sort();
@@ -364,8 +513,8 @@ var Spaces = class extends View {
       const rebuilt = this.rebuilt(machine) || !!repair;
       const login = machine?.state === "needs_login" ? `hc machine login ${m}` : null;
       const folded = this.folded.has(m);
-      const icon = svg2(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
-      const badge = div2().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
+      const icon = svg3(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
+      const badge = div3().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.dim).when(collapsed, (el) => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(login ? `${m} needs a login: run ${login}. Click for Copy.` : m ? `${m} \xB7 ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer")).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
         if (collapsed && login) {
           run("app.settings", { section: "machines" });
@@ -374,23 +523,23 @@ var Spaces = class extends View {
         folded ? this.folded.delete(m) : this.folded.add(m);
         localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
         cx.notify();
-      }).when(machine?.keeps_running_after_logout === false, (el) => el.child(div2().id(`machine-logout-${m}`).flex_none().text_color(t.blocked).tooltip("Agents stop when you disconnect. Click for the fix.").on_click((_e, cx) => {
+      }).when(machine?.keeps_running_after_logout === false, (el) => el.child(div3().id(`machine-logout-${m}`).flex_none().text_color(t.blocked).tooltip("Agents stop when you disconnect. Click for the fix.").on_click((_e, cx) => {
         cx.stop_propagation();
         openOverlay({ mod: "machine-add", kind: "dialog", width: 560 });
-      }).child("\u26A0"))).when(!collapsed, (el) => el.child(icon)).when(collapsed, (el) => el.child(div2().relative().flex_none().child(icon).when(Boolean(m), (el2) => el2.child(badge)))).when(!collapsed, (el) => el.child(div2().flex_1().truncate().child(m ?? "This computer")).when(!connected && !rebuilt && !login, (el2) => el2.child(div2().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " ")))).when(rebuilt, (el2) => el2.child(h_flex().flex_none().gap(3).items_center().child(div2().max_w(140).truncate().child(repair?.error || "rebuilt \xB7")).child(div2().id(`machine-connect-${m}`).text_color(repair?.error ? t.blocked : t.muted).hover((s) => s.text_color(t.foreground)).tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.").on_click((_e, cx) => {
+      }).child("\u26A0"))).when(!collapsed, (el) => el.child(icon)).when(collapsed, (el) => el.child(div3().relative().flex_none().child(icon).when(Boolean(m), (el2) => el2.child(badge)))).when(!collapsed, (el) => el.child(div3().flex_1().truncate().child(m ?? "This computer")).when(!connected && !rebuilt && !login, (el2) => el2.child(div3().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " ")))).when(rebuilt, (el2) => el2.child(h_flex().flex_none().gap(3).items_center().child(div3().max_w(140).truncate().child(repair?.error || "rebuilt \xB7")).child(div3().id(`machine-connect-${m}`).text_color(repair?.error ? t.blocked : t.muted).hover((s) => s.text_color(t.foreground)).tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.").on_click((_e, cx) => {
         cx.stop_propagation();
         this.reconnect(machine, cx);
-      }).child(repair?.busy ? "Connecting\u2026" : "Connect")))).when(connected, (el2) => el2.child(div2().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
+      }).child(repair?.busy ? "Connecting\u2026" : "Connect")))).when(connected, (el2) => el2.child(div3().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => {
         cx.stop_propagation();
         run("space.new", { machine: m ?? "" });
-      }).child("+"))).child(div2().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim)).child(svg2(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
-      const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().rounded(7).text_size(12).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new", { machine: m ?? "" })).when(collapsed, (el) => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(`New space on ${m ?? "this computer"}`).child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center().child(svg2("mods/workspace-chrome/plus.svg").size(10)))).when(!collapsed, (el) => el.child(svg2("mods/workspace-chrome/plus.svg").size(12)).child("New space there"));
+      }).child("+"))).child(div3().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim)).child(svg3(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
+      const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().rounded(7).text_size(12).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new", { machine: m ?? "" })).when(collapsed, (el) => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(`New space on ${m ?? "this computer"}`).child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center().child(svg3("mods/workspace-chrome/plus.svg").size(10)))).when(!collapsed, (el) => el.child(svg3("mods/workspace-chrome/plus.svg").size(12)).child("New space there"));
       if (!collapsed && rebuilt) {
         before += 1;
         return [head];
       }
       const cell = collapsed ? railCell : (el) => el;
-      const guidance = !collapsed && login ? [v_flex2().px(8).pb(6).gap(3).flex_none().child(div2().text_size(11).text_color(t.blocked).child("needs a login: run")).child(h_flex().gap(5).items_center().child(div2().flex_1().min_w(0).truncate().tooltip(login).text_size(11).text_color(t.muted).child(login)).child(div2().id(`machine-login-copy-${m}`).flex_none().px(5).py(2).rounded(4).text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+      const guidance = !collapsed && login ? [v_flex2().px(8).pb(6).gap(3).flex_none().child(div3().text_size(11).text_color(t.blocked).child("needs a login: run")).child(h_flex().gap(5).items_center().child(div3().flex_1().min_w(0).truncate().tooltip(login).text_size(11).text_color(t.muted).child(login)).child(div3().id(`machine-login-copy-${m}`).flex_none().px(5).py(2).rounded(4).text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
         cx.stop_propagation();
         cx.write_to_clipboard(login);
         this.copiedLogin = login;
@@ -413,7 +562,7 @@ var Spaces = class extends View {
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     const where2 = [repo, branch].filter(Boolean).join(" \xB7 ");
-    return h_flex().flex_auto().min_w(where2 ? SIDE_MIN : 0).gap(5).justify_end().items_center().text_size(11.5).text_color(t.dim).when(Boolean(where2), (el) => el.child(div2().min_w(0).truncate().child(where2))).when(g.ahead > 0, (el) => el.child(div2().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`))).when(g.behind > 0, (el) => el.child(div2().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
+    return h_flex().flex_auto().min_w(where2 ? SIDE_MIN : 0).gap(5).justify_end().items_center().text_size(11.5).text_color(t.dim).when(Boolean(where2), (el) => el.child(div3().min_w(0).truncate().child(where2))).when(g.ahead > 0, (el) => el.child(div3().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`))).when(g.behind > 0, (el) => el.child(div3().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
   row({ w, i, g, tree }, t) {
     const on = w.active;
@@ -422,7 +571,7 @@ var Spaces = class extends View {
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
     return v_flex2().relative().id(`space-${w.id}`).px(8).h(rowHeight({ tree })).flex_none().justify_center().rounded(8).when(on, (el) => el.bg(t.selected)).when(!on, (el) => el.hover((s) => s.bg(t.hover))).when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5)).when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
-      div2().absolute().left(0).right(0).h(2).bg(t.accent).when(fromIndex < i, (line) => line.bottom(0)).when(fromIndex > i, (line) => line.top(0))
+      div3().absolute().left(0).right(0).h(2).bg(t.accent).when(fromIndex < i, (line) => line.bottom(0)).when(fromIndex > i, (line) => line.top(0))
     )).on_mouse_down("left", () => {
       this.pressed = w.id;
       this.over = w.id;
@@ -447,18 +596,42 @@ var Spaces = class extends View {
       }
       cx.notify();
     }).on_mouse_down("right", () => this.menu(w)).child(
-      h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg2("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div2().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div2().flex_1())
+      h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg3("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div3().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div3().flex_1())
     );
+  }
+  // herdr-dock: an agent under its space: its icon, its name (the peer name when proven), a Copy
+  // pill on hover when it has one, and its state. A click goes to the agent.
+  agentRow({ agent: a, depth }, t, dupes) {
+    const name = this.nameFor(a);
+    const hovered = this.hoveredAgent === a.address;
+    const copied = this.copiedAgent === a.address;
+    const idle = a.status === "idle" && !a.focused;
+    return h_flex().id(`space-agent-${a.address}`).h(26).px(8).flex_none().rounded(8).items_center().cursor_pointer().hover((s) => s.bg(t.hover)).on_hover((on, cx) => {
+      if (on) this.hoveredAgent = a.address;
+      else if (this.hoveredAgent === a.address) {
+        this.hoveredAgent = null;
+        if (this.copiedAgent === a.address) this.copiedAgent = null;
+      }
+      cx.notify();
+    }).on_click(() => {
+      showTerminal();
+      run("pane.focus", { pane: a.pane });
+    }).child(h_flex().flex_1().min_w(0).gap(9).items_center().pl(depth === 1 ? 22 : 44).child(agentIcon(a.program, 13, t.muted) ?? div3().size(13).flex_none()).child(div3().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(rowLabel(a, name))).when(Boolean(name) && dupes.has(name), (el) => el.child(div3().id(`space-agent-same-${a.address}`).flex_none().text_size(11).text_color(t.dim).tooltip("Another session has this name too: a message by name may reach either").child("same name")))).when(Boolean(name) && hovered, (el) => el.child(div3().id(`space-agent-copy-${a.address}`).flex_none().ml(5).px(5).py(2).rounded(4).text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Copy the name other sessions message it by").on_click((_e, cx) => {
+      cx.stop_propagation();
+      cx.write_to_clipboard(name);
+      this.copiedAgent = a.address;
+      cx.notify();
+    }).child(copied ? "Copied" : "Copy"))).child(h_flex().w(16).ml(5).flex_none().items_center().justify_center().child(agentStatus(t, a, true)));
   }
   compact({ w, i }, t) {
     return railCell(h_flex().id(`space-${w.id}`).relative().w(RAIL_CELL).h(26).rounded(6).justify_center().items_center().when(w.active, (el) => el.bg(t.selected)).when(!w.active, (el) => el.hover((s) => s.bg(t.hover))).on_click(() => {
       showTerminal();
       run("space.select", { id: w.id });
-    }).child(div2().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))).child(div2().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
+    }).child(div3().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))).child(div3().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
   // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus).
   header(t, collapsed, onTitle) {
-    return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim).when(collapsed, (el) => el.pl(0).pr(0).justify_center()).when(!collapsed && !onTitle, (el) => el.child("Spaces")).when(!collapsed && Boolean(onTitle), (el) => el.child(div2().id("dock-spaces-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Spaces").on_click(() => onTitle()).child("Spaces"))).child(div2().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child(svg2("mods/workspace-chrome/plus.svg").size(14)));
+    return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim).when(collapsed, (el) => el.pl(0).pr(0).justify_center()).when(!collapsed && !onTitle, (el) => el.child("Spaces")).when(!collapsed && Boolean(onTitle), (el) => el.child(div3().id("dock-spaces-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Spaces").on_click(() => onTitle()).child("Spaces"))).child(div3().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child(svg3("mods/workspace-chrome/plus.svg").size(14)));
   }
   render() {
     const t = theme();
@@ -478,10 +651,14 @@ var Spaces = class extends View {
     const myId = props()?.dockFeature ?? "dock-spaces";
     const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
     if (face !== "full") {
+      this.drawsAgents = false;
+      this.namesKey = null;
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));
       return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, false, () => requestFocus(myId)));
     }
+    this.drawsAgents = !collapsed;
+    if (!this.drawsAgents) this.namesKey = null;
     const list = this.grouped(t, collapsed);
     const active = sp.find((p) => p.active)?.id;
     if (active !== this.revealed || this.activeAt !== this.revealedAt) {

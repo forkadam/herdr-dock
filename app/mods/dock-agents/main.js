@@ -1,5 +1,5 @@
 // src/mods/dock-agents/main.js
-import { View, div as div2, image, svg as svg2 } from "gpui-kit";
+import { View, div as div3, svg as svg3 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared as shared2, setShared as setShared3, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 
@@ -135,6 +135,24 @@ function showTerminal() {
   if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
+// src/mods/_agent.js
+import { div as div2, image, svg as svg2 } from "gpui-kit";
+function agentIcon(p, size, color) {
+  if (!p?.icon) return null;
+  return p.tint ? svg2(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
+}
+function agentStatus(t, a, compact = false) {
+  const color = t[a.status] ?? t.dim;
+  if (a.status === "working") return svg2("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
+  if (a.status === "blocked" && compact) return div2().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+  if (a.status === "blocked") return div2().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+  if (a.status === "idle") return div2().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
+  return div2().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+}
+
+// src/shared/agent-rows.js
+var cleanTitle = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
+
 // src/mods/dock-agents/main.js
 var CONTEXT_MS = 15e3;
 var LIST_CHECK_MS = 1e3;
@@ -148,7 +166,6 @@ function find(node, id) {
   return null;
 }
 var narrow = () => (find(layout(), "dock-left")?.size?.px ?? Infinity) < 160;
-var clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
 function leadPanes(all) {
   const leads = /* @__PURE__ */ new Map();
   for (const p of all) {
@@ -160,7 +177,7 @@ function leadPanes(all) {
 }
 function title(tab, l) {
   const prog = l?.program?.name;
-  const live = clean(l?.title);
+  const live = cleanTitle(l?.title);
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
   const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
@@ -183,10 +200,6 @@ function duration(ms) {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg2(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 var Agents = class extends View {
   init(_props, cx) {
@@ -323,10 +336,10 @@ var Agents = class extends View {
   }
   sortMenu(t) {
     const on = sortOf().id;
-    return v_flex2().w_full().p(5).bg(t.popover).text_size(12.8).child(div2().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents")).children(SORTS.map((s) => h_flex().id(`sort-${s.id}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground).hover((el) => el.bg(t.hover)).on_click(() => {
+    return v_flex2().w_full().p(5).bg(t.popover).text_size(12.8).child(div3().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents")).children(SORTS.map((s) => h_flex().id(`sort-${s.id}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground).hover((el) => el.bg(t.hover)).on_click(() => {
       setShared3("agents.sort", s.id);
       closeOverlay(props().overlay);
-    }).child(svg2(`mods/workspace-chrome/${s.icon}.svg`).size(14).flex_none().text_color(t.muted)).child(div2().flex_1().child(s.label)).when(s.id === on, (el) => el.child(svg2("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
+    }).child(svg3(`mods/workspace-chrome/${s.icon}.svg`).size(14).flex_none().text_color(t.muted)).child(div3().flex_1().child(s.label)).when(s.id === on, (el) => el.child(svg3("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
   peek(addr) {
     run("terminal.peek", { terminal: addr });
@@ -345,26 +358,21 @@ var Agents = class extends View {
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
-    const pic = icon(k.program, 14, t.foreground);
+    const pic = agentIcon(k.program, 14, t.foreground);
     const on = k.address === shown;
-    return h_flex().id(`sub-${k.address}`).pl(39).pr(8).rounded(8).h(26).flex_none().gap(0).items_center().text_size(12.5).when(on, (el) => el.bg(t.raised)).hover((s2) => s2.bg(t.hover)).on_click(() => this.listed.has(k.address) ? (showTerminal(), run("pane.focus", { terminal: k.address })) : this.peek(k.address)).children(s.lines.map((l) => div2().self_start().mt(-4).w(9).h(17).mr(4).flex_none().when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input)).when(l === "\u2514" || l === "\u251C", (el) => el.border_b(1.5).rounded_bl(6)))).when(Boolean(pic), (el) => el.child(div2().mr(8).child(pic))).child(div2().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address)).child(this.status(t, { status: st }, compact));
+    return h_flex().id(`sub-${k.address}`).pl(39).pr(8).rounded(8).h(26).flex_none().gap(0).items_center().text_size(12.5).when(on, (el) => el.bg(t.raised)).hover((s2) => s2.bg(t.hover)).on_click(() => this.listed.has(k.address) ? (showTerminal(), run("pane.focus", { terminal: k.address })) : this.peek(k.address)).children(s.lines.map((l) => div3().self_start().mt(-4).w(9).h(17).mr(4).flex_none().when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input)).when(l === "\u2514" || l === "\u251C", (el) => el.border_b(1.5).rounded_bl(6)))).when(Boolean(pic), (el) => el.child(div3().mr(8).child(pic))).child(div3().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address)).child(this.status(t, { status: st }, compact));
   }
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
-    const color = t[a.status] ?? t.dim;
-    if (a.status === "working") return svg2("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div2().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div2().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
-    if (a.status === "idle") return div2().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
-    return div2().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+    return agentStatus(t, a, compact);
   }
   // The "Agents" header with the sort button (the sort menu opens on this mod). `onTitle`
   // (collapsed): the title takes focus, and the row is 31 px instead of 41 so it fits the
   // 32 px collapsed block.
   header(t, sort, onTitle) {
-    const title2 = div2().text_size(11.5).font_medium().text_color(t.dim).child("Agents");
+    const title2 = div3().text_size(11.5).font_medium().text_color(t.dim).child("Agents");
     return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().justify_between().child(onTitle ? title2.id("dock-agents-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Agents").on_click(() => onTitle()) : title2).child(
-      div2().id("ag-sort").text_size(11).text_color(t.dim).hover((s) => s.text_color(t.foreground)).on_click(() => openOverlay({ mod: "dock-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } })).tooltip(`Sort agents: ${sort.label}`).child(svg2(`mods/workspace-chrome/${sort.icon}.svg`).size(14))
+      div3().id("ag-sort").text_size(11).text_color(t.dim).hover((s) => s.text_color(t.foreground)).on_click(() => openOverlay({ mod: "dock-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } })).tooltip(`Sort agents: ${sort.label}`).child(svg3(`mods/workspace-chrome/${sort.icon}.svg`).size(14))
     );
   }
   render(cx) {
@@ -407,11 +415,11 @@ var Agents = class extends View {
       const sts = subs.map((s) => kidStatus(s.t, this.listed));
       const top = sts.reduce((m, s) => (RANK[s] ?? 0) > (RANK[m] ?? 0) ? s : m, null);
       const open = !this.folded.has(a.address);
-      return div2().id(`fold-${a.address}`).h(18).px(3).gap(3).flex().items_center().rounded(4).text_size(11).text_color(open ? t.dim : t[top] ?? t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx2) => {
+      return div3().id(`fold-${a.address}`).h(18).px(3).gap(3).flex().items_center().rounded(4).text_size(11).text_color(open ? t.dim : t[top] ?? t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx2) => {
         cx2.stop_propagation();
         open ? this.folded.add(a.address) : this.folded.delete(a.address);
         cx2.notify();
-      }).child(svg2(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none()).when(!open, (el) => el.child(String(subs.length)));
+      }).child(svg3(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none()).when(!open, (el) => el.child(String(subs.length)));
     };
     const leads = leadPanes(panes());
     const tabs = new Map(spaces().flatMap((s) => s.tabs).map((tab) => [tab.id, tab]));
@@ -431,7 +439,7 @@ var Agents = class extends View {
       if (detail.get(a.address) == null && seen[`${a.space_name}\0`] > 1) detail.set(a.address, label(a));
     }
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
+      const pic = agentIcon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       const ctx = this.contextFor(a);
@@ -439,17 +447,17 @@ var Agents = class extends View {
         return h_flex().id(`ag-${a.address}`).h(26).px(8).flex_none().items_center().gap(4).hover((s) => s.bg(t.hover)).on_click(() => {
           showTerminal();
           run("pane.focus", { pane: a.pane });
-        }).child(div2().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1))).child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
+        }).child(div3().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1))).child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
-      const pin = div2().id(`pin-${a.address}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(isPinned ? "Unpin" : "Pin to the top").on_click((_e, cx2) => {
+      const pin = div3().id(`pin-${a.address}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(isPinned ? "Unpin" : "Pin to the top").on_click((_e, cx2) => {
         cx2.stop_propagation();
         run("terminal.pin", { terminal: a.address, pinned: !isPinned });
         this.hovered = null;
         cx2.notify();
-      }).child(svg2(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
+      }).child(svg3(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
       const full = byPriority || isPinned;
       const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       return h_flex().id(`ag-${a.address}`).px(8).h(30).flex_none().rounded(8).items_center().gap(9).when(a.focused, (el) => el.bg(t.selected)).cursor_pointer().hover((s) => s.bg(t.hover)).on_hover((on, cx2) => {
@@ -459,11 +467,11 @@ var Agents = class extends View {
       }).on_click(() => {
         showTerminal();
         run("pane.focus", { pane: a.pane });
-      }).when(Boolean(pic), (el) => el.child(div2().id(`agent-fold-${a.address}`).when(subs.length > 0, (el2) => el2.on_click((_e, cx2) => {
+      }).when(Boolean(pic), (el) => el.child(div3().id(`agent-fold-${a.address}`).when(subs.length > 0, (el2) => el2.on_click((_e, cx2) => {
         cx2.stop_propagation();
         this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
         cx2.notify();
-      })).child(pic))).child(h_flex().flex_1().min_w(0).gap(5).items_center().child(div2().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name)).when(full && Boolean(more), (el) => el.child(div2().flex_1().min_w(0).truncate().text_color(t.dim).child(`\xB7 ${more}`))).when(Boolean(ctx), (el) => el.child(div2().id(`ctx-${a.address}`).flex_none().text_size(11).text_color(t.dim).tooltip(contextTooltip(ctx, now)).when(ctx.stale, (el2) => el2.opacity(0.55)).child(formatPercent(ctx.usedPercent))))).when(Boolean(machine), (el) => el.child(div2().text_size(10).text_color(t.dim).child(machine))).when(subs.length > 0, (el) => el.child(fold(a, subs))).when(this.hovered === a.address, (el) => el.child(pin)).when(this.hovered !== a.address && Boolean(when), (el) => el.child(div2().flex_none().text_size(11).text_color(t.dim).child(duration(now - when)))).child(this.status(t, a, byPriority && !isPinned));
+      })).child(pic))).child(h_flex().flex_1().min_w(0).gap(5).items_center().child(div3().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name)).when(full && Boolean(more), (el) => el.child(div3().flex_1().min_w(0).truncate().text_color(t.dim).child(`\xB7 ${more}`))).when(Boolean(ctx), (el) => el.child(div3().id(`ctx-${a.address}`).flex_none().text_size(11).text_color(t.dim).tooltip(contextTooltip(ctx, now)).when(ctx.stale, (el2) => el2.opacity(0.55)).child(formatPercent(ctx.usedPercent))))).when(Boolean(machine), (el) => el.child(div3().text_size(10).text_color(t.dim).child(machine))).when(subs.length > 0, (el) => el.child(fold(a, subs))).when(this.hovered === a.address, (el) => el.child(pin)).when(this.hovered !== a.address && Boolean(when), (el) => el.child(div3().flex_none().text_size(11).text_color(t.dim).child(duration(now - when)))).child(this.status(t, a, byPriority && !isPinned));
     };
     const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
     for (const a of rest) {
@@ -478,12 +486,12 @@ var Agents = class extends View {
       return h_flex().id(g.id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium().cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx2) => {
         open ? this.folded.add(g.id) : this.folded.delete(g.id);
         cx2.notify();
-      }).child(div2().truncate().text_color(t[g.status] ?? t.dim).child(g.label)).when(byPriority || !open, (el) => el.child(div2().text_color(t.dim).child(String(g.members.length)))).child(div2().flex_1()).when(!open, (el) => el.when(!byPriority && top && top !== "idle", (el2) => el2.child(this.status(t, { status: top }, true))).child(svg2("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
+      }).child(div3().truncate().text_color(t[g.status] ?? t.dim).child(g.label)).when(byPriority || !open, (el) => el.child(div3().text_color(t.dim).child(String(g.members.length)))).child(div3().flex_1()).when(!open, (el) => el.when(!byPriority && top && top !== "idle", (el2) => el2.child(this.status(t, { status: top }, true))).child(svg3("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
     const rows = collapsed ? list.flatMap(withKids) : groups.flatMap((g) => [header(g), ...this.folded.has(g.id) ? [] : g.members.flatMap(withKids)]);
     return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).when(!collapsed, (el) => el.child(this.header(t, sort, null))).when(
       list.length === 0 && !collapsed,
-      (el) => el.child(div2().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not."))
+      (el) => el.child(div3().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not."))
     ).child(v_flex2().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows));
   }
 };
