@@ -1,12 +1,13 @@
 // Loader hooks for tests/fixtures/host-stubs.mjs: the Herdr host modules (gpui-kit, gpui-base, herdr)
 // resolve to stubs, so a mod's real class loads under node --test. Elements chain; `.when(c, f)` runs f
-// when c holds, and every string handed to `.child()` is kept in globalThis.__texts (see texts()).
+// when c holds, every string handed to `.child()` is kept in globalThis.__texts (see texts()), and an
+// element's handlers are kept by "<id>:<on_x>[:<button>]" (see handlers()); scroll_to_item calls go to scrolls().
 const STUBS = {
-  "gpui-kit": `const chain = () => { const p = new Proxy(function () {}, { get: (_t, k) => k === "child" ? (x) => { if (typeof x === "string") globalThis.__texts.push(x); return p; } : k === "when" ? (c, f) => (c ? f(p) : p) : () => p, apply: () => p }); return p; };
+  "gpui-kit": `const chain = () => { let id = null; const p = new Proxy(function () {}, { get: (_t, k) => k === "child" ? (x) => { if (typeof x === "string") globalThis.__texts.push(x); return p; } : k === "when" ? (c, f) => (c ? f(p) : p) : k === "id" ? (v) => { id = v; return p; } : typeof k === "string" && k.startsWith("on_") ? (...a) => { if (id != null) globalThis.__handlers[[id, k, ...a.slice(0, -1)].join(":")] = a.at(-1); return p; } : () => p, apply: () => p }); return p; };
     export class View {} export const div = () => chain(); export const svg = () => chain(); export const image = () => chain();`,
-  "gpui-base": `const chain = () => { const p = new Proxy(function () {}, { get: (_t, k) => k === "child" ? (x) => { if (typeof x === "string") globalThis.__texts.push(x); return p; } : k === "when" ? (c, f) => (c ? f(p) : p) : () => p, apply: () => p }); return p; };
+  "gpui-base": `const chain = () => { let id = null; const p = new Proxy(function () {}, { get: (_t, k) => k === "child" ? (x) => { if (typeof x === "string") globalThis.__texts.push(x); return p; } : k === "when" ? (c, f) => (c ? f(p) : p) : k === "id" ? (v) => { id = v; return p; } : typeof k === "string" && k.startsWith("on_") ? (...a) => { if (id != null) globalThis.__handlers[[id, k, ...a.slice(0, -1)].join(":")] = a.at(-1); return p; } : () => p, apply: () => p }); return p; };
     export const h_flex = () => chain(); export const v_flex = () => chain();
-    export const ScrollHandle = { new: () => ({ scroll_to_item() {} }) };`,
+    export const ScrollHandle = { new: () => ({ scroll_to_item: (i) => globalThis.__scrolls.push(i) }) };`,
   // Every herdr function reads globalThis.__herdr (set by host-stubs.mjs), which tests change freely.
   herdr: `const d = () => globalThis.__herdr;
     export const data = d();

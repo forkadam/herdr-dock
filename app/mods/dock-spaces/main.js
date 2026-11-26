@@ -192,6 +192,7 @@ var Spaces = class extends View {
     this.over = null;
     this.scroll = ScrollHandle.new();
     this.activeAt = -1;
+    this.agentsAbove = 0;
     this.machines = [];
     try {
       this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
@@ -443,6 +444,30 @@ var Spaces = class extends View {
       if (this.watching.get(repo) === current) this.watching.delete(repo);
     });
   }
+  // A space being dragged is over `w` (its row, or one of its agent rows: they belong to its block).
+  dragOver(w, cx) {
+    const source = spaces().find((s) => s.id === this.pressed);
+    const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
+    if (this.pressed !== null && this.over !== over) {
+      this.over = over;
+      cx.notify();
+    }
+  }
+  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it.
+  dragEnd(w, cx) {
+    const from = this.pressed;
+    const over = this.over;
+    this.pressed = null;
+    this.over = null;
+    if (from !== null && over === w.id && from !== w.id) {
+      const index = spaces().findIndex((s) => s.id === w.id);
+      if (index !== -1) run("space.move", { id: from, index: index + 1 });
+    } else if (from === w.id) {
+      showTerminal();
+      run("space.select", { id: w.id });
+    }
+    cx.notify();
+  }
   menu(w) {
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
   }
@@ -492,7 +517,10 @@ var Spaces = class extends View {
     const dupes = sharedNames(rows.filter((r) => r.agent).map((r) => this.nameFor(r.agent)));
     const draw = (r) => r.agent ? this.agentRow(r, t, dupes) : collapsed ? this.compact(r, t) : this.row(r, t);
     this.activeAt = -1;
+    this.agentsAbove = 0;
     let before = 0;
+    let agentsBefore = 0;
+    const agentRows = (list) => list.filter((r) => r.agent).length;
     const remote = [.../* @__PURE__ */ new Set([...rows.map((r) => r.w.machine).filter(Boolean), ...this.machines.map((m) => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = (m) => {
       const layout2 = machines().find((k) => k.name === m)?.layout;
@@ -502,6 +530,7 @@ var Spaces = class extends View {
     if (!remote.length) {
       if (loading(null) && !rows.length) return [loadingRow(null)];
       this.activeAt = rows.findIndex((r) => r.w.active);
+      this.agentsAbove = agentRows(rows.slice(0, Math.max(this.activeAt, 0)));
       return rows.map(draw);
     }
     const machineNames = [null, ...remote];
@@ -547,8 +576,12 @@ var Spaces = class extends View {
       }).child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
       const items = [cell(head), ...guidance, ...folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)]];
       const first = folded ? -1 : mine.findIndex((r) => r.w.active);
-      if (first >= 0) this.activeAt = before + 1 + guidance.length + first;
+      if (first >= 0) {
+        this.activeAt = before + 1 + guidance.length + first;
+        this.agentsAbove = agentsBefore + agentRows(mine.slice(0, first));
+      }
       before += items.length;
+      if (!folded) agentsBefore += agentRows(mine);
       return items;
     });
   }
@@ -575,33 +608,13 @@ var Spaces = class extends View {
     )).on_mouse_down("left", () => {
       this.pressed = w.id;
       this.over = w.id;
-    }).on_mouse_move((_e, cx) => {
-      const source = spaces().find((s) => s.id === this.pressed);
-      const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
-      if (this.pressed !== null && this.over !== over) {
-        this.over = over;
-        cx.notify();
-      }
-    }).on_mouse_up("left", (_e, cx) => {
-      const from = this.pressed;
-      const over = this.over;
-      this.pressed = null;
-      this.over = null;
-      if (from !== null && over === w.id && from !== w.id) {
-        const index = spaces().findIndex((s) => s.id === w.id);
-        if (index !== -1) run("space.move", { id: from, index: index + 1 });
-      } else if (from === w.id) {
-        showTerminal();
-        run("space.select", { id: w.id });
-      }
-      cx.notify();
-    }).on_mouse_down("right", () => this.menu(w)).child(
+    }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx)).on_mouse_down("right", () => this.menu(w)).child(
       h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg3("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div3().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div3().flex_1())
     );
   }
   // herdr-dock: an agent under its space: its icon, its name (the peer name when proven), a Copy
   // pill on hover when it has one, and its state. A click goes to the agent.
-  agentRow({ agent: a, depth }, t, dupes) {
+  agentRow({ w, agent: a, depth }, t, dupes) {
     const name = this.nameFor(a);
     const hovered = this.hoveredAgent === a.address;
     const copied = this.copiedAgent === a.address;
@@ -613,7 +626,7 @@ var Spaces = class extends View {
         if (this.copiedAgent === a.address) this.copiedAgent = null;
       }
       cx.notify();
-    }).on_click(() => {
+    }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx)).on_click(() => {
       showTerminal();
       run("pane.focus", { pane: a.pane });
     }).child(h_flex().flex_1().min_w(0).gap(9).items_center().pl(depth === 1 ? 22 : 44).child(agentIcon(a.program, 13, t.muted) ?? div3().size(13).flex_none()).child(div3().min_w(0).truncate().text_color(idle ? t.muted : t.foreground).child(rowLabel(a, name))).when(Boolean(name) && dupes.has(name), (el) => el.child(div3().id(`space-agent-same-${a.address}`).flex_none().text_size(11).text_color(t.dim).tooltip("Another session has this name too: a message by name may reach either").child("same name")))).when(Boolean(name) && hovered, (el) => el.child(div3().id(`space-agent-copy-${a.address}`).flex_none().ml(5).px(5).py(2).rounded(4).text_size(11).text_color(t.foreground).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Copy the name other sessions message it by").on_click((_e, cx) => {
@@ -653,17 +666,22 @@ var Spaces = class extends View {
     if (face !== "full") {
       this.drawsAgents = false;
       this.namesKey = null;
+      if (this.names.size) this.names = /* @__PURE__ */ new Map();
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));
       return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, false, () => requestFocus(myId)));
     }
     this.drawsAgents = !collapsed;
-    if (!this.drawsAgents) this.namesKey = null;
+    if (!this.drawsAgents) {
+      this.namesKey = null;
+      if (this.names.size) this.names = /* @__PURE__ */ new Map();
+    }
     const list = this.grouped(t, collapsed);
     const active = sp.find((p) => p.active)?.id;
-    if (active !== this.revealed || this.activeAt !== this.revealedAt) {
+    const place2 = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
+    if (active !== this.revealed || place2 !== this.revealedAt) {
       this.revealed = active;
-      this.revealedAt = this.activeAt;
+      this.revealedAt = place2;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, collapsed, null)).child(v_flex2().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).on_size_change((_size, cx) => {

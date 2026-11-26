@@ -95,6 +95,7 @@ export default class Spaces extends View {
     this.over = null;
     this.scroll = ScrollHandle.new(); // the list's position: the active space is brought into view through it
     this.activeAt = -1; // the active space's place among the list's children (headers and rows), -1 when not drawn
+    this.agentsAbove = 0; // agent rows drawn above the active space: its place among spaces is activeAt minus these
     this.machines = [];
     try {
       this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
@@ -345,6 +346,29 @@ export default class Spaces extends View {
     });
   }
 
+  // A space being dragged is over `w` (its row, or one of its agent rows: they belong to its block).
+  dragOver(w, cx) {
+    const source = spaces().find(s => s.id === this.pressed);
+    const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
+    if (this.pressed !== null && this.over !== over) {
+      this.over = over;
+      cx.notify();
+    }
+  }
+
+  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it.
+  dragEnd(w, cx) {
+    const from = this.pressed;
+    const over = this.over;
+    this.pressed = null;
+    this.over = null;
+    if (from !== null && over === w.id && from !== w.id) {
+      const index = spaces().findIndex(s => s.id === w.id);
+      if (index !== -1) run("space.move", { id: from, index: index + 1 });
+    } else if (from === w.id) { showTerminal(); run("space.select", { id: w.id }); }
+    cx.notify();
+  }
+
   menu(w) {
     // A popup is as tall as its items; height is only the most.
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
@@ -404,7 +428,10 @@ export default class Spaces extends View {
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.
     this.activeAt = -1;
+    this.agentsAbove = 0;
     let before = 0;
+    let agentsBefore = 0; // agent rows in the groups drawn so far
+    const agentRows = (list) => list.filter((r) => r.agent).length;
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -415,6 +442,7 @@ export default class Spaces extends View {
     if (!remote.length) {
       if (loading(null) && !rows.length) return [loadingRow(null)];
       this.activeAt = rows.findIndex(r => r.w.active);
+      this.agentsAbove = agentRows(rows.slice(0, Math.max(this.activeAt, 0)));
       return rows.map(draw);
     }
     const machineNames = [null, ...remote];
@@ -474,8 +502,12 @@ export default class Spaces extends View {
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
       const items = [cell(head), ...guidance, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
       const first = folded ? -1 : mine.findIndex(r => r.w.active);
-      if (first >= 0) this.activeAt = before + 1 + guidance.length + first;
+      if (first >= 0) {
+        this.activeAt = before + 1 + guidance.length + first;
+        this.agentsAbove = agentsBefore + agentRows(mine.slice(0, first));
+      }
       before += items.length;
+      if (!folded) agentsBefore += agentRows(mine);
       return items;
     });
   }
@@ -529,25 +561,8 @@ export default class Spaces extends View {
         this.pressed = w.id;
         this.over = w.id;
       })
-      .on_mouse_move((_e, cx) => {
-        const source = spaces().find(s => s.id === this.pressed);
-        const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
-        if (this.pressed !== null && this.over !== over) {
-          this.over = over;
-          cx.notify();
-        }
-      })
-      .on_mouse_up("left", (_e, cx) => {
-        const from = this.pressed;
-        const over = this.over;
-        this.pressed = null;
-        this.over = null;
-        if (from !== null && over === w.id && from !== w.id) {
-          const index = spaces().findIndex(s => s.id === w.id);
-          if (index !== -1) run("space.move", { id: from, index: index + 1 });
-        } else if (from === w.id) { showTerminal(); run("space.select", { id: w.id }); }
-        cx.notify();
-      })
+      .on_mouse_move((_e, cx) => this.dragOver(w, cx))
+      .on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx))
       .on_mouse_down("right", () => this.menu(w))
       .child(
         h_flex()
@@ -562,7 +577,7 @@ export default class Spaces extends View {
 
   // herdr-dock: an agent under its space: its icon, its name (the peer name when proven), a Copy
   // pill on hover when it has one, and its state. A click goes to the agent.
-  agentRow({ agent: a, depth }, t, dupes) {
+  agentRow({ w, agent: a, depth }, t, dupes) {
     const name = this.nameFor(a);
     const hovered = this.hoveredAgent === a.address;
     const copied = this.copiedAgent === a.address;
@@ -584,6 +599,9 @@ export default class Spaces extends View {
         }
         cx.notify();
       })
+      // Dragging a space over its agents is dragging over the space.
+      .on_mouse_move((_e, cx) => this.dragOver(w, cx))
+      .on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx))
       .on_click(() => { showTerminal(); run("pane.focus", { pane: a.pane }); })
       .child(h_flex().flex_1().min_w(0).gap(9).items_center().pl(depth === 1 ? 22 : 44)
         .child(agentIcon(a.program, 13, t.muted) ?? div().size(13).flex_none())
@@ -647,19 +665,25 @@ export default class Spaces extends View {
     if (face !== "full") {
       this.drawsAgents = false;
       this.namesKey = null;
+      if (this.names.size) this.names = new Map();
       this.ordered();
       if (face === "icon") return iconRail(t, "mods/dock-spaces/icon.svg", "Spaces", () => requestFocus(myId));
       return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, false, () => requestFocus(myId)));
     }
     // herdr-dock: names are looked up only while agent rows are drawn; coming back looks again within a second.
     this.drawsAgents = !collapsed;
-    if (!this.drawsAgents) this.namesKey = null;
+    if (!this.drawsAgents) {
+      this.namesKey = null;
+      if (this.names.size) this.names = new Map();
+    }
     const list = this.grouped(t, collapsed);
     // Bring the active space into view when it, or its place in the list, changes; a row already in view stays put.
     const active = sp.find(p => p.active)?.id;
-    if (active !== this.revealed || this.activeAt !== this.revealedAt) {
+    // herdr-dock: its place counted without agent rows, so an agent starting or exiting above it doesn't scroll the list.
+    const place = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
+    if (active !== this.revealed || place !== this.revealedAt) {
       this.revealed = active;
-      this.revealedAt = this.activeAt;
+      this.revealedAt = place;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)

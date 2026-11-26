@@ -9,13 +9,18 @@ const fresh = () => ({
 });
 globalThis.__herdr = fresh();
 globalThis.__texts = [];
+globalThis.__handlers = {};
+globalThis.__scrolls = [];
 // Herdr gives mods localStorage; Node 22 has none.
 const store = new Map();
 globalThis.localStorage ??= {
   getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k), clear: () => store.clear(),
 };
-export const resetHost = () => { Object.assign(globalThis.__herdr, fresh()); globalThis.__texts = []; };
+export const resetHost = () => { Object.assign(globalThis.__herdr, fresh()); globalThis.__texts = []; globalThis.__handlers = {}; globalThis.__scrolls = []; };
+// Handlers of the last render, by "<element id>:<on_x>[:<button>]"; and the list's scroll_to_item calls.
+export const handlers = () => globalThis.__handlers;
+export const scrolls = () => globalThis.__scrolls;
 // The strings rendered since the last clearTexts(): what a row or header would read.
 export const texts = () => globalThis.__texts;
 export const clearTexts = () => { globalThis.__texts = []; };
