@@ -688,9 +688,16 @@ export default class Spaces extends View {
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(this.header(t, collapsed, null))
-      .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
+      .child(v_flex().id("spaces-list").flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
-        .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
+        // herdr-dock: only a real resize: this also runs after redraws at the same size (hovering an agent row
+        // redraws), and scrolling then would pull the list back to the active space under the pointer.
+        .on_size_change((size, cx) => {
+          const height = size?.height ?? 0;
+          if (Math.abs(height - (this.listHeight ?? -Infinity)) <= 2) return;
+          this.listHeight = height;
+          if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); }
+        })
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(list));
   }

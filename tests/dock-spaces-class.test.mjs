@@ -96,3 +96,16 @@ test("dock-spaces: an agent starting above the active space doesn't scroll the l
   s.render(cx);
   assert.deepEqual(scrolls(), [5]);
 });
+
+test("dock-spaces: the list scrolls to the active space only when its height really changes", () => {
+  three();
+  scrolls().length = 0;
+  const resized = handlers()["spaces-list:on_size_change"];
+  resized({ width: 250, height: 400 }, cx);
+  assert.deepEqual(scrolls(), [3]);
+  resized({ width: 250, height: 400 }, cx); // a redraw at the same size (hovering an agent row)
+  resized({ width: 250, height: 401 }, cx); // under 2 px
+  assert.deepEqual(scrolls(), [3]);
+  resized({ width: 250, height: 300 }, cx); // a block above grew: the list shrank
+  assert.deepEqual(scrolls(), [3, 3]);
+});
