@@ -2424,11 +2424,11 @@ test("limit: a limited first poll leaves no pipeline, no error and no alert, and
   assert.equal(d.pipeline, null);
   assert.equal(d.error, null);
   assert.equal(d.budget.limitedUntil, T0 + 90000);
-  assert.equal(wtOf(c).pipeline ?? null, null);
+  assert.equal(wtOf(c).pipeline, null, "the published summary is null");
   assert.equal(io.notes.length, 0);
 });
 
-test("budget low applies to every worktree on the host: the watched one polls at 30 s, the other stays at 30 s", async () => {
+test("low budget: the watched worktree drops to 30 s; an unwatched one is unaffected (30 s anyway)", async () => {
   const PIPES_B = `${GL}/pipelines?ref=b&per_page=1&order_by=id&sort=desc`;
   const low = GL_HDR(100, 1795707975);
   const { io } = ciIo({ routes: {
