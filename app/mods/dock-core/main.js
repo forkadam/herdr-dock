@@ -367,7 +367,7 @@ function freshFailures({ prev, cur, alerted, startedAt }) {
   const before = prev ? failuresOf(prev) : null;
   return failuresOf(cur).filter((f) => {
     if (seen.some((k) => k != null && (k === f.key || String(k) === String(f.id)))) return false;
-    if (!before || !listed(prev, f.id)) return Date.parse(f.createdAt) > startedAt;
+    if (!before || prev.sha === cur.sha && !listed(prev, f.id)) return Date.parse(f.createdAt) > startedAt;
     return !before.some((b) => String(b.id) === String(f.id) && (b.finishedAt == null || f.finishedAt == null || b.finishedAt === f.finishedAt));
   });
 }
@@ -447,13 +447,12 @@ function createCiClient(io, log) {
   const lastLog = /* @__PURE__ */ new Map();
   const rangeLogged = /* @__PURE__ */ new Set();
   const failing = /* @__PURE__ */ new Set();
-  const failedOnce = (kind, host, path, line) => {
-    const k = `${kind}|${host}|${path}`;
-    if (failing.has(k)) return;
-    failing.add(k);
+  const failedOnce = (key, line) => {
+    if (failing.has(key)) return;
+    failing.add(key);
     log(line);
   };
-  const succeeded = (kind, host, path) => failing.delete(`${kind}|${host}|${path}`);
+  const succeeded = (key) => failing.delete(key);
   const rec = (host) => {
     if (!hosts.has(host)) hosts.set(host, {
       want: null,
@@ -662,10 +661,10 @@ ${st.stderr ?? ""}`;
     ]);
     const found = c.ok ? rows(c.data) : null;
     if (!found) {
-      failedOnce("commit", host, path, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
       return b;
     }
-    succeeded("commit", host, path);
+    succeeded(`commit|${host}|${path}`);
     const mine = found.filter(ofHead);
     return mine.length ? { ...c, rows: mine } : b;
   }
@@ -678,11 +677,11 @@ ${st.stderr ?? ""}`;
   function listOf(r, what, once) {
     if (!r) return null;
     if (r.ok && Array.isArray(r.data)) {
-      if (once) succeeded(...once);
+      if (once) succeeded(once);
       return [...r.data].sort((a, b) => a.id - b.id);
     }
     const line = `CI: ${what}: ${r.error ?? "bad response"}`;
-    if (once) failedOnce(...once, line);
+    if (once) failedOnce(once, line);
     else log(line);
     return null;
   }
@@ -717,7 +716,7 @@ ${st.stderr ?? ""}`;
       return {
         pipeline: p,
         jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, ["bridges", host, path])
+        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`)
       };
     }));
     const pipeline = gitlabCommitPipeline(entries);
@@ -797,19 +796,20 @@ ${st.stderr ?? ""}`;
     let posts;
     if (provider === "gitlab") {
       const ids = (pipeline.groups ?? []).filter((g) => g.status === "failed" || g.status === "canceled").map((g) => g.id);
-      posts = ids.map((id) => `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry`);
+      posts = ids.map((id) => ({ what: `pipeline ${id}`, path: `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry` }));
       if (!posts.length) return { ok: false, error: "no failed or canceled pipelines" };
     } else {
       const repo = path.split("/").map(encodeURIComponent).join("/");
+      const run2 = (rid, action) => ({ what: `run ${rid}`, path: `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/${action}` });
       posts = [
-        ...(runIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun-failed-jobs`),
-        ...(canceledRunIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun`)
+        ...(runIds ?? []).map((rid) => run2(rid, "rerun-failed-jobs")),
+        ...(canceledRunIds ?? []).map((rid) => run2(rid, "rerun"))
       ];
       if (!posts.length) return { ok: false, error: "no failed or canceled runs" };
     }
-    const results = await Promise.all(posts.map((p) => request(host, "POST", p)));
-    const bad = results.find((r) => !r.ok);
-    return bad ? { ok: false, error: bad.error } : { ok: true, error: null };
+    const results = await Promise.all(posts.map((p) => request(host, "POST", p.path)));
+    const bad = posts.map((p, i) => results[i].ok ? null : `${p.what}: ${results[i].error}`).filter(Boolean);
+    return bad.length ? { ok: false, error: bad.join("; ") } : { ok: true, error: null };
   }
   return {
     latest,
@@ -1121,7 +1121,9 @@ function createCollector(io) {
       if (ci.target !== target) Object.assign(ci, { target, prev: void 0 });
       const cur = got.pipeline;
       const was = ci.pipeline;
-      if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
+      const moved = !was || !cur || was.status !== cur.status;
+      const otherRun = was && cur && (was.id !== cur.id || was.finishedAt !== cur.finishedAt);
+      if (moved || otherRun && cur.status !== "failed") ci.retryError = null;
       Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? void 0;

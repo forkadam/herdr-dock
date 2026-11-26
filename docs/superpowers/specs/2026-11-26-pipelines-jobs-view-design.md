@@ -81,8 +81,10 @@ and time, and the running job(s) standing out with a live elapsed time and a lin
 - **Alerts and Retry across a commit's builds** (added after the final review): a commit can have several failed
   builds (a tag pipeline beside a branch pipeline, or two workflow runs). The Pipeline carries `failedKeys`, one
   `<pipeline or run id>|<its finish stamp>` per failed build, and an alert fires only for a key not yet in
-  `dock.git.alerted` that is a new failure (or, for a build not seen on the previous poll, created after the dock
-  started). GitLab Retry retries every failed or canceled pipeline of the commit, as GitHub reruns every failed run.
+  `dock.git.alerted` that is a new failure (or, with no previous poll, or one of the same commit that didn't list
+  the build, created after the dock started; a failed build of a newly checked-out commit alerts once). GitLab
+  Retry retries every failed or canceled pipeline of the commit, as GitHub reruns every failed run; a Retry error
+  names the pipeline or run whose request failed and stays while the pipeline is still failed.
 - Display status vs. normalized status *(call)*: `normalizeStatus` is unchanged (it feeds pipeline status,
   cadence and Retry). For display, `format.js` derives each job's bucket: GitLab `manual` and `scheduled` →
   **manual** (shown with its label, not counted as pending, and never holding a stage back); a failed job with

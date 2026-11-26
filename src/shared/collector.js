@@ -240,9 +240,13 @@ export function createCollector(io) {
       // Another branch (or sha) is a different pipeline history: forget the last-seen pipeline.
       if (ci.target !== target) Object.assign(ci, { target, prev: undefined });
       const cur = got.pipeline;
-      // A different pipeline (a new run, or its status moved) makes the last Retry error old news.
+      // The status moving makes the last Retry error old news; so does a different run while not failed. While still
+      // failed it stays, even if the merged id moves: a Retry whose POST to the older of two failed pipelines failed
+      // sets the newer one running, which moves the id to the one that is still failed and not retried.
       const was = ci.pipeline;
-      if (!was || !cur || was.id !== cur.id || was.status !== cur.status || was.finishedAt !== cur.finishedAt) ci.retryError = null;
+      const moved = !was || !cur || was.status !== cur.status;
+      const otherRun = was && cur && (was.id !== cur.id || was.finishedAt !== cur.finishedAt);
+      if (moved || (otherRun && cur.status !== "failed")) ci.retryError = null;
       Object.assign(ci, { pipeline: cur, runIds: got.runIds ?? [], canceledRunIds: got.canceledRunIds ?? [], error: null, hint: null, hostFailure: false, done: true });
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? undefined;

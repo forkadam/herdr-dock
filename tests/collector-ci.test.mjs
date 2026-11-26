@@ -676,7 +676,7 @@ test("fix 5: a failed Retry is published in the detail (retryError); a later goo
   assert.equal(detailOf(io).retryError, null);
   const r = await c.retry();
   assert.equal(r.ok, false);
-  assert.equal(detailOf(io).retryError, "HTTP 403");
+  assert.equal(detailOf(io).retryError, "pipeline 48213: HTTP 403");
   retry = res(201, { id: 48213, status: "running" });
   assert.equal((await c.retry()).ok, true);
   assert.equal(detailOf(io).retryError, null);
@@ -702,7 +702,7 @@ test("leftover fix: a Retry error clears once the pipeline changes (a new run or
   await c.tick();
   await c.select(WT);
   await c.retry();
-  assert.equal(detailOf(io).retryError, "HTTP 403");
+  assert.equal(detailOf(io).retryError, "pipeline 48213: HTTP 403");
   pipes = res(200, [pipeline({ id: 48214, status: "running" })]); // retried elsewhere (e.g. in GitLab)
   c.refresh();
   await c.tick();
@@ -1557,4 +1557,72 @@ test("F1: an old failed tag pipeline that drops out for one poll (commit query f
   shaq = res(200, [old(20, "v1.0.0"), old(10, "main")]);
   io.t += 300000; await c.tick();
   assert.equal(io.notes.length, 0, "20 is back, still the same old failure");
+});
+
+// --- re-review follow-ups ------------------------------------------------------------------------------
+
+test("re-review 1: git pull to a commit whose pipeline failed before the dock started alerts once", async () => {
+  const A = "a".repeat(40), B = "b".repeat(40);
+  const shaq = (sha) => `${GL}/pipelines?sha=${sha}&order_by=id&sort=desc&per_page=5`;
+  const pA = pipeline({ id: 30, sha: A, status: "success", created_at: "2026-11-22T08:00:00Z" });
+  const pB = pipeline({ id: 40, sha: B, status: "failed", created_at: "2026-11-22T09:00:00Z" });
+  let newest = pA;
+  const { io } = ciIo({
+    st: status("main", { oid: A }),
+    routes: {
+      [PIPES]: () => res(200, [newest]), [shaq(A)]: res(200, [pA]), [shaq(B)]: res(200, [pB]),
+      [glJobs(40)]: res(200, jobsDone("2026-11-22T09:05:00Z")),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.id, 30);
+  io.st = status("main", { oid: B });
+  newest = pB;
+  for (let i = 0; i < 2; i++) { io.t += 300000; await c.tick(); }
+  assert.equal(wtOf(c).pipeline.id, 40);
+  assert.equal(io.notes.length, 1, "the newly checked-out commit's failed build alerts once");
+  io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 1);
+});
+
+test("re-review 2: a Retry whose POST to the older pipeline fails names it, and the error survives the re-poll", async () => {
+  const p = (id, ref, status) => pipeline({ id, ref, status, web_url: `https://gitlab.corp/grp/api/-/pipelines/${id}` });
+  let pipes = [p(20, "v1.0.0", "failed"), p(10, "main", "failed")];
+  const { io } = ciIo({
+    routes: {
+      [PIPES]: () => res(200, [pipes[1]]), [SHAQ]: () => res(200, pipes),
+      [glJobs(10)]: res(200, JOBS), [glJobs(20)]: () => res(200, pipes[0].status === "failed" ? JOBS : [{ id: 950, name: "pack", stage: "build", status: "running" }]),
+      [`${GL}/pipelines/20/retry`]: res(201, { id: 20, status: "running" }),
+      [`${GL}/pipelines/10/retry`]: res(500, { message: "500" }),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  const r = await c.retry();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /pipeline 10: HTTP 500/);
+  assert.ok(!/pipeline 20/.test(r.error), "the POST that worked isn't named");
+  pipes = [p(20, "v1.0.0", "running"), p(10, "main", "failed")];
+  io.t += 30000; await c.tick(); // the 500 backed the host off for 30 s: this is the next poll
+  assert.equal(wtOf(c).pipeline.id, 10, "re-polled: the merged id moved to the still-failed pipeline");
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.match(detailOf(io).retryError, /pipeline 10: HTTP 500/, "still failed: the error stays");
+  pipes = [p(20, "v1.0.0", "running"), p(10, "main", "running")];
+  c.refresh(); io.t += 1000; await c.tick();
+  assert.equal(detailOf(io).retryError, null, "the status changed: cleared");
+});
+
+test("re-review 3: one pipeline's failing bridges call beside a working one logs once", async () => {
+  const p = (id, ref) => pipeline({ id, ref, status: "success" });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: {
+      [PIPES]: res(200, [p(10, "main")]), [SHAQ]: res(200, [p(20, "v1.0.0"), p(10, "main")]),
+      [glJobs(10)]: res(200, passedJobs), [glJobs(20)]: res(200, passedJobs),
+      [glBridges(10)]: res(200, []), [glBridges(20)]: res(404, { message: "404 Not found" }),
+    },
+  });
+  for (let i = 0; i < 3; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.deepEqual(io.logs.filter((l) => l.includes("bridges of")), ["CI: bridges of gitlab.corp/grp/api pipeline 20: HTTP 404"]);
 });

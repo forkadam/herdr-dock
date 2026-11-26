@@ -45,16 +45,16 @@ export function createCiClient(io, log) {
   // worktree, because only the watched worktree polls full.
   const lastLog = new Map();
   const rangeLogged = new Set(); // hosts whose answer to a Range request was logged (does GitLab honour it?)
-  // "<kind>|<host>|<path>" of calls that may fail on every poll (the HEAD-commit query; bridges on an older
-  // GitLab): logged once, then again only after a success.
+  // Calls that may fail on every poll, logged once, then again only after a success: "commit|<host>|<path>" (the
+  // HEAD-commit query) and "bridges|<host>|<path>|<pipeline id>" (bridges on an older GitLab, per pipeline so one
+  // failing beside a working one still logs once).
   const failing = new Set();
-  const failedOnce = (kind, host, path, line) => {
-    const k = `${kind}|${host}|${path}`;
-    if (failing.has(k)) return;
-    failing.add(k);
+  const failedOnce = (key, line) => {
+    if (failing.has(key)) return;
+    failing.add(key);
     log(line);
   };
-  const succeeded = (kind, host, path) => failing.delete(`${kind}|${host}|${path}`);
+  const succeeded = (key) => failing.delete(key);
   const rec = (host) => {
     if (!hosts.has(host)) hosts.set(host, {
       want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
@@ -286,10 +286,10 @@ export function createCiClient(io, log) {
     ]);
     const found = c.ok ? rows(c.data) : null;
     if (!found) {
-      failedOnce("commit", host, path, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
       return b;
     }
-    succeeded("commit", host, path);
+    succeeded(`commit|${host}|${path}`);
     const mine = found.filter(ofHead);
     return mine.length ? { ...c, rows: mine } : b;
   }
@@ -307,16 +307,16 @@ export function createCiClient(io, log) {
   }
 
   // A job (or bridge) list sorted by id, or null with a log line. Jobs may come newest first: stage order and the
-  // first failed job need id order. Without jobs the status (and an alert) still stand. `once` ([kind, host, path])
+  // first failed job need id order. Without jobs the status (and an alert) still stand. `once` (a failing key)
   // marks a call that may fail on every poll (bridges on an older GitLab): logged once until it succeeds.
   function listOf(r, what, once) {
     if (!r) return null;
     if (r.ok && Array.isArray(r.data)) {
-      if (once) succeeded(...once);
+      if (once) succeeded(once);
       return [...r.data].sort((a, b) => a.id - b.id);
     }
     const line = `CI: ${what}: ${r.error ?? "bad response"}`;
-    if (once) failedOnce(...once, line);
+    if (once) failedOnce(once, line);
     else log(line);
     return null;
   }
@@ -349,7 +349,7 @@ export function createCiClient(io, log) {
       return {
         pipeline: p,
         jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, ["bridges", host, path]),
+        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`),
       };
     }));
     const pipeline = gitlabCommitPipeline(entries);
@@ -441,22 +441,24 @@ export function createCiClient(io, log) {
   // failed); GitHub reruns the failed jobs of each failed run of that commit, and reruns each canceled run whole (a
   // canceled run has no failed jobs to rerun).
   async function retry(host, provider, path, pipeline, runIds, canceledRunIds) {
+    // { what, path }: `what` names the pipeline or run in the error, since only some of several POSTs may fail.
     let posts;
     if (provider === "gitlab") {
       const ids = (pipeline.groups ?? []).filter((g) => g.status === "failed" || g.status === "canceled").map((g) => g.id);
-      posts = ids.map((id) => `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry`);
+      posts = ids.map((id) => ({ what: `pipeline ${id}`, path: `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry` }));
       if (!posts.length) return { ok: false, error: "no failed or canceled pipelines" };
     } else {
       const repo = path.split("/").map(encodeURIComponent).join("/");
+      const run = (rid, action) => ({ what: `run ${rid}`, path: `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/${action}` });
       posts = [
-        ...(runIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun-failed-jobs`),
-        ...(canceledRunIds ?? []).map((rid) => `repos/${repo}/actions/runs/${encodeURIComponent(rid)}/rerun`),
+        ...(runIds ?? []).map((rid) => run(rid, "rerun-failed-jobs")),
+        ...(canceledRunIds ?? []).map((rid) => run(rid, "rerun")),
       ];
       if (!posts.length) return { ok: false, error: "no failed or canceled runs" };
     }
-    const results = await Promise.all(posts.map((p) => request(host, "POST", p)));
-    const bad = results.find((r) => !r.ok);
-    return bad ? { ok: false, error: bad.error } : { ok: true, error: null };
+    const results = await Promise.all(posts.map((p) => request(host, "POST", p.path)));
+    const bad = posts.map((p, i) => (results[i].ok ? null : `${p.what}: ${results[i].error}`)).filter(Boolean);
+    return bad.length ? { ok: false, error: bad.join("; ") } : { ok: true, error: null };
   }
 
   return {

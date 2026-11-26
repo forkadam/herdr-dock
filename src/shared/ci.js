@@ -259,9 +259,10 @@ const listed = (p, id) => !Array.isArray(p.groups) || p.groups.some((g) => Strin
 // The failed builds of `cur` to alert about: not in `alerted`, and new. If the previous poll listed the build, new
 // means it wasn't failed then, or failed again since (both finish stamps known and different: a stamp still
 // unknown, say its jobs couldn't be read, is not a new failure). With no previous poll (start-up, a branch switch),
-// or one that didn't list the build (the HEAD-commit query failed and the branch's answer stood in), the build was
-// created after the dock started: its own created time, not the newest build's, so a tag build created after
-// start-up doesn't make an old branch failure new.
+// or one of the same commit that didn't list the build (the HEAD-commit query failed and the branch's answer stood
+// in), the build was created after the dock started: its own created time, not the newest build's, so a tag build
+// created after start-up doesn't make an old branch failure new. A previous poll of another commit (HEAD moved, say
+// a git pull) didn't list it either, but a failed build of the newly checked-out commit is news: it alerts once.
 export function freshFailures({ prev, cur, alerted, startedAt }) {
   if (cur?.status !== "failed") return [];
   // alerted: a list of keys (or, in older stores, one key or a bare id). A bare id still suppresses that build.
@@ -269,7 +270,7 @@ export function freshFailures({ prev, cur, alerted, startedAt }) {
   const before = prev ? failuresOf(prev) : null;
   return failuresOf(cur).filter((f) => {
     if (seen.some((k) => k != null && (k === f.key || String(k) === String(f.id)))) return false;
-    if (!before || !listed(prev, f.id)) return Date.parse(f.createdAt) > startedAt;
+    if (!before || (prev.sha === cur.sha && !listed(prev, f.id))) return Date.parse(f.createdAt) > startedAt;
     return !before.some((b) => String(b.id) === String(f.id)
       && (b.finishedAt == null || f.finishedAt == null || b.finishedAt === f.finishedAt));
   });
