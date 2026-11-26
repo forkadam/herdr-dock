@@ -3,7 +3,7 @@
 // props as base64url JSON, an item id as base64url.
 
 import { b64urlDecode, b64urlEncode } from "./gitcmd.js";
-import { addItem, clearAll, clearItem, markAllRead } from "./notify.js";
+import { FILTERS, addItem, clearAll, clearItem, clearMatching, markAllRead } from "./notify.js";
 
 // Where notify.show opens dock-notifications when the right panel doesn't hold it.
 export const NOTIFY_DIALOG = { mod: "dock-notifications", kind: "dialog", width: 520, height: 0.7 };
@@ -21,6 +21,9 @@ export function notifyCommandName(name, args = {}) {
     case "notify.clear":
       if (typeof args?.id !== "string") throw new Error("notify.clear needs { id }");
       return `${name}.${b64urlEncode(args.id)}`;
+    case "notify.clearfilter":
+      if (!FILTERS.includes(args?.filter)) throw new Error(`notify.clearfilter needs { filter } of ${FILTERS.join(", ")}`);
+      return `${name}.${args.filter}`;
     default:
       throw new Error(`unknown notify command: ${name}`);
   }
@@ -31,6 +34,8 @@ export function parseNotifyCommand(c) {
   if (typeof c !== "string" || !c.startsWith("notify.")) return null;
   const rest = c.slice(7);
   if (rest === "clearall" || rest === "read" || rest === "show") return { cmd: rest };
+  const f = /^clearfilter\.([a-z]+)$/.exec(rest);
+  if (f) return FILTERS.includes(f[1]) ? { cmd: "clearfilter", filter: f[1] } : null;
   const m = /^(add|clear)\.([A-Za-z0-9_-]+)$/.exec(rest);
   if (!m) return null;
   const text = b64urlDecode(m[2]);
@@ -47,6 +52,7 @@ export function applyNotifyCommand(list, cmd, now, newId) {
     case "add": return addItem(list, cmd.n, now, newId);
     case "clear": return clearItem(list, cmd.id);
     case "clearall": return clearAll();
+    case "clearfilter": return clearMatching(list, cmd.filter);
     case "read": return markAllRead(list);
     default: return list;
   }

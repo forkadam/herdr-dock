@@ -5,17 +5,23 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, props, closeOverlay, run } from "herdr";
 import { notifyCommand } from "../_notify-command.js";
-import { HISTORY_KEY, historyOf } from "../../shared/notify.js";
+import { FILTERS, HISTORY_KEY, historyOf } from "../../shared/notify.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
-import { notificationRows } from "./view.js";
+import { notificationRows, filterRows, filterCounts } from "./view.js";
 
 const ID = "dock-notifications";
 // Same level colours as the toast (dock-toast's DOT).
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
+const FILTER_LABEL = { needs: "Needs you", agents: "Agents", ci: "CI", updates: "Updates", other: "Other" };
+const FILTER_STORE = "filter"; // this PC's chosen filter (localStorage), or none
 
 export default class Notifications extends View {
   init(_props, cx) {
     this.readSent = null; // the newest unread item notify.read was sent for
+    try {
+      const saved = localStorage.getItem(FILTER_STORE);
+      this.filter = FILTERS.includes(saved) ? saved : null;
+    } catch { this.filter = null; }
     cx.timer.every(30000, (cx) => cx.notify()); // keeps the "5m" times current
   }
 
@@ -42,15 +48,43 @@ export default class Notifications extends View {
     if (id) closeOverlay(id);
   }
 
-  header(t, empty, overlay) {
+  // Picks a filter (null: all); the same chip again clears it. Remembered on this PC.
+  pick(filter, cx) {
+    this.filter = filter && filter !== this.filter ? filter : null;
+    try {
+      if (this.filter) localStorage.setItem(FILTER_STORE, this.filter);
+      else localStorage.removeItem(FILTER_STORE);
+    } catch { /* no storage: the choice lasts until the panel closes */ }
+    cx.notify();
+  }
+
+  // All, then one chip per filter that has items; the active one is filled.
+  chips(t, counts, active) {
+    const chip = (id, label, on, filter) => div().id(`nt-filter-${id}`).flex_none().px(8).h(22).rounded(11).flex()
+      .items_center().text_size(11.5).cursor_pointer()
+      .when(on, (el) => el.bg(t.accent).text_color(t.background ?? t.chrome))
+      .when(!on, (el) => el.border(1).border_color(t.border).text_color(t.foreground).hover((s) => s.bg(t.hover)))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.pick(filter, cx); })
+      .child(label);
+    return h_flex().flex_none().flex_wrap().px(16).pb(8).gap(6)
+      .child(chip("all", `All ${counts.all}`, !active, null))
+      .children(FILTERS.filter((f) => counts[f] > 0).map((f) => chip(f, `${FILTER_LABEL[f]} ${counts[f]}`, active === f, f)));
+  }
+
+  header(t, empty, overlay, filter) {
     return h_flex().flex_none().px(16).pt(overlay ? 14 : 12).pb(8).gap(6).items_center()
       .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().text_color(t.foreground).child("Notifications"))
       .child(div().id("nt-clearall").flex_none().px(6).h(20).rounded(5).flex().items_center().text_size(11.5)
-        .tooltip(empty ? "Nothing to clear" : "Remove every notification")
+        .tooltip(empty ? "Nothing to clear"
+          : filter ? `Remove the ${FILTER_LABEL[filter]} notifications shown` : "Remove every notification")
         .when(!empty, (el) => el.text_color(t.accent).cursor_pointer().hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => { cx.stop_propagation(); notifyCommand("notify.clearall"); }))
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            if (filter) notifyCommand("notify.clearfilter", { filter });
+            else notifyCommand("notify.clearall");
+          }))
         .when(empty, (el) => el.text_color(t.dim).opacity(0.45))
-        .child("Clear all"))
+        .child(filter ? "Clear shown" : "Clear all"))
       .when(overlay, (el) => el.child(div().id("nt-close").flex_none().size(22).rounded(5).flex().items_center()
         .justify_center().text_size(15).text_color(t.dim).cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close")
@@ -86,13 +120,18 @@ export default class Notifications extends View {
     const history = historyOf(shared(HISTORY_KEY));
     this.markRead(history);
     const actions = new Map(history.map((x) => [x.id, x.action]));
-    const rows = notificationRows(history, Date.now());
+    const all = notificationRows(history, Date.now());
+    const counts = filterCounts(all);
+    // A remembered filter whose items are all gone shows everything (its chip is hidden too).
+    const filter = this.filter && counts[this.filter] > 0 ? this.filter : null;
+    const rows = filterRows(all, filter);
     const body = rows.length
       ? rows.map((r) => this.row(t, r, r.hasAction ? actions.get(r.id) : null))
       : [div().px(16).py(6).text_size(12).text_color(t.dim).child("No notifications")];
     return v_flex().id(ID).size_full().min_h(0).bg(overlay ? (t.popover ?? t.chrome) : t.chrome)
       .text_size(13).text_color(t.foreground)
-      .child(this.header(t, rows.length === 0, overlay))
+      .child(this.header(t, rows.length === 0, overlay, filter))
+      .when(all.length > 0, (el) => el.child(this.chips(t, counts, filter)))
       .child(v_flex().id("nt-body").flex_1().min_h(0).pb(12).gap(2).overflow_y_scrollbar().children(body));
   }
 }

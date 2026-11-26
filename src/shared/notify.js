@@ -68,6 +68,30 @@ export function addItem(list, n, now, id) {
 
 export const clearItem = (list, id) => list.filter((x) => x.id !== id);
 export const clearAll = () => [];
+
+// The Notifications panel's filters: "needs" (still waiting on you) plus one per message type. The panel and dock-core
+// both use these, so "Clear shown" removes exactly the items the panel showed for that filter.
+export const FILTERS = ["needs", "agents", "ci", "updates", "other"];
+
+// Where a message came from, read from its click action: Herdr's agent toasts (agent.focus) and the browser's
+// hand-off toast are agents; a pipeline alert opens git.show; an update toast opens dock-config.
+export function notifyType(x) {
+  const name = typeof x?.action?.name === "string" ? x.action.name : "";
+  if (name === "agent.focus" || name.startsWith("dock-core.browser.show")) return "agents";
+  if (name.startsWith("dock-core.git.show")) return "ci";
+  if (name === "mod.open" && x.action.args?.name === "dock-config") return "updates";
+  return "other";
+}
+
+// Whether an item shows under a filter; null (no filter) shows everything.
+export function matchesFilter(x, filter) {
+  if (!filter) return true;
+  if (filter === "needs") return Boolean(x?.needs) && !x.resolved;
+  return notifyType(x) === filter;
+}
+
+// The history without the filter's items; null clears everything.
+export const clearMatching = (list, filter) => (filter ? list.filter((x) => !matchesFilter(x, filter)) : clearAll());
 export const markAllRead = (list) => list.map((x) => (x.read ? x : { ...x, read: true }));
 
 function isFixed(needs, agents, gitState) {

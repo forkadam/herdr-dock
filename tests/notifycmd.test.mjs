@@ -51,3 +51,12 @@ test("applyNotifyCommand: clearall empties, read marks all read, show leaves the
 test("the notifications dialog spec", () => {
   assert.deepEqual(NOTIFY_DIALOG, { mod: "dock-notifications", kind: "dialog", width: 520, height: 0.7 });
 });
+
+test("notify.clearfilter: the filter rides in the name; an unknown filter throws or parses to null", () => {
+  assert.equal(notifyCommandName("notify.clearfilter", { filter: "ci" }), "notify.clearfilter.ci");
+  assert.deepEqual(parseNotifyCommand("notify.clearfilter.ci"), { cmd: "clearfilter", filter: "ci" });
+  assert.throws(() => notifyCommandName("notify.clearfilter", { filter: "bogus" }));
+  assert.equal(parseNotifyCommand("notify.clearfilter.bogus"), null);
+  const list = [{ id: "a", action: { name: "agent.focus" } }, { id: "u", action: { name: "mod.open", args: { name: "dock-config" } } }];
+  assert.deepEqual(applyNotifyCommand(list, { cmd: "clearfilter", filter: "agents" }, 0).map((x) => x.id), ["u"]);
+});

@@ -30,7 +30,7 @@ test("a row carries title, body, level, read, needs/resolved flags and hasAction
     item({ id: "p", level: null }),
   ], NOW);
   assert.deepEqual(needs, { id: "n", title: "claude needs you", body: "s / t", level: "error", when: "just now",
-    needs: true, resolved: false, read: false, hasAction: true });
+    needs: true, resolved: false, read: false, hasAction: true, type: "agents", needsNow: true });
   assert.equal(resolved.needs, true); assert.equal(resolved.resolved, true); assert.equal(resolved.read, true);
   assert.equal(resolved.hasAction, false);
   assert.equal(plain.needs, false); assert.equal(plain.resolved, false); assert.equal(plain.level, "info");
@@ -39,4 +39,18 @@ test("a row carries title, body, level, read, needs/resolved flags and hasAction
 
 test("a future timestamp reads just now", () => {
   assert.equal(notificationRows([item({ at: NOW + 5000 })], NOW)[0].when, "just now");
+});
+
+import { filterRows, filterCounts } from "../src/mods/dock-notifications/view.js";
+
+test("rows carry type and needsNow; filterRows and filterCounts follow the shared filter rule", () => {
+  const rows = notificationRows([
+    item({ id: "a", action: { name: "agent.focus", args: { terminal: "t1" } }, needs: { kind: "agent", terminal: "t1" } }),
+    item({ id: "u", action: { name: "mod.open", args: { name: "dock-config" } } }),
+    item({ id: "o" }),
+  ], NOW);
+  assert.deepEqual(rows.map((r) => [r.type, r.needsNow]), [["agents", true], ["updates", false], ["other", false]]);
+  assert.deepEqual(filterRows(rows, "agents").map((r) => r.id), ["a"]);
+  assert.deepEqual(filterRows(rows, null).map((r) => r.id), ["a", "u", "o"]);
+  assert.deepEqual(filterCounts(rows), { all: 3, needs: 1, agents: 1, ci: 0, updates: 1, other: 1 });
 });

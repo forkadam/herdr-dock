@@ -58,6 +58,7 @@ function itemOf(x) {
 function historyOf(raw) {
   return Array.isArray(raw) ? raw.map(itemOf).filter(Boolean) : [];
 }
+var FILTERS = ["needs", "agents", "ci", "updates", "other"];
 function counts(list) {
   let needYou = 0, unread = 0;
   for (const x of list) {
@@ -81,6 +82,9 @@ function notifyCommandName(name, args = {}) {
     case "notify.clear":
       if (typeof args?.id !== "string") throw new Error("notify.clear needs { id }");
       return `${name}.${b64urlEncode(args.id)}`;
+    case "notify.clearfilter":
+      if (!FILTERS.includes(args?.filter)) throw new Error(`notify.clearfilter needs { filter } of ${FILTERS.join(", ")}`);
+      return `${name}.${args.filter}`;
     default:
       throw new Error(`unknown notify command: ${name}`);
   }

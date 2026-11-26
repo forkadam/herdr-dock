@@ -31,6 +31,9 @@ function b64urlEncode(str) {
   return s;
 }
 
+// src/shared/notify.js
+var FILTERS = ["needs", "agents", "ci", "updates", "other"];
+
 // src/shared/notifycmd.js
 var isObj = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 function notifyCommandName(name, args = {}) {
@@ -45,6 +48,9 @@ function notifyCommandName(name, args = {}) {
     case "notify.clear":
       if (typeof args?.id !== "string") throw new Error("notify.clear needs { id }");
       return `${name}.${b64urlEncode(args.id)}`;
+    case "notify.clearfilter":
+      if (!FILTERS.includes(args?.filter)) throw new Error(`notify.clearfilter needs { filter } of ${FILTERS.join(", ")}`);
+      return `${name}.${args.filter}`;
     default:
       throw new Error(`unknown notify command: ${name}`);
   }

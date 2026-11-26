@@ -58,6 +58,19 @@ function itemOf(x) {
 function historyOf(raw) {
   return Array.isArray(raw) ? raw.map(itemOf).filter(Boolean) : [];
 }
+var FILTERS = ["needs", "agents", "ci", "updates", "other"];
+function notifyType(x) {
+  const name = typeof x?.action?.name === "string" ? x.action.name : "";
+  if (name === "agent.focus" || name.startsWith("dock-core.browser.show")) return "agents";
+  if (name.startsWith("dock-core.git.show")) return "ci";
+  if (name === "mod.open" && x.action.args?.name === "dock-config") return "updates";
+  return "other";
+}
+function matchesFilter(x, filter) {
+  if (!filter) return true;
+  if (filter === "needs") return Boolean(x?.needs) && !x.resolved;
+  return notifyType(x) === filter;
+}
 
 // src/shared/notifycmd.js
 var isObj2 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
@@ -73,6 +86,9 @@ function notifyCommandName(name, args = {}) {
     case "notify.clear":
       if (typeof args?.id !== "string") throw new Error("notify.clear needs { id }");
       return `${name}.${b64urlEncode(args.id)}`;
+    case "notify.clearfilter":
+      if (!FILTERS.includes(args?.filter)) throw new Error(`notify.clearfilter needs { filter } of ${FILTERS.join(", ")}`);
+      return `${name}.${args.filter}`;
     default:
       throw new Error(`unknown notify command: ${name}`);
   }
@@ -118,16 +134,35 @@ function notificationRows(list, now) {
     needs: x.needs != null,
     resolved: x.needs != null && x.resolved === true,
     read: x.read === true,
-    hasAction: typeof x.action?.name === "string"
+    hasAction: typeof x.action?.name === "string",
+    type: notifyType(x),
+    needsNow: matchesFilter(x, "needs")
   }));
+}
+function filterRows(rows, filter) {
+  if (!filter) return rows;
+  return rows.filter((r) => filter === "needs" ? r.needsNow : r.type === filter);
+}
+function filterCounts(rows) {
+  const out = { all: rows.length };
+  for (const f of FILTERS) out[f] = filterRows(rows, f).length;
+  return out;
 }
 
 // src/mods/dock-notifications/main.js
 var ID = "dock-notifications";
 var DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
+var FILTER_LABEL = { needs: "Needs you", agents: "Agents", ci: "CI", updates: "Updates", other: "Other" };
+var FILTER_STORE = "filter";
 var Notifications = class extends View {
   init(_props, cx) {
     this.readSent = null;
+    try {
+      const saved = localStorage.getItem(FILTER_STORE);
+      this.filter = FILTERS.includes(saved) ? saved : null;
+    } catch {
+      this.filter = null;
+    }
     cx.timer.every(3e4, (cx2) => cx2.notify());
   }
   // Open as a dialog, or the right panel's shown tab.
@@ -153,11 +188,30 @@ var Notifications = class extends View {
     const id = props()?.overlay;
     if (id) closeOverlay(id);
   }
-  header(t, empty, overlay) {
-    return h_flex().flex_none().px(16).pt(overlay ? 14 : 12).pb(8).gap(6).items_center().child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().text_color(t.foreground).child("Notifications")).child(div().id("nt-clearall").flex_none().px(6).h(20).rounded(5).flex().items_center().text_size(11.5).tooltip(empty ? "Nothing to clear" : "Remove every notification").when(!empty, (el) => el.text_color(t.accent).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+  // Picks a filter (null: all); the same chip again clears it. Remembered on this PC.
+  pick(filter, cx) {
+    this.filter = filter && filter !== this.filter ? filter : null;
+    try {
+      if (this.filter) localStorage.setItem(FILTER_STORE, this.filter);
+      else localStorage.removeItem(FILTER_STORE);
+    } catch {
+    }
+    cx.notify();
+  }
+  // All, then one chip per filter that has items; the active one is filled.
+  chips(t, counts, active) {
+    const chip = (id, label, on, filter) => div().id(`nt-filter-${id}`).flex_none().px(8).h(22).rounded(11).flex().items_center().text_size(11.5).cursor_pointer().when(on, (el) => el.bg(t.accent).text_color(t.background ?? t.chrome)).when(!on, (el) => el.border(1).border_color(t.border).text_color(t.foreground).hover((s) => s.bg(t.hover))).on_click((_e, cx) => {
       cx.stop_propagation();
-      notifyCommand("notify.clearall");
-    })).when(empty, (el) => el.text_color(t.dim).opacity(0.45)).child("Clear all")).when(overlay, (el) => el.child(div().id("nt-close").flex_none().size(22).rounded(5).flex().items_center().justify_center().text_size(15).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click(() => this.close()).child("\xD7")));
+      this.pick(filter, cx);
+    }).child(label);
+    return h_flex().flex_none().flex_wrap().px(16).pb(8).gap(6).child(chip("all", `All ${counts.all}`, !active, null)).children(FILTERS.filter((f) => counts[f] > 0).map((f) => chip(f, `${FILTER_LABEL[f]} ${counts[f]}`, active === f, f)));
+  }
+  header(t, empty, overlay, filter) {
+    return h_flex().flex_none().px(16).pt(overlay ? 14 : 12).pb(8).gap(6).items_center().child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().text_color(t.foreground).child("Notifications")).child(div().id("nt-clearall").flex_none().px(6).h(20).rounded(5).flex().items_center().text_size(11.5).tooltip(empty ? "Nothing to clear" : filter ? `Remove the ${FILTER_LABEL[filter]} notifications shown` : "Remove every notification").when(!empty, (el) => el.text_color(t.accent).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => {
+      cx.stop_propagation();
+      if (filter) notifyCommand("notify.clearfilter", { filter });
+      else notifyCommand("notify.clearall");
+    })).when(empty, (el) => el.text_color(t.dim).opacity(0.45)).child(filter ? "Clear shown" : "Clear all")).when(overlay, (el) => el.child(div().id("nt-close").flex_none().size(22).rounded(5).flex().items_center().justify_center().text_size(15).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click(() => this.close()).child("\xD7")));
   }
   row(t, r, action) {
     const red = t.ansi1 ?? "#e5484d";
@@ -177,9 +231,12 @@ var Notifications = class extends View {
     const history = historyOf(shared(HISTORY_KEY));
     this.markRead(history);
     const actions = new Map(history.map((x) => [x.id, x.action]));
-    const rows = notificationRows(history, Date.now());
+    const all = notificationRows(history, Date.now());
+    const counts = filterCounts(all);
+    const filter = this.filter && counts[this.filter] > 0 ? this.filter : null;
+    const rows = filterRows(all, filter);
     const body = rows.length ? rows.map((r) => this.row(t, r, r.hasAction ? actions.get(r.id) : null)) : [div().px(16).py(6).text_size(12).text_color(t.dim).child("No notifications")];
-    return v_flex().id(ID).size_full().min_h(0).bg(overlay ? t.popover ?? t.chrome : t.chrome).text_size(13).text_color(t.foreground).child(this.header(t, rows.length === 0, overlay)).child(v_flex().id("nt-body").flex_1().min_h(0).pb(12).gap(2).overflow_y_scrollbar().children(body));
+    return v_flex().id(ID).size_full().min_h(0).bg(overlay ? t.popover ?? t.chrome : t.chrome).text_size(13).text_color(t.foreground).child(this.header(t, rows.length === 0, overlay, filter)).when(all.length > 0, (el) => el.child(this.chips(t, counts, filter))).child(v_flex().id("nt-body").flex_1().min_h(0).pb(12).gap(2).overflow_y_scrollbar().children(body));
   }
 };
 export {

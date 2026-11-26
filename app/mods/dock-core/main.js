@@ -2375,6 +2375,20 @@ function addItem(list, n, now, id) {
 }
 var clearItem = (list, id) => list.filter((x) => x.id !== id);
 var clearAll = () => [];
+var FILTERS = ["needs", "agents", "ci", "updates", "other"];
+function notifyType(x) {
+  const name = typeof x?.action?.name === "string" ? x.action.name : "";
+  if (name === "agent.focus" || name.startsWith("dock-core.browser.show")) return "agents";
+  if (name.startsWith("dock-core.git.show")) return "ci";
+  if (name === "mod.open" && x.action.args?.name === "dock-config") return "updates";
+  return "other";
+}
+function matchesFilter(x, filter) {
+  if (!filter) return true;
+  if (filter === "needs") return Boolean(x?.needs) && !x.resolved;
+  return notifyType(x) === filter;
+}
+var clearMatching = (list, filter) => filter ? list.filter((x) => !matchesFilter(x, filter)) : clearAll();
 var markAllRead = (list) => list.map((x) => x.read ? x : { ...x, read: true });
 function isFixed(needs, agents2, gitState) {
   if (needs.kind === "agent") {
@@ -2408,6 +2422,8 @@ function parseNotifyCommand(c) {
   if (typeof c !== "string" || !c.startsWith("notify.")) return null;
   const rest = c.slice(7);
   if (rest === "clearall" || rest === "read" || rest === "show") return { cmd: rest };
+  const f = /^clearfilter\.([a-z]+)$/.exec(rest);
+  if (f) return FILTERS.includes(f[1]) ? { cmd: "clearfilter", filter: f[1] } : null;
   const m = /^(add|clear)\.([A-Za-z0-9_-]+)$/.exec(rest);
   if (!m) return null;
   const text = b64urlDecode(m[2]);
@@ -2429,6 +2445,8 @@ function applyNotifyCommand(list, cmd, now, newId) {
       return clearItem(list, cmd.id);
     case "clearall":
       return clearAll();
+    case "clearfilter":
+      return clearMatching(list, cmd.filter);
     case "read":
       return markAllRead(list);
     default:

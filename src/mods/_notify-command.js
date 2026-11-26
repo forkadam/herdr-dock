@@ -3,6 +3,7 @@
 //   notifyCommand("notify.add", { n })     record a toast: n is its props { title, body, level, icon, action }
 //   notifyCommand("notify.clear", { id })  remove one item
 //   notifyCommand("notify.clearall")       remove every item
+//   notifyCommand("notify.clearfilter", { filter })  remove the items a panel filter shows (shared/notify.js FILTERS)
 //   notifyCommand("notify.read")           mark every item read
 //   notifyCommand("notify.show")           mark every item read and reveal dock-notifications
 // Herdr drops run()'s args for mod commands, so notifyCommandName puts them in the command name.

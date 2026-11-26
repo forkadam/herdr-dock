@@ -151,3 +151,41 @@ test("clearItem / clearAll / markAllRead", () => {
   assert.deepEqual(markAllRead(l).map((x) => x.read), [true, true]);
   assert.equal(l[0].read, false);
 });
+
+// --- filters ---------------------------------------------------------------------------------------------------
+import { FILTERS, notifyType, matchesFilter, clearMatching } from "../src/shared/notify.js";
+
+const it = (o) => ({ id: "x", at: 0, title: "T", body: null, level: "info", icon: null, action: null, read: false,
+  needs: null, resolved: false, ...o });
+const agentToast = it({ id: "a", title: "claude needs you", level: "error", action: { name: "agent.focus", args: { terminal: "t1" } },
+  needs: { kind: "agent", terminal: "t1" } });
+const browserToast = it({ id: "b", title: "The agent needs you", level: "warning", action: { name: "dock-core.browser.show.dDE" } });
+const ciAlert = it({ id: "c", level: "error", action: { name: `dock-core.${gitCommandName("git.show", { worktree: "|d:/w" })}` },
+  needs: { kind: "pipeline", worktree: "|d:/w" }, resolved: true });
+const update = it({ id: "u", title: "herdr-dock update available", action: { name: "mod.open", args: { name: "dock-config" } } });
+const other = it({ id: "o", title: "Couldn't delete worktree x", level: "error" });
+
+test("FILTERS: needs, agents, ci, updates, other", () => {
+  assert.deepEqual(FILTERS, ["needs", "agents", "ci", "updates", "other"]);
+});
+
+test("notifyType: agent and browser toasts are agents, pipeline alerts ci, dock-config opens updates, the rest other", () => {
+  assert.deepEqual([agentToast, browserToast, ciAlert, update, other].map(notifyType), ["agents", "agents", "ci", "updates", "other"]);
+  assert.equal(notifyType(it({ action: { name: "mod.open", args: { name: "dock-jira" } } })), "other");
+});
+
+test("matchesFilter: needs = waiting on you and not resolved; a type filter = that type; null = everything", () => {
+  assert.equal(matchesFilter(agentToast, "needs"), true);
+  assert.equal(matchesFilter(ciAlert, "needs"), false, "resolved");
+  assert.equal(matchesFilter(update, "needs"), false);
+  assert.equal(matchesFilter(ciAlert, "ci"), true);
+  assert.equal(matchesFilter(ciAlert, "agents"), false);
+  assert.equal(matchesFilter(other, null), true);
+});
+
+test("clearMatching: removes only the filter's items; null clears all", () => {
+  const list = [agentToast, browserToast, ciAlert, update, other];
+  assert.deepEqual(clearMatching(list, "agents").map((x) => x.id), ["c", "u", "o"]);
+  assert.deepEqual(clearMatching(list, "needs").map((x) => x.id), ["b", "c", "u", "o"]);
+  assert.deepEqual(clearMatching(list, null), []);
+});
