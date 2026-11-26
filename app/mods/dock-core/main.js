@@ -1295,6 +1295,7 @@ function createCollector(io) {
     ci.busy = true;
     const full = watched(wt.id);
     ci.full = full;
+    let at = now;
     try {
       const login = await client.resolve(origin.host);
       Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
@@ -1305,6 +1306,7 @@ function createCollector(io) {
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
       const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (got.limited) {
+        at = -Infinity;
         return;
       }
       if (!got.ok) {
@@ -1321,7 +1323,7 @@ function createCollector(io) {
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? void 0;
     } finally {
-      Object.assign(ci, { at: now, busy: false });
+      Object.assign(ci, { at, busy: false });
       publish(io.now());
     }
   }

@@ -224,6 +224,7 @@ export function createCollector(io) {
     // Recorded as attempted: a failing poll must not be repeated every tick just because it never succeeded.
     const full = watched(wt.id);
     ci.full = full;
+    let at = now;
     try {
       const login = await client.resolve(origin.host);
       Object.assign(ci, { host: origin.host, path: origin.path, provider: login.provider });
@@ -235,7 +236,9 @@ export function createCollector(io) {
       const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
       if (got.limited) {
         // The host is paused at its API limit: the poll was discarded whole, so the last good pipeline stays as it
-        // was (no "unknown", no alert). Only `at` moves; ciDue skips the host until the pause ends.
+        // was (no "unknown", no alert). `at` resets so the poll is due the moment the pause ends, not after this
+        // worktree's own cadence; client.blocked() keeps ciDue false meanwhile.
+        at = -Infinity;
         return;
       }
       if (!got.ok) {
@@ -256,7 +259,7 @@ export function createCollector(io) {
       if (cur) maybeAlert(wt, repo, cur, head);
       ci.prev = cur ?? undefined;
     } finally {
-      Object.assign(ci, { at: now, busy: false });
+      Object.assign(ci, { at, busy: false });
       publish(io.now()); // from current membership and records, never a captured view
     }
   }

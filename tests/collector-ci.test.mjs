@@ -2393,3 +2393,80 @@ test("detail.budget carries provider, remaining, limit and limitedUntil; null wh
   await c.select(WT);
   assert.deepEqual(detailOf(io).budget, { provider: "gitlab", remaining: 1234, limit: 2000, limitedUntil: null });
 });
+
+test("limit: a passed pipeline (5 min cadence) polls again right after the pause ends", async () => {
+  let answer = () => hres(200, [pipeline({ status: "success" })], GL_HDR(1500, 1795707975));
+  const { io } = ciIo({ routes: { [PIPES]: () => answer(), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
+  await c.tick();
+  assert.equal(n(), 1);
+  io.t = T0 + 301000;
+  const reset = (io.t + 60000) / 1000;
+  answer = () => hres(403, { message: "API rate limit exceeded" }, { "ratelimit-remaining": "0", "ratelimit-limit": "2000", "ratelimit-reset": String(reset) });
+  await c.tick();
+  assert.equal(n(), 2);
+  answer = () => hres(200, [pipeline({ status: "success" })], GL_HDR(2000, reset + 3600));
+  io.t += 30000; await c.tick();
+  assert.equal(n(), 2, "paused: no fetch");
+  io.t += 29000; await c.tick();
+  assert.equal(n(), 2, "still paused one second before the reset");
+  io.t += 2000; await c.tick(); // just after the reset, far before the 5 min cadence
+  assert.equal(n(), 3, "polls as soon as the pause ends");
+});
+
+test("limit: a limited first poll leaves no pipeline, no error and no alert, and publishes limitedUntil", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: () => hres(429, {}, { "retry-after": "90", "ratelimit-remaining": "0", "ratelimit-limit": "2000" }) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  const d = detailOf(io);
+  assert.equal(d.pipeline, null);
+  assert.equal(d.error, null);
+  assert.equal(d.budget.limitedUntil, T0 + 90000);
+  assert.equal(wtOf(c).pipeline ?? null, null);
+  assert.equal(io.notes.length, 0);
+});
+
+test("budget low applies to every worktree on the host: the watched one polls at 30 s, the other stays at 30 s", async () => {
+  const PIPES_B = `${GL}/pipelines?ref=b&per_page=1&order_by=id&sort=desc`;
+  const low = GL_HDR(100, 1795707975);
+  const { io } = ciIo({ routes: {
+    [PIPES]: () => hres(200, [pipeline({ status: "running" })], low),
+    [PIPES_B]: () => hres(200, [pipeline({ id: 5, ref: "b", status: "running" })], low),
+    [GL_JOBS]: res(200, []), [`${GL}/pipelines/5/jobs?per_page=100`]: res(200, []),
+  } });
+  const exec = io.exec;
+  io.exec = async (cmd, args, opts) => {
+    const k = args.join(" ");
+    if (cmd === "git" && k === "-C D:/work/api worktree list --porcelain") {
+      return ok(`worktree D:/work/api
+HEAD ${"c".repeat(40)}
+branch refs/heads/main
+
+worktree D:/work/api-b
+HEAD ${"d".repeat(40)}
+branch refs/heads/b
+`);
+    }
+    if (cmd === "git" && k === "--no-optional-locks -C D:/work/api-b status --porcelain=v2 --branch") return status("b", { oid: "d".repeat(40) });
+    return exec(cmd, args, opts);
+  };
+  const c = createCollector(io);
+  const nA = () => io.fetches.filter((f) => f.url === PIPES).length;
+  const nB = () => io.fetches.filter((f) => f.url === PIPES_B).length;
+  await c.select(WT);
+  const at = async (dt) => { io.t = T0 + dt; io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
+  await at(0);
+  assert.ok(nA() >= 1 && nB() >= 1, "both worktrees polled");
+  const [a0, b0] = [nA(), nB()];
+  await at(10000);
+  assert.equal(nA(), a0, "watched, low budget: not after 10 s");
+  assert.equal(nB(), b0);
+  await at(29000);
+  assert.equal(nA(), a0);
+  assert.equal(nB(), b0);
+  await at(30000);
+  assert.equal(nA(), a0 + 1);
+  assert.equal(nB(), b0 + 1);
+});
