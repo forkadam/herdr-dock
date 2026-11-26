@@ -481,8 +481,15 @@ var NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login
 var MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 var ETAGS = 300;
 var CLI_PAUSE = 6e4;
+var JOBS_CACHE = 100;
+var FINISHED = /* @__PURE__ */ new Set(["passed", "failed", "canceled", "skipped"]);
 var Timeout = class extends Error {
 };
+function finishedStamp(provider, b) {
+  if (!b?.updated_at || b.status === "canceling" || !FINISHED.has(normalizeStatus(provider, b))) return null;
+  return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
+}
+var bridgesSettled = (bridges) => bridges.every((b) => !b.downstream_pipeline || FINISHED.has(normalizeStatus("gitlab", b.downstream_pipeline)));
 function loginHint(provider, host) {
   if (provider === "github") return host === "github.com" ? "gh auth login" : `gh auth login --hostname ${host}`;
   return `glab auth login --hostname ${host}`;
@@ -497,6 +504,17 @@ function createCiClient(io, log) {
   const http = limiter(HTTP_LIMIT);
   const hosts = /* @__PURE__ */ new Map();
   const etags = lru(ETAGS);
+  const jobsCache = lru(JOBS_CACHE);
+  const remember = (key, stamp, lists) => {
+    const prev = jobsCache.get(key);
+    const entry = prev?.stamp === stamp ? prev : { stamp };
+    for (const [k, v] of Object.entries(lists)) if (v) entry[k] = v;
+    jobsCache.set(key, entry);
+  };
+  const cachedFor = (key, stamp) => {
+    const e = stamp ? jobsCache.get(key) : void 0;
+    return e?.stamp === stamp ? e : {};
+  };
   const deadlines = /* @__PURE__ */ new Set();
   const secrets = /* @__PURE__ */ new Set();
   const redact = (s) => {
@@ -772,28 +790,45 @@ ${r.stdout ?? ""}`)) {
       return viaCli(host, h, method, path, wantJson, opts);
     }
   }
-  async function branchOrCommit(host, path, branchPath, commitPath, rows, ofHead) {
+  function pollOf(host) {
+    let hit = null;
+    return {
+      req: async (method, path, opts) => {
+        const r = await request(host, method, path, opts);
+        if (r.limited && (!hit || r.limitedUntil > hit.limitedUntil)) hit = r;
+        return r;
+      },
+      get limited() {
+        return hit && { ...hit };
+      }
+    };
+  }
+  const budgetLow = (host) => {
+    const h = hosts.get(host);
+    return Boolean(h && !h.cli && isLow(h.budget));
+  };
+  async function branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
-      request(host, "GET", branchPath),
-      request(host, "GET", commitPath, { noBackoff: true })
+      req("GET", branchPath),
+      req("GET", commitPath, { noBackoff: true })
     ]);
     const found = c.ok ? rows(c.data) : null;
     if (!found) {
-      failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      if (!c.limited) failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
       return b;
     }
     succeeded(`commit|${host}|${path}`);
     const mine = found.filter(ofHead);
     return mine.length ? { ...c, rows: mine } : b;
   }
-  async function runsOf(host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
-    const r = !branch ? await request(host, "GET", commitPath) : !sha ? await request(host, "GET", branchPath) : await branchOrCommit(host, path, branchPath, commitPath, rows, ofHead);
+  async function runsOf(req, host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
+    const r = !branch ? await req("GET", commitPath) : !sha ? await req("GET", branchPath) : await branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead);
     if (!r.ok) return r;
     const list = r.rows ?? rows(r.data);
     return list ? { ok: true, data: list } : { ok: false, error: "bad response", hostFailure: false };
   }
   function listOf(r, what, once) {
-    if (!r) return null;
+    if (!r || r.limited) return null;
     if (r.ok && Array.isArray(r.data)) {
       if (once) succeeded(once);
       return [...r.data].sort((a, b) => a.id - b.id);
@@ -804,10 +839,12 @@ ${r.stdout ?? ""}`)) {
     return null;
   }
   async function gitlabLatest(host, path, head, { full = false } = {}) {
+    const poll = pollOf(host);
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
     const r = await runsOf(
+      poll.req,
       host,
       path,
       head,
@@ -816,6 +853,7 @@ ${r.stdout ?? ""}`)) {
       (d) => Array.isArray(d) ? d : null,
       (p) => p.sha === head.sha
     );
+    if (poll.limited) return poll.limited;
     if (!r.ok) return r;
     const kept = [];
     const refs = /* @__PURE__ */ new Set();
@@ -827,21 +865,27 @@ ${r.stdout ?? ""}`)) {
     const entries = await Promise.all(kept.map(async (p) => {
       const at = `projects/${enc}/pipelines/${encodeURIComponent(p.id)}`;
       const wantJobs = full || ["failed", "running"].includes(normalizeStatus("gitlab", p));
+      const key = `gl|${host}|${path}|${p.id}`;
+      const stamp = finishedStamp("gitlab", p);
+      const cached = cachedFor(key, stamp);
+      const list = (have, url) => have ? { ok: true, data: have } : poll.req("GET", url);
       const [j, b] = await Promise.all([
-        wantJobs ? request(host, "GET", `${at}/jobs?per_page=100`) : null,
-        full ? request(host, "GET", `${at}/bridges?per_page=100`) : null
+        wantJobs ? list(cached.jobs, `${at}/jobs?per_page=100`) : null,
+        full ? list(cached.bridges, `${at}/bridges?per_page=100`) : null
       ]);
-      return {
-        pipeline: p,
-        jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`)
-      };
+      const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
+      const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
+      if (stamp && (jobs || bridges)) remember(key, stamp, { jobs, bridges: bridges && bridgesSettled(bridges) ? bridges : null });
+      return { pipeline: p, jobs, bridges };
     }));
+    if (poll.limited) return poll.limited;
     const pipeline = gitlabCommitPipeline(entries);
-    if (full && pipeline) await logLines(host, path, pipeline);
+    if (full && pipeline) await logLines(host, path, pipeline, poll.req);
+    if (poll.limited) return poll.limited;
     return { ok: true, pipeline };
   }
-  async function logLines(host, path, pipeline) {
+  async function logLines(host, path, pipeline, req) {
+    if (budgetLow(host)) return;
     const key = `${host}|${path}`;
     const prev = lastLog.get(key) ?? /* @__PURE__ */ new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
@@ -852,16 +896,16 @@ ${r.stdout ?? ""}`)) {
     const newest = [...runningJobs].sort((a, b) => started(b) - started(a)).slice(0, LOG_JOBS);
     await Promise.all(newest.map(async (j) => {
       const e = kept.get(j.id);
-      if (!e.busy) await fetchLogLine(host, path, j.id, e);
+      if (!e.busy) await fetchLogLine(req, host, path, j.id, e);
       j.logLine = e.line;
     }));
   }
-  async function fetchLogLine(host, path, jobId, e) {
+  async function fetchLogLine(req, host, path, jobId, e) {
     const trace = `projects/${encodeURIComponent(path)}/jobs/${encodeURIComponent(jobId)}/trace`;
     const opts = { text: true, noBackoff: true, timeout: TRACE_TIMEOUT };
     e.busy = true;
     try {
-      let r = await request(host, "GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
+      let r = await req("GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
       if (r.ok && !rangeLogged.has(host)) {
         const byStatus = r.status === 206 || r.status === 200;
         if (byStatus || r.status == null) {
@@ -870,11 +914,11 @@ ${r.stdout ?? ""}`)) {
           log(`CI: ${host} trace Range ${honoured ? "honoured" : "ignored"}${byStatus ? "" : " (by size)"}`);
         }
       }
-      if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
+      if (!r.ok && r.status === 416) r = await req("GET", trace, opts);
       if (r.ok) {
         e.line = lastLogLine(r.data, redact);
         e.failLogged = false;
-      } else if (!e.failLogged) {
+      } else if (!r.limited && !e.failLogged) {
         e.failLogged = true;
         log(`CI: trace of ${host}/${path} job ${jobId}: ${r.error}`);
       }
@@ -883,9 +927,11 @@ ${r.stdout ?? ""}`)) {
     }
   }
   async function githubLatestOf(host, path, head, { full = false } = {}) {
+    const poll = pollOf(host);
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
     const r = await runsOf(
+      poll.req,
       host,
       path,
       head,
@@ -894,6 +940,7 @@ ${r.stdout ?? ""}`)) {
       (d) => Array.isArray(d?.workflow_runs) ? d.workflow_runs : null,
       (x) => x.head_sha === head.sha
     );
+    if (poll.limited) return poll.limited;
     if (!r.ok) return r;
     const answer2 = { workflow_runs: r.data };
     const first = githubLatest(answer2, {});
@@ -902,10 +949,20 @@ ${r.stdout ?? ""}`)) {
     const failed = ofHead.filter((x) => normalizeStatus("github", x) === "failed");
     const jobsByRunId = {};
     await Promise.all((full ? ofHead : failed).map(async (run2) => {
-      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`);
-      if (j.ok) jobsByRunId[run2.id] = j.data;
-      else log(`CI: jobs of ${host}/${path} run ${run2.id}: ${j.error}`);
+      const key = `gh|${host}|${path}|${run2.id}`;
+      const stamp = finishedStamp("github", run2);
+      const cached = cachedFor(key, stamp);
+      if (cached.jobs) {
+        jobsByRunId[run2.id] = cached.jobs;
+        return;
+      }
+      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`);
+      if (j.ok) {
+        jobsByRunId[run2.id] = j.data;
+        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, { jobs: j.data });
+      } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run2.id}: ${j.error}`);
     }));
+    if (poll.limited) return poll.limited;
     const canceled = ofHead.filter((x) => normalizeStatus("github", x) === "canceled");
     return { ok: true, pipeline: githubLatest(answer2, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }

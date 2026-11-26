@@ -1949,3 +1949,184 @@ test("re-review 3: one pipeline's failing bridges call beside a working one logs
   for (let i = 0; i < 3; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
   assert.deepEqual(io.logs.filter((l) => l.includes("bridges of")), ["CI: bridges of gitlab.corp/grp/api pipeline 20: HTTP 404"]);
 });
+
+// --- finished-build job cache; no traces on a low budget ---------------------------------------------
+
+const U1 = "2026-11-22T10:06:00Z";
+const U2 = "2026-11-22T10:20:00Z";
+const calls = (io, url) => io.fetches.filter((f) => f.url === url).length;
+const LIMITED = (until) => ({ ok: false, error: "API limit reached", limited: true, limitedUntil: until, hostFailure: false });
+const GH_R = "https://api.github.com/repos/o/r/actions/runs";
+const ghFailed = { origin: "https://github.com/o/r.git", st: status("main", { oid: "f".repeat(40) }) };
+const F_HEAD = { branch: "main", sha: "f".repeat(40) };
+
+test("GitLab: a finished pipeline's jobs and bridges are fetched once while its updated_at and status stay", async () => {
+  const done = pipeline({ status: "success", updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, [BRIDGE]) },
+  });
+  const first = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  const second = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 1);
+  assert.equal(calls(io, glBridges(48213)), 1);
+  assert.equal(second.ok, true);
+  assert.deepEqual(second.pipeline.jobs, first.pipeline.jobs);
+  assert.deepEqual(second.pipeline.jobs.map((j) => [j.id, j.bridge]), [[901, false], [902, false], [903, false], [904, true]]);
+  // The lists are still asked every poll: only the finished build's jobs come from the cache.
+  assert.equal(calls(io, PIPES), 2);
+  assert.equal(calls(io, SHAQ), 2);
+});
+
+test("GitLab: a changed updated_at refetches", async () => {
+  let updated = U1;
+  const rows = () => res(200, [pipeline({ updated_at: updated })]);
+  const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: rows, [SHAQ]: rows, [glJobs(48213)]: res(200, JOBS) } });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(calls(io, glJobs(48213)), 1);
+  updated = U2; // a Retry (or any change) moves updated_at
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(calls(io, glJobs(48213)), 2);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(calls(io, glJobs(48213)), 2, "the new stamp is cached in turn");
+});
+
+test("GitLab: a running pipeline's jobs are fetched every poll, even with the same updated_at", async () => {
+  const run = running({ updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [run]), [SHAQ]: res(200, [run]), [glJobs(48213)]: res(200, RUNNING_JOBS) } });
+  for (let i = 0; i < 3; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(calls(io, glJobs(48213)), 3);
+});
+
+test("GitLab: a canceling pipeline (shown as canceled, its jobs still stopping) is fetched every poll", async () => {
+  const stopping = pipeline({ status: "canceling", updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [stopping]), [SHAQ]: res(200, [stopping]), [glJobs(48213)]: res(200, RUNNING_JOBS), [glBridges(48213)]: res(200, []) },
+  });
+  for (let i = 0; i < 2; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 2);
+});
+
+test("GitLab: a finished pipeline whose bridge's downstream pipeline still runs refetches its bridges", async () => {
+  const done = pipeline({ status: "success", updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, [RUNNING_BRIDGE]) },
+  });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 1);
+  assert.equal(calls(io, glBridges(48213)), 2);
+});
+
+test("GitLab: jobs cached by a plain poll are reused by a full one, which fetches only the bridges", async () => {
+  const failed = pipeline({ updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [failed]), [SHAQ]: res(200, [failed]), [glJobs(48213)]: res(200, JOBS), [glBridges(48213)]: res(200, [BRIDGE]) },
+  });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 1);
+  assert.equal(calls(io, glBridges(48213)), 1);
+  assert.deepEqual(r.pipeline.jobs.map((j) => j.id), [901, 902, 903, 904]);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glBridges(48213)), 1);
+});
+
+test("GitHub: a completed run's jobs are fetched once; a run still in_progress is fetched every poll", async () => {
+  const release = `${GH}/45823655383/jobs?per_page=100`; // in_progress
+  const ci = `${GH}/45822438336/jobs?per_page=100`; // completed / success
+  const { io, c } = await clientOf("github.com", {
+    ...ghTag,
+    routes: {
+      [GH_BRANCH]: res(200, ciOnly()), [GH_HEAD(TAG_SHA)]: res(200, fx("github-runs-tag.json")),
+      [release]: res(200, fx("github-jobs-45823655383.json")), [ci]: res(200, fx("github-jobs-45822438336.json")),
+    },
+  });
+  const head = { branch: "main", sha: TAG_SHA };
+  const first = await c.latest("github.com", "github", "acme/app", head, { full: true });
+  const second = await c.latest("github.com", "github", "acme/app", head, { full: true });
+  await c.latest("github.com", "github", "acme/app", head, { full: true });
+  assert.equal(calls(io, ci), 1);
+  // The running run's updated_at is the same on every poll (the fixture): it is still fetched each time.
+  assert.equal(calls(io, release), 3);
+  assert.deepEqual(second.pipeline.jobs, first.pipeline.jobs);
+});
+
+test("cached jobs still drive failedJobs and failedKeys", async () => {
+  const failed = pipeline({ updated_at: U1 });
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [failed]), [SHAQ]: res(200, [failed]), [glJobs(48213)]: res(200, jobsDone("2026-11-22T10:05:00Z")) },
+  });
+  const first = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  const second = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(calls(io, glJobs(48213)), 1);
+  assert.deepEqual(first.pipeline.failedKeys, ["48213|2026-11-22T10:05:00Z"]);
+  assert.deepEqual(second.pipeline.failedKeys, first.pipeline.failedKeys);
+  assert.deepEqual(second.pipeline.failedJobs.map((j) => j.name), ["unit"]);
+  assert.deepEqual(second.pipeline, first.pipeline);
+});
+
+test("cached jobs still drive failedJobs and failedKeys (GitHub, a failed run)", async () => {
+  // The fixture's runs have no updated_at (the stamp needs one): give them one.
+  const runs = fx("github-runs.json");
+  runs.workflow_runs = runs.workflow_runs.map((r) => ({ ...r, updated_at: U1 }));
+  const { io, c } = await clientOf("github.com", {
+    ...ghFailed,
+    routes: { [`${GH_R}?branch=main&per_page=20`]: res(200, runs), [`${GH_R}/301/jobs?per_page=100`]: res(200, fx("github-jobs-301.json")) },
+  });
+  const first = await c.latest("github.com", "github", "o/r", F_HEAD);
+  const second = await c.latest("github.com", "github", "o/r", F_HEAD);
+  assert.equal(calls(io, `${GH_R}/301/jobs?per_page=100`), 1);
+  assert.ok(first.pipeline.failedJobs.length > 0, "the fixture has a failed job");
+  assert.deepEqual(second.pipeline, first.pipeline);
+  assert.deepEqual(second.runIds, first.runIds);
+});
+
+test("low budget: no trace calls", async () => {
+  const low = { "ratelimit-remaining": "100", "ratelimit-limit": "5000" };
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({
+      [PIPES]: hres(200, [running()], low), [SHAQ]: hres(200, [running()], low),
+      [glJobs(48213)]: hres(200, RUNNING_JOBS, low), [glBridges(48213)]: hres(200, [], low),
+      [traceUrl(911)]: textRes(206, "at 911\n"), [traceUrl(912)]: textRes(206, "at 912\n"), [traceUrl(913)]: textRes(206, "at 913\n"),
+    }),
+  });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(r.ok, true);
+  assert.equal(c.budget("gitlab.corp").low, true);
+  assert.equal(io.fetches.filter((f) => f.url.endsWith("/trace")).length, 0);
+  assert.deepEqual(r.pipeline.jobs.map((j) => j.logLine), [null, null, null]);
+});
+
+test("a limit hit on the jobs call makes latest() return limited", async () => {
+  const gl = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: res(200, [pipeline()]), [glJobs(48213)]: hres(429, {}, { "retry-after": "30" }) },
+  });
+  assert.deepEqual(await gl.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN), LIMITED(T0 + 30000));
+  assert.equal(gl.io.logs.filter((l) => l.includes("jobs of")).length, 0, "the pause has its own log line");
+
+  const gh = await clientOf("github.com", {
+    ...ghFailed,
+    routes: { [`${GH_R}?branch=main&per_page=20`]: res(200, fx("github-runs.json")), [`${GH_R}/301/jobs?per_page=100`]: hres(429, {}) },
+  });
+  assert.deepEqual(await gh.c.latest("github.com", "github", "o/r", F_HEAD), LIMITED(T0 + 60000));
+  assert.equal(gh.io.logs.filter((l) => l.includes("jobs of")).length, 0);
+});
+
+test("a limit hit on the HEAD-commit query, the bridges or a trace also makes latest() return limited", async () => {
+  const commit = await clientOf("gitlab.corp", {
+    routes: { [PIPES]: res(200, [pipeline({ status: "success" })]), [SHAQ]: hres(429, {}, { "retry-after": "40" }) },
+  });
+  assert.deepEqual(await commit.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN), LIMITED(T0 + 40000));
+  assert.equal(commit.io.logs.filter((l) => l.includes("HEAD commit query")).length, 0);
+
+  const bridges = await clientOf("gitlab.corp", { routes: fullRoutes({ [glBridges(48213)]: hres(429, {}, { "retry-after": "50" }) }) });
+  assert.deepEqual(await bridges.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), LIMITED(T0 + 50000));
+  assert.equal(bridges.io.fetches.filter((f) => f.url.endsWith("/trace")).length, 0, "no traces once the poll hit the limit");
+
+  const trace = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]), [traceUrl(912)]: hres(429, {}, { "retry-after": "20" }) }),
+  });
+  assert.deepEqual(await trace.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), LIMITED(T0 + 20000));
+  assert.equal(trace.io.logs.filter((l) => l.includes("trace of")).length, 0);
+});

@@ -22,8 +22,23 @@ const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth log
 const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 const ETAGS = 300; // URLs whose last ETag and answer are kept
 const CLI_PAUSE = 60000; // the CLI route has no reset time: a limit message pauses the host this long
+const JOBS_CACHE = 100; // finished builds whose jobs (and GitLab bridges) are kept
+const FINISHED = new Set(["passed", "failed", "canceled", "skipped"]);
 
 class Timeout extends Error {}
+
+// The job-cache stamp of a finished build: anything that changes a build moves its updated_at (a Retry also changes
+// its status). Null for a build still running or pending, which is always fetched, and for one without updated_at,
+// whose change couldn't be seen. GitLab's "canceling" counts as canceled, but its jobs are still stopping.
+function finishedStamp(provider, b) {
+  if (!b?.updated_at || b.status === "canceling" || !FINISHED.has(normalizeStatus(provider, b))) return null;
+  return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
+}
+
+// A finished GitLab pipeline's bridges can still show a downstream pipeline that runs on (a trigger without
+// `strategy: depend` succeeds as soon as it starts one), so they are cached only once every downstream has ended.
+const bridgesSettled = (bridges) =>
+  bridges.every((b) => !b.downstream_pipeline || FINISHED.has(normalizeStatus("gitlab", b.downstream_pipeline)));
 
 export function loginHint(provider, host) {
   if (provider === "github") return host === "github.com" ? "gh auth login" : `gh auth login --hostname ${host}`;
@@ -48,6 +63,20 @@ export function createCiClient(io, log) {
   // Fetch route only: url -> { etag, data } of the last JSON answer that carried an ETag. A 304 to the next GET
   // reuses data (GitHub doesn't count a 304 against the limit).
   const etags = lru(ETAGS);
+  // Finished builds' lists, which can't change until the build does: "gl|<host>|<path>|<pipeline id>" or
+  // "gh|<host>|<path>|<run id>" -> { stamp, jobs?, bridges? } (each list kept once fetched). Reused while the build's
+  // stamp stays; a running build never reads it.
+  const jobsCache = lru(JOBS_CACHE);
+  const remember = (key, stamp, lists) => {
+    const prev = jobsCache.get(key);
+    const entry = prev?.stamp === stamp ? prev : { stamp };
+    for (const [k, v] of Object.entries(lists)) if (v) entry[k] = v;
+    jobsCache.set(key, entry);
+  };
+  const cachedFor = (key, stamp) => {
+    const e = stamp ? jobsCache.get(key) : undefined;
+    return e?.stamp === stamp ? e : {};
+  };
   const deadlines = new Set(); // in-flight requests: { deadline, reject, ctl }
   const secrets = new Set(); // every token seen, to scrub from any text that leaves this module
   const redact = (s) => {
@@ -353,19 +382,40 @@ export function createCiClient(io, log) {
     }
   }
 
+  // One poll's requests to a host: req(method, path, opts) is request() that also notes a limit answer. A limit hit
+  // on any of them discards the whole poll (`limited` is then the limit result latest() returns), so the collector
+  // keeps the previous pipeline rather than mix fresh lists with missing jobs.
+  function pollOf(host) {
+    let hit = null;
+    return {
+      req: async (method, path, opts) => {
+        const r = await request(host, method, path, opts);
+        if (r.limited && (!hit || r.limitedUntil > hit.limitedUntil)) hit = r;
+        return r;
+      },
+      get limited() { return hit && { ...hit }; },
+    };
+  }
+  // Under 10 % of the host's budget left: log tails are skipped. Never on the CLI route (no headers there).
+  const budgetLow = (host) => {
+    const h = hosts.get(host);
+    return Boolean(h && !h.cli && isLow(h.budget));
+  };
+
   // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has builds of
   // that commit (a tag build of HEAD is filed under the tag, not the branch), and only those are kept: a server
   // that ignores the filter must not show another branch's builds. Else the branch's newest, as before. Only the
   // branch query speaks for the host's health: the commit query failing never backs the host off, so it can't
-  // block this poll's jobs call or the next polls. Its failure is logged once until it answers again.
-  async function branchOrCommit(host, path, branchPath, commitPath, rows, ofHead) {
+  // block this poll's jobs call or the next polls. Its failure is logged once until it answers again (a limit
+  // answer has its own line, and discards the poll).
+  async function branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
-      request(host, "GET", branchPath),
-      request(host, "GET", commitPath, { noBackoff: true }),
+      req("GET", branchPath),
+      req("GET", commitPath, { noBackoff: true }),
     ]);
     const found = c.ok ? rows(c.data) : null;
     if (!found) {
-      failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      if (!c.limited) failedOnce(`commit|${host}|${path}`, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
       return b;
     }
     succeeded(`commit|${host}|${path}`);
@@ -376,10 +426,10 @@ export function createCiClient(io, log) {
   // A worktree's runs as { ok, data: [row] } or an error: by branch and HEAD commit; by sha alone when detached; by
   // branch alone before a first commit. rows(data) is the list in an answer (null if malformed); ofHead(row)
   // whether a row is a build of the HEAD commit.
-  async function runsOf(host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
-    const r = !branch ? await request(host, "GET", commitPath)
-      : !sha ? await request(host, "GET", branchPath)
-        : await branchOrCommit(host, path, branchPath, commitPath, rows, ofHead);
+  async function runsOf(req, host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
+    const r = !branch ? await req("GET", commitPath)
+      : !sha ? await req("GET", branchPath)
+        : await branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead);
     if (!r.ok) return r;
     const list = r.rows ?? rows(r.data);
     return list ? { ok: true, data: list } : { ok: false, error: "bad response", hostFailure: false };
@@ -387,9 +437,10 @@ export function createCiClient(io, log) {
 
   // A job (or bridge) list sorted by id, or null with a log line. Jobs may come newest first: stage order and the
   // first failed job need id order. Without jobs the status (and an alert) still stand. `once` (a failing key)
-  // marks a call that may fail on every poll (bridges on an older GitLab): logged once until it succeeds.
+  // marks a call that may fail on every poll (bridges on an older GitLab): logged once until it succeeds. A limit
+  // answer isn't logged here: the pause has its own line, and the poll is discarded.
   function listOf(r, what, once) {
-    if (!r) return null;
+    if (!r || r.limited) return null;
     if (r.ok && Array.isArray(r.data)) {
       if (once) succeeded(once);
       return [...r.data].sort((a, b) => a.id - b.id);
@@ -401,15 +452,18 @@ export function createCiClient(io, log) {
   }
 
   // GitLab: the HEAD commit's pipelines (the newest per ref, at most 3), else the branch's newest. Jobs of a failed
-  // or running pipeline; full: every pipeline's jobs and bridges, and the running jobs' last log lines.
+  // or running pipeline; full: every pipeline's jobs and bridges, and the running jobs' last log lines. A finished
+  // pipeline's lists come from the job cache while its stamp stays.
   async function gitlabLatest(host, path, head, { full = false } = {}) {
+    const poll = pollOf(host);
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
-    const r = await runsOf(host, path, head,
+    const r = await runsOf(poll.req, host, path, head,
       `${pipes}ref=${encodeURIComponent(head.branch)}&per_page=1&order_by=id&sort=desc`,
       head.branch ? `${pipes}sha=${sha}&order_by=id&sort=desc&per_page=5` : `${pipes}sha=${sha}&per_page=1&order_by=id&sort=desc`,
       (d) => (Array.isArray(d) ? d : null), (p) => p.sha === head.sha);
+    if (poll.limited) return poll.limited;
     if (!r.ok) return r;
     const kept = [];
     const refs = new Set();
@@ -421,26 +475,33 @@ export function createCiClient(io, log) {
     const entries = await Promise.all(kept.map(async (p) => {
       const at = `projects/${enc}/pipelines/${encodeURIComponent(p.id)}`;
       const wantJobs = full || ["failed", "running"].includes(normalizeStatus("gitlab", p));
+      const key = `gl|${host}|${path}|${p.id}`;
+      const stamp = finishedStamp("gitlab", p);
+      const cached = cachedFor(key, stamp);
+      const list = (have, url) => (have ? { ok: true, data: have } : poll.req("GET", url));
       const [j, b] = await Promise.all([
-        wantJobs ? request(host, "GET", `${at}/jobs?per_page=100`) : null,
-        full ? request(host, "GET", `${at}/bridges?per_page=100`) : null,
+        wantJobs ? list(cached.jobs, `${at}/jobs?per_page=100`) : null,
+        full ? list(cached.bridges, `${at}/bridges?per_page=100`) : null,
       ]);
-      return {
-        pipeline: p,
-        jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`),
-      };
+      const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
+      const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
+      if (stamp && (jobs || bridges)) remember(key, stamp, { jobs, bridges: bridges && bridgesSettled(bridges) ? bridges : null });
+      return { pipeline: p, jobs, bridges };
     }));
+    if (poll.limited) return poll.limited;
     const pipeline = gitlabCommitPipeline(entries);
-    if (full && pipeline) await logLines(host, path, pipeline);
+    if (full && pipeline) await logLines(host, path, pipeline, poll.req);
+    if (poll.limited) return poll.limited;
     return { ok: true, pipeline };
   }
 
   // Sets logLine on the most recently started running jobs (not bridges: they have no log of their own). The
   // traces are awaited on purpose, so the poll publishes its jobs with their lines: a slow trace delays that
   // poll's publish by at most 8 s (16 s with a 416 retry). The in-flight skip guards overlapping polls of two
-  // worktrees of one repo, which can happen after the selection moves between them.
-  async function logLines(host, path, pipeline) {
+  // worktrees of one repo, which can happen after the selection moves between them. On a low budget there are no
+  // traces at all: the calls left go to the lists and jobs.
+  async function logLines(host, path, pipeline, req) {
+    if (budgetLow(host)) return;
     const key = `${host}|${path}`;
     const prev = lastLog.get(key) ?? new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
@@ -451,19 +512,20 @@ export function createCiClient(io, log) {
     const newest = [...runningJobs].sort((a, b) => started(b) - started(a)).slice(0, LOG_JOBS);
     await Promise.all(newest.map(async (j) => {
       const e = kept.get(j.id);
-      if (!e.busy) await fetchLogLine(host, path, j.id, e); // else its previous call is still in flight
+      if (!e.busy) await fetchLogLine(req, host, path, j.id, e); // else its previous call is still in flight
       j.logLine = e.line;
     }));
   }
 
   // A trace call asks for the log's tail and never counts toward the host's backoff, so a big or slow log can't
-  // stop CI for the host. A 416 (the Range refused) is asked once more without it.
-  async function fetchLogLine(host, path, jobId, e) {
+  // stop CI for the host. A 416 (the Range refused) is asked once more without it. A limit answer isn't logged
+  // (the pause has its own line).
+  async function fetchLogLine(req, host, path, jobId, e) {
     const trace = `projects/${encodeURIComponent(path)}/jobs/${encodeURIComponent(jobId)}/trace`;
     const opts = { text: true, noBackoff: true, timeout: TRACE_TIMEOUT };
     e.busy = true;
     try {
-      let r = await request(host, "GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
+      let r = await req("GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
       if (r.ok && !rangeLogged.has(host)) {
         // The fetch route has the status (206 or 200); the glab route has none, so the body's length tells.
         const byStatus = r.status === 206 || r.status === 200;
@@ -473,11 +535,11 @@ export function createCiClient(io, log) {
           log(`CI: ${host} trace Range ${honoured ? "honoured" : "ignored"}${byStatus ? "" : " (by size)"}`);
         }
       }
-      if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
+      if (!r.ok && r.status === 416) r = await req("GET", trace, opts);
       if (r.ok) {
         e.line = lastLogLine(r.data, redact);
         e.failLogged = false;
-      } else if (!e.failLogged) {
+      } else if (!r.limited && !e.failLogged) {
         e.failLogged = true;
         log(`CI: trace of ${host}/${path} job ${jobId}: ${r.error}`);
       }
@@ -487,14 +549,17 @@ export function createCiClient(io, log) {
   }
 
   // GitHub: the HEAD commit's runs, else the branch's recent runs; the newest head_sha's runs make one pipeline
-  // (githubLatest). Jobs of its failed runs; full: of every run.
+  // (githubLatest). Jobs of its failed runs; full: of every run. A completed run's jobs come from the job cache while
+  // its stamp stays.
   async function githubLatestOf(host, path, head, { full = false } = {}) {
+    const poll = pollOf(host);
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
-    const r = await runsOf(host, path, head,
+    const r = await runsOf(poll.req, host, path, head,
       `${runs}branch=${encodeURIComponent(head.branch)}&per_page=20`,
       `${runs}head_sha=${encodeURIComponent(head.sha)}&per_page=20`,
       (d) => (Array.isArray(d?.workflow_runs) ? d.workflow_runs : null), (x) => x.head_sha === head.sha);
+    if (poll.limited) return poll.limited;
     if (!r.ok) return r;
     const answer = { workflow_runs: r.data };
     const first = githubLatest(answer, {});
@@ -503,10 +568,20 @@ export function createCiClient(io, log) {
     const failed = ofHead.filter((x) => normalizeStatus("github", x) === "failed");
     const jobsByRunId = {};
     await Promise.all((full ? ofHead : failed).map(async (run) => {
-      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`);
-      if (j.ok) jobsByRunId[run.id] = j.data;
-      else log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
+      const key = `gh|${host}|${path}|${run.id}`;
+      const stamp = finishedStamp("github", run);
+      const cached = cachedFor(key, stamp);
+      if (cached.jobs) {
+        jobsByRunId[run.id] = cached.jobs;
+        return;
+      }
+      const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`);
+      if (j.ok) {
+        jobsByRunId[run.id] = j.data;
+        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, { jobs: j.data });
+      } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
+    if (poll.limited) return poll.limited;
     const canceled = ofHead.filter((x) => normalizeStatus("github", x) === "canceled");
     return { ok: true, pipeline: githubLatest(answer, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }
