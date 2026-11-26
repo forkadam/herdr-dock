@@ -683,9 +683,11 @@ export default class Spaces extends View {
     const active = sp.find(p => p.active)?.id;
     // herdr-dock: its place counted without agent rows, so an agent starting or exiting above it doesn't scroll the list.
     const place = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
-    if (active !== this.revealed || place !== this.revealedAt) {
+    // Coming back from the narrow rail (or going to it) is a new list too: a width-only change no size check sees.
+    if (active !== this.revealed || place !== this.revealedAt || collapsed !== this.revealedNarrow) {
       this.revealed = active;
       this.revealedAt = place;
+      this.revealedNarrow = collapsed;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)

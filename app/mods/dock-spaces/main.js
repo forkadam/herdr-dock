@@ -682,9 +682,10 @@ var Spaces = class extends View {
     const list = this.grouped(t, collapsed);
     const active = sp.find((p) => p.active)?.id;
     const place2 = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
-    if (active !== this.revealed || place2 !== this.revealedAt) {
+    if (active !== this.revealed || place2 !== this.revealedAt || collapsed !== this.revealedNarrow) {
       this.revealed = active;
       this.revealedAt = place2;
+      this.revealedNarrow = collapsed;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, collapsed, null)).child(v_flex2().id("spaces-list").flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).on_size_change((size, cx) => {

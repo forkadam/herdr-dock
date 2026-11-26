@@ -38,6 +38,7 @@ test("dock-spaces: a name pass replaces the names, never merges into old ones", 
   assert.equal(s.names.has("t1"), false);
 });
 
+let s3; // the panel three() made
 const three = () => {
   resetHost();
   herdr.data.layout = left(300);
@@ -46,6 +47,7 @@ const three = () => {
   herdr.data.agents = [{ address: "t1", space: "A", pane: "p1", status: "idle", program: {}, title: "one" },
                        { address: "t2", space: "A", pane: "p2", status: "idle", program: {}, title: "two" }];
   const s = new Spaces(); s.init({}, cx); s.render(cx);
+  s3 = s;
   return s;
 };
 const moves = () => herdr.data.runs.filter(([c]) => c === "space.move" || c === "space.select");
@@ -120,4 +122,14 @@ test("dock-spaces: a drag let go outside the list doesn't turn a later agent-row
   handlers()["space-agent-t1:on_click"]({}, cx);
   assert.deepEqual(moves(), []);
   assert.deepEqual(herdr.data.runs.filter(([c]) => c === "pane.focus"), [["pane.focus", { pane: "p1" }]]);
+});
+
+test("dock-spaces: switching between the narrow rail and full brings the active space into view", () => {
+  three();
+  scrolls().length = 0;
+  herdr.data.layout = left(100);
+  s3.render(cx);
+  herdr.data.layout = left(300);
+  s3.render(cx);
+  assert.deepEqual(scrolls(), [1, 3]);
 });
