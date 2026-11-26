@@ -120,6 +120,8 @@ test("dock-pipelines: before the first full poll (no jobs yet) the stage strip s
   draw(d);
   const all = texts();
   assert.ok(all.includes("build") && all.includes("test"), all.join(" | "));
+  // Each name is followed by its status glyph (badgeOf: passed ✓, running ⟳).
+  assert.deepEqual(between("build", "Retry"), ["build", "✓", "test", "⟳"]);
   // Jobs present: the job list's own stage header is the only "test"; the strip's "build" is gone.
   d.pipeline.jobs = gitlabDetail().pipeline.jobs;
   draw(d);
