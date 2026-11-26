@@ -90,7 +90,9 @@ standard one; the once-per-host log line settles it on deploy.
 Per host the client keeps `{ remaining, limit, resetAt, limited }` from the latest response that carried headers.
 
 - **Low:** `remaining / limit < 0.10`. The collector's `ciInterval` treats the worktree as not watched for cadence
-  (30 s instead of 10 s) and the client skips log traces. `ciInterval` gains an input `budgetLow`.
+  (30 s instead of 10 s) and the client skips log traces. `ciInterval` gains an input `budgetLow`. While the budget
+  is low, every GitLab poll (plain or full) also drops the repo's kept log lines, so a line from before the low
+  stretch never reappears after it.
 - **Limited:** a response 429, or 403 with `x-ratelimit-remaining: 0`, or a `retry-after`. The host is paused until
   `resetAt` (or now + `retry-after`, else now + 60 s). While paused, `request()` fails fast with
   `{ ok: false, error: "API limit reached", limitedUntil, hostFailure: false }` — no network call — and the
