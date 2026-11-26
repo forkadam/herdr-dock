@@ -2428,24 +2428,6 @@ test("limit: a limited first poll leaves no pipeline, no error and no alert, and
   assert.equal(io.notes.length, 0);
 });
 
-test("low budget: the watched worktree drops from 10 s to 30 s", async () => {
-  const low = GL_HDR(100, 1795707975);
-  const { io } = ciIo({ routes: { [PIPES]: () => hres(200, [pipeline({ status: "running" })], low), [GL_JOBS]: res(200, []) } });
-  const c = createCollector(io);
-  const nA = () => io.fetches.filter((f) => f.url === PIPES).length;
-  await c.select(WT);
-  const at = async (dt) => { io.t = T0 + dt; io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
-  await at(0);
-  const a0 = nA();
-  assert.ok(a0 >= 1);
-  await at(10000);
-  assert.equal(nA(), a0, "watched, low budget: not after 10 s");
-  await at(29000);
-  assert.equal(nA(), a0);
-  await at(30000);
-  assert.equal(nA(), a0 + 1);
-});
-
 test("budget() during a pause is always an object (no headers needed); null again after it, when no headers were ever seen", async () => {
   const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: hres(429, {}) } });
   assert.equal(c.budget("gitlab.corp"), null);

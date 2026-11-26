@@ -444,6 +444,7 @@ test("lastLogLine strips OSC sequences, charset escapes and leftover control cha
 test("ciInterval: a low budget slows the watched poll to 30 s and nothing else", () => {
   assert.equal(ciInterval({ status: "running", watched: true, budgetLow: true }), 30000);
   assert.equal(ciInterval({ status: "running", watched: true }), 10000);
+  assert.equal(ciInterval({ status: "running", watched: false, budgetLow: true, upstreamChangedAt: -Infinity, now: 0 }), 30000);
   const now = 1000000;
   assert.equal(ciInterval({ status: "passed", upstreamChangedAt: now - 1000, now, budgetLow: true }), 15000);
 });
