@@ -653,12 +653,22 @@ test("deleteWorktree: git's refusal (uncommitted changes) comes back as the erro
 
 // --- git calls that never answer (docs/superpowers/plans/2026-11-23-git-call-deadline.md) ---
 // A tick waiting on a lost call never ends, so these tests don't await tick(): tickAt runs it at fake time t and
-// lets its git calls (1 ms each in fakeIo) and the follow-up work settle.
+// waits until its git calls and their follow-up work have settled — no call in flight and no new call for a few
+// turns — rather than a fixed sleep, which a loaded machine (the full suite in parallel) can outrun.
 const lost = () => new Promise(() => {});
+async function settle(io) {
+  let seen = -1;
+  for (let quiet = 0, turns = 0; quiet < 5; turns++) {
+    if (turns > 5000) throw new Error("git calls never settled");
+    await new Promise((r) => setTimeout(r, 1));
+    if (io.active === 0 && io.calls.length === seen) quiet++;
+    else { quiet = 0; seen = io.calls.length; }
+  }
+}
 async function tickAt(io, c, t) {
   io.t = t;
   c.tick();
-  await new Promise((r) => setTimeout(r, 20));
+  await settle(io);
 }
 const oneSpace = [{ id: "s1", name: "a", machine: null, tabs: [{ id: "t1" }] }];
 const LOCAL_TOOL = {
