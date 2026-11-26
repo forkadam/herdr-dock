@@ -82,6 +82,7 @@ export default class Spaces extends View {
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
+    this.lastGit = {}; // space -> its last real git answer: stands in while its place (after a cd) has none yet
     this.pending = new Set(); // where()s to look at next
     this.busy = {}; // pane -> an agent working or a program in front of its shell
     this.ready = {}; // machine -> its layout was readable at the last look
@@ -404,7 +405,16 @@ export default class Spaces extends View {
     const sp = spaces(), ps = panes();
     const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
-    const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
+    // herdr-dock: a space whose place has no real answer yet (a cd, a lookup git couldn't make) keeps its last
+    // one, so a worktree doesn't un-nest from under its checkout (and a folded parent) for a moment.
+    const gitOf = (w) => {
+      const k = where(w, ps);
+      if (k in this.git && !this.unsure.has(k)) return (this.lastGit[w.id] = this.git[k]);
+      return this.lastGit[w.id] ?? this.git[k] ?? null;
+    };
+    const live = new Set(sp.map((w) => w.id));
+    for (const id of Object.keys(this.lastGit)) if (!live.has(id)) delete this.lastGit[id];
+    const list = sp.map((w, i) => ({ w, i, g: gitOf(w) }));
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
     const nested = (r) => r.g?.linked && mains.has(r.g.repo);
     const out = [];

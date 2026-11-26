@@ -242,3 +242,17 @@ test("dock-spaces: folding while a machine is offline keeps that machine's folds
   assert.deepEqual(JSON.parse(localStorage.getItem("spaces.folded")), []);
   localStorage.removeItem("spaces.folded");
 });
+
+test("dock-spaces: a worktree whose git answer is pending (after a cd) stays nested; no scroll, no flicker", () => {
+  const s = repoAndWorktree("W", true); // R folded, holding the active W
+  assert.equal(s.activeAt, 0);
+  scrolls().length = 0;
+  herdr.data.spaces[1].folder = "/r-wt/sub"; // a cd: no git answer for the new place yet
+  s.render(cx);
+  assert.equal(s.activeAt, 0);
+  assert.deepEqual(scrolls(), []);
+  s.git['[null,"/r-wt/sub"]'] = null; // the answer: not a repo after all
+  s.render(cx);
+  assert.equal(s.activeAt, 1); // W is its own row now, and R no longer holds it
+  localStorage.removeItem("spaces.folded");
+});
