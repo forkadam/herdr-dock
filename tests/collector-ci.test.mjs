@@ -714,3 +714,71 @@ test("leftover fix: Retry on a canceled GitHub run re-runs that run (no failed j
   assert.deepEqual(await c.retry(), { ok: true, error: null });
   assert.deepEqual(io.fetches.filter((f) => f.init?.method === "POST").map((f) => f.url), [RERUN]);
 });
+
+// --- text, header, timeout and no-backoff requests ------------------------------------------------
+
+const textRes = (status, body) => ({ status, ok: status >= 200 && status < 300, text: async () => body });
+const TRACE = "projects/grp%2Fapi/jobs/902/trace";
+const RANGE = { Range: "bytes=-16384" };
+const flush5 = () => new Promise((r) => setTimeout(r, 5));
+
+test("request text mode returns the body as a string (fetch), with extra headers merged", async () => {
+  const { io } = ciIo({ routes: { [`${GL.replace("/projects/grp%2Fapi", "")}/${TRACE}`]: textRes(200, "log\n") } });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const r = await c.request("gitlab.corp", "GET", TRACE, { text: true, headers: RANGE });
+  assert.deepEqual(r, { ok: true, data: "log\n" });
+  const h = io.fetches[0].init.headers;
+  assert.equal(h.Range, "bytes=-16384");
+  assert.equal(h["PRIVATE-TOKEN"], TOKEN);
+  assert.equal(h["User-Agent"], "herdr-dock");
+});
+
+test("request text mode on the glab route", async () => {
+  const url = "https://gitlab.corp/api/v4/" + TRACE;
+  const key = `glab api --hostname gitlab.corp -H Range: bytes=-16384 ${TRACE}`;
+  const { io } = ciIo({
+    routes: { [url]: () => { throw Object.assign(new Error("fetch failed"), { cause: { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" } }); } },
+    cli: { [key]: ok("not { json\n") },
+  });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const r = await c.request("gitlab.corp", "GET", TRACE, { text: true, headers: RANGE, timeout: 8000 });
+  assert.deepEqual(r, { ok: true, data: "not { json\n" });
+  const call = io.calls.find((x) => x.cmd === "glab" && x.args[0] === "api");
+  assert.deepEqual(call.args, ["api", "--hostname", "gitlab.corp", "-H", "Range: bytes=-16384", TRACE]);
+  assert.equal(call.opts.timeout, 8000);
+});
+
+test("noBackoff: a timeout does not block the host; without it the host is blocked", async () => {
+  const io = { t: 0, now: () => io.t, shared: () => ({}), exec: async (c, a) => (a[0] === "config" ? ok(`${TOKEN}\n`) : ok("")), fetch: () => new Promise(() => {}) };
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const p = c.request("gitlab.corp", "GET", TRACE, { text: true, noBackoff: true, timeout: 8000 });
+  await flush5();
+  io.t = 8001; c.sweep(io.t);
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "timeout");
+  assert.equal(c.blocked("gitlab.corp", io.t), false);
+  const q = c.request("gitlab.corp", "GET", "projects/x");
+  await flush5();
+  io.t = 8001 + 15001; c.sweep(io.t);
+  assert.equal((await q).error, "timeout");
+  assert.equal(c.blocked("gitlab.corp", io.t), true);
+});
+
+test("noBackoff: HTTP 503 does not block the host; a 416 comes back with its status", async () => {
+  const base = "https://gitlab.corp/api/v4/";
+  const { io } = ciIo({ routes: { [base + TRACE]: textRes(503, ""), [base + "projects/r"]: textRes(416, "") } });
+  const c = createCiClient(io, () => {});
+  await c.resolve("gitlab.corp");
+  const r = await c.request("gitlab.corp", "GET", TRACE, { text: true, noBackoff: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "HTTP 503");
+  assert.equal(c.blocked("gitlab.corp", io.t), false);
+  const s = await c.request("gitlab.corp", "GET", "projects/r", { text: true, noBackoff: true, headers: RANGE });
+  assert.equal(s.ok, false);
+  assert.equal(s.status, 416);
+  assert.equal(s.hostFailure, false);
+});

@@ -43,9 +43,9 @@ export function createCiClient(io, log) {
   };
 
   // Races fn(signal) against a deadline that sweep() enforces on the collector's clock (io.now()).
-  function timed(fn) {
+  function timed(fn, ms = TIMEOUT) {
     const ctl = typeof AbortController === "function" ? new AbortController() : null;
-    const entry = { deadline: io.now() + TIMEOUT, ctl, reject: null };
+    const entry = { deadline: io.now() + ms, ctl, reject: null };
     const timer = new Promise((_, reject) => { entry.reject = reject; });
     deadlines.add(entry);
     return Promise.race([Promise.resolve().then(() => fn(ctl?.signal)), timer]).finally(() => deadlines.delete(entry));
@@ -62,8 +62,8 @@ export function createCiClient(io, log) {
 
   // A local CLI call (glab/gh run on this PC). A rejection or timeout becomes code -1. The exec timeout makes
   // Herdr kill a hung CLI process too (the sweep only stops waiting for it).
-  const cli = (cmd, args) =>
-    timed(() => io.exec(cmd, args, { timeout: TIMEOUT })).catch((e) => ({ code: -1, stdout: "", stderr: e instanceof Timeout ? "timeout" : String(e?.message ?? e) }));
+  const cli = (cmd, args, ms = TIMEOUT) =>
+    timed(() => io.exec(cmd, args, { timeout: ms }), ms).catch((e) => ({ code: -1, stdout: "", stderr: e instanceof Timeout ? "timeout" : String(e?.message ?? e) }));
 
   async function readToken(host, provider) {
     let token = "";
@@ -154,8 +154,9 @@ export function createCiClient(io, log) {
     h.blockedUntil = h.windowEnd = now + BACKOFF[Math.min(h.failures, BACKOFF.length) - 1];
     h.lastError = error;
   }
-  function fail(h, error, hostFailure, startedAt, extra = {}) {
-    if (hostFailure) backoff(h, error, startedAt);
+  // opts.noBackoff: the caller can do without this endpoint (a job log), so its failure never blocks the host.
+  function fail(h, error, hostFailure, startedAt, extra = {}, opts = {}) {
+    if (hostFailure && !opts.noBackoff) backoff(h, error, startedAt);
     return { ok: false, error: redact(error), hostFailure, ...extra };
   }
   // A request for a blocked host fails fast, without a network call, with the outage's error.
@@ -168,37 +169,40 @@ export function createCiClient(io, log) {
     return { ok: true, data };
   };
 
-  async function viaCli(host, h, method, path, wantJson) {
+  async function viaCli(host, h, method, path, wantJson, opts = {}) {
     const cmd = h.provider === "github" ? "gh" : "glab";
     const hostArgs = cmd === "glab" || host !== "github.com" ? ["--hostname", host] : [];
     let startedAt = io.now();
     const r = await http(() => {
       if (isBlocked(h)) return null;
       startedAt = io.now();
-      return cli(cmd, ["api", ...hostArgs, ...(method === "POST" ? ["-X", "POST"] : []), path]);
+      const extra = Object.entries(opts.headers ?? {}).flatMap(([k, v]) => ["-H", `${k}: ${v}`]);
+      return cli(cmd, ["api", ...hostArgs, ...(method === "POST" ? ["-X", "POST"] : []), ...extra, path], opts.timeout);
     });
     if (!r) return blockedResult(h);
     if (r.code !== 0) {
       const msg = firstLine(r.stderr || r.stdout) || `${cmd} api exited ${r.code}`;
       // An HTTP 4xx answer isn't the host failing; anything else (no CLI, network, timeout) backs off.
-      return fail(h, msg, !/\b4\d\d\b/.test(msg), startedAt);
+      const code = /\b(4\d\d)\b/.exec(msg);
+      return fail(h, msg, !code, startedAt, code ? { status: Number(code[1]) } : {}, opts);
     }
+    if (opts.text) return good(h, String(r.stdout ?? ""));
     if (!wantJson) return good(h, null);
     try {
       return good(h, JSON.parse(String(r.stdout ?? "")));
     } catch {
-      return fail(h, "bad response", false, startedAt);
+      return fail(h, "bad response", false, startedAt, {}, opts);
     }
   }
 
   // One API call. `path` is relative to the API root ("projects/..." or "repos/..."). Resolves to
   // { ok: true, data } or { ok: false, error, hint?, hostFailure }; never rejects.
-  async function request(host, method, path) {
+  async function request(host, method, path, opts = {}) {
     const h = rec(host);
-    const wantJson = method === "GET";
+    const wantJson = method === "GET" && !opts.text;
     if (!h.provider || !h.token) return { ok: false, error: "not logged in", hint: loginHint(h.provider, host), hostFailure: false };
     if (isBlocked(h)) return blockedResult(h);
-    if (h.cli) return viaCli(host, h, method, path, wantJson);
+    if (h.cli) return viaCli(host, h, method, path, wantJson, opts);
     let startedAt = io.now();
     const url = baseUrl(host, h.provider) + path;
     const once = () =>
@@ -206,16 +210,18 @@ export function createCiClient(io, log) {
         if (isBlocked(h)) return { blocked: true };
         startedAt = io.now();
         return timed(async (signal) => {
-          const init = { method, headers: headers(h.provider, h.token) };
+          const init = { method, headers: { ...headers(h.provider, h.token), ...opts.headers } };
           if (signal) init.signal = signal;
           const r = await io.fetch(url, init);
-          if (!r.ok || !wantJson) return { status: r.status, ok: r.ok, data: null };
+          if (!r.ok) return { status: r.status, ok: false, data: null };
+          if (opts.text) return { status: r.status, ok: true, data: String(await r.text()) };
+          if (!wantJson) return { status: r.status, ok: true, data: null };
           try {
             return { status: r.status, ok: true, data: await r.json() };
           } catch {
             return { status: r.status, ok: false, data: null, bad: true };
           }
-        });
+        }, opts.timeout);
       });
     try {
       let r = await once();
@@ -226,18 +232,18 @@ export function createCiClient(io, log) {
         if (r.blocked) return blockedResult(h);
         if (!h.token || r.status === 401) {
           Object.assign(h, { token: null, loginError: "not logged in", loginRetryAt: io.now() + RELOGIN });
-          return fail(h, "not logged in", false, startedAt, { hint: loginHint(h.provider, host) });
+          return fail(h, "not logged in", false, startedAt, { hint: loginHint(h.provider, host) }, opts);
         }
       }
-      if (r.bad) return fail(h, "bad response", false, startedAt);
-      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt);
+      if (r.bad) return fail(h, "bad response", false, startedAt, {}, opts);
+      if (!r.ok) return fail(h, `HTTP ${r.status}`, r.status >= 500 || r.status === 429, startedAt, { status: r.status }, opts);
       return good(h, r.data);
     } catch (e) {
-      if (e instanceof Timeout) return fail(h, "timeout", true, startedAt);
+      if (e instanceof Timeout) return fail(h, "timeout", true, startedAt, {}, opts);
       // A network or TLS error (not an HTTP status): use the CLI for this host for the rest of the session.
       h.cli = true;
       log(`CI: fetch to ${host} failed (${redact(e?.cause?.code ?? e?.message ?? e)}); using ${h.provider === "github" ? "gh" : "glab"} api`);
-      return viaCli(host, h, method, path, wantJson);
+      return viaCli(host, h, method, path, wantJson, opts);
     }
   }
 
