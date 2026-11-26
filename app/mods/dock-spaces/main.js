@@ -488,8 +488,9 @@ var Spaces = class extends View {
       cx.notify();
     }
   }
-  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it.
-  dragEnd(w, cx) {
+  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it, unless its row is
+  // a folded parent standing for the active worktree inside it: then you stay where you are.
+  dragEnd(w, cx, holdsActive = false) {
     const from = this.pressed;
     const over = this.over;
     this.pressed = null;
@@ -499,7 +500,7 @@ var Spaces = class extends View {
       if (index !== -1) run("space.move", { id: from, index: index + 1 });
     } else if (from === w.id) {
       showTerminal();
-      run("space.select", { id: w.id });
+      if (!holdsActive) run("space.select", { id: w.id });
     }
     cx.notify();
   }
@@ -509,6 +510,7 @@ var Spaces = class extends View {
     const ids = new Set(spaces().map((s) => s.id));
     for (const k of this.foldedSpaces) if (!ids.has(k)) this.foldedSpaces.delete(k);
     localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
+    this.foldMoved = true;
     cx.notify();
   }
   menu(w) {
@@ -651,7 +653,7 @@ var Spaces = class extends View {
     )).on_mouse_down("left", () => {
       this.pressed = w.id;
       this.over = w.id;
-    }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx)).on_mouse_down("right", () => this.menu(w)).child(
+    }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx, holdsActive)).on_mouse_down("right", () => this.menu(w)).child(
       h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg3("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div3().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div3().flex_1()).when(folded && hidden > 0, (el) => el.child(div3().flex_none().text_size(11).text_color(t.dim).child(String(hidden)))).when(folded && Boolean(top) && top !== "idle", (el) => el.child(agentStatus(t, { status: top }, true))).when(children > 0, (el) => el.child(div3().id(`space-fold-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(folded ? "Show this space's agents and worktrees" : "Fold this space's agents and worktrees").on_mouse_down("left", (_e, cx) => {
         cx.stop_propagation();
         this.pressed = null;
@@ -730,6 +732,11 @@ var Spaces = class extends View {
     const list = this.grouped(t, collapsed);
     const active = sp.find((p) => p.active)?.id;
     const place2 = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
+    if (this.foldMoved && active === this.revealed) {
+      this.revealedAt = place2;
+      this.revealedNarrow = collapsed;
+    }
+    this.foldMoved = false;
     if (active !== this.revealed || place2 !== this.revealedAt || collapsed !== this.revealedNarrow) {
       this.revealed = active;
       this.revealedAt = place2;

@@ -358,8 +358,9 @@ export default class Spaces extends View {
     }
   }
 
-  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it.
-  dragEnd(w, cx) {
+  // Let go over `w`'s block: a drag lands there; a press on `w` itself selects it, unless its row is
+  // a folded parent standing for the active worktree inside it: then you stay where you are.
+  dragEnd(w, cx, holdsActive = false) {
     const from = this.pressed;
     const over = this.over;
     this.pressed = null;
@@ -367,7 +368,10 @@ export default class Spaces extends View {
     if (from !== null && over === w.id && from !== w.id) {
       const index = spaces().findIndex(s => s.id === w.id);
       if (index !== -1) run("space.move", { id: from, index: index + 1 });
-    } else if (from === w.id) { showTerminal(); run("space.select", { id: w.id }); }
+    } else if (from === w.id) {
+      showTerminal();
+      if (!holdsActive) run("space.select", { id: w.id });
+    }
     cx.notify();
   }
 
@@ -377,6 +381,7 @@ export default class Spaces extends View {
     const ids = new Set(spaces().map((s) => s.id));
     for (const k of this.foldedSpaces) if (!ids.has(k)) this.foldedSpaces.delete(k);
     localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
+    this.foldMoved = true; // the next render keeps the list where it is (see render)
     cx.notify();
   }
 
@@ -574,7 +579,7 @@ export default class Spaces extends View {
         this.over = w.id;
       })
       .on_mouse_move((_e, cx) => this.dragOver(w, cx))
-      .on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx))
+      .on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx, holdsActive))
       .on_mouse_down("right", () => this.menu(w))
       .child(
         h_flex()
@@ -704,6 +709,13 @@ export default class Spaces extends View {
     const active = sp.find(p => p.active)?.id;
     // herdr-dock: its place counted without agent rows, so an agent starting or exiting above it doesn't scroll the list.
     const place = this.activeAt < 0 ? -1 : this.activeAt - this.agentsAbove;
+    // A fold just clicked moves rows under the pointer: take the new place as seen, without scrolling
+    // (a change of active space still scrolls).
+    if (this.foldMoved && active === this.revealed) {
+      this.revealedAt = place;
+      this.revealedNarrow = collapsed;
+    }
+    this.foldMoved = false;
     // Coming back from the narrow rail (or going to it) is a new list too: a width-only change no size check sees.
     if (active !== this.revealed || place !== this.revealedAt || collapsed !== this.revealedNarrow) {
       this.revealed = active;

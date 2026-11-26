@@ -170,3 +170,39 @@ test("dock-spaces: the active worktree inside a folded parent: the parent is hig
   assert.ok(scrolls().includes(0));
   localStorage.removeItem("spaces.folded");
 });
+
+const repoAndWorktree = (activeId, foldR) => {
+  localStorage.setItem("spaces.folded", JSON.stringify(foldR ? ["R"] : []));
+  resetHost();
+  herdr.data.layout = left(300);
+  herdr.data.spaces = [{ id: "R", name: "repo", folder: "/r", tabs: [{ id: "tr" }], active: activeId === "R" },
+                       { id: "W", name: "repo", folder: "/r-wt", tabs: [{ id: "tw" }], active: activeId === "W" },
+                       { id: "B", name: "web", folder: "/b", tabs: [{ id: "tb" }], active: activeId === "B" }];
+  const s = new Spaces(); s.init({}, cx);
+  s.git['[null,"/r"]'] = { name: "repo", branch: "main", ahead: 0, behind: 0, repo: '[null,"/r/.git"]', linked: false };
+  s.git['[null,"/r-wt"]'] = { name: "repo", branch: "feat", ahead: 0, behind: 0, repo: '[null,"/r/.git"]', linked: true };
+  s.render(cx);
+  return s;
+};
+
+test("dock-spaces: folding a space with a worktree above the active one doesn't scroll the list; selecting still does", () => {
+  const s = repoAndWorktree("B", false);
+  scrolls().length = 0;
+  handlers()["space-fold-R:on_mouse_down:left"]({}, cx);
+  s.render(cx);
+  handlers()["space-fold-R:on_mouse_down:left"]({}, cx);
+  s.render(cx);
+  assert.deepEqual(scrolls(), []);
+  herdr.data.spaces[2].active = false; herdr.data.spaces[0].active = true;
+  s.render(cx);
+  assert.deepEqual(scrolls(), [0]);
+  localStorage.removeItem("spaces.folded");
+});
+
+test("dock-spaces: clicking a folded parent that holds the active worktree keeps you in that worktree", () => {
+  repoAndWorktree("W", true);
+  handlers()["space-R:on_mouse_down:left"]();
+  handlers()["space-R:on_mouse_up:left"]({}, cx);
+  assert.deepEqual(moves(), []);
+  localStorage.removeItem("spaces.folded");
+});
