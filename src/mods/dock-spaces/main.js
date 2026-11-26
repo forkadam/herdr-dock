@@ -599,6 +599,8 @@ export default class Spaces extends View {
         }
         cx.notify();
       })
+      // A press here is never a space drag: drop a press left over from one let go outside the list.
+      .on_mouse_down("left", () => { this.pressed = null; this.over = null; })
       // Dragging a space over its agents is dragging over the space.
       .on_mouse_move((_e, cx) => this.dragOver(w, cx))
       .on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx))

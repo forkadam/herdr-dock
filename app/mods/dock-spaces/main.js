@@ -626,6 +626,9 @@ var Spaces = class extends View {
         if (this.copiedAgent === a.address) this.copiedAgent = null;
       }
       cx.notify();
+    }).on_mouse_down("left", () => {
+      this.pressed = null;
+      this.over = null;
     }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx)).on_click(() => {
       showTerminal();
       run("pane.focus", { pane: a.pane });

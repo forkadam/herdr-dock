@@ -109,3 +109,15 @@ test("dock-spaces: the list scrolls to the active space only when its height rea
   resized({ width: 250, height: 300 }, cx); // a block above grew: the list shrank
   assert.deepEqual(scrolls(), [3, 3]);
 });
+
+test("dock-spaces: a drag let go outside the list doesn't turn a later agent-row click into a move", () => {
+  three();
+  handlers()["space-C:on_mouse_down:left"]();
+  handlers()["space-agent-t1:on_mouse_move"]({}, cx); // dragged over A's agent rows…
+  // …and let go outside the list: no handler of this panel sees the release.
+  handlers()["space-agent-t1:on_mouse_down:left"]?.({}, cx); // later: a click on that agent row
+  handlers()["space-agent-t1:on_mouse_up:left"]({}, cx);
+  handlers()["space-agent-t1:on_click"]({}, cx);
+  assert.deepEqual(moves(), []);
+  assert.deepEqual(herdr.data.runs.filter(([c]) => c === "pane.focus"), [["pane.focus", { pane: "p1" }]]);
+});
