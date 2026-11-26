@@ -1,7 +1,7 @@
 // Loads dock-spaces' real class against stubbed host modules: agent rows and peer-name passes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resetHost, handlers, scrolls } from "./fixtures/host-stubs.mjs";
+import { resetHost, handlers, scrolls, bgs, clearBgs } from "./fixtures/host-stubs.mjs";
 
 const herdr = await import("herdr");
 const { default: Spaces } = await import("../src/mods/dock-spaces/main.js");
@@ -204,5 +204,29 @@ test("dock-spaces: clicking a folded parent that holds the active worktree keeps
   handlers()["space-R:on_mouse_down:left"]();
   handlers()["space-R:on_mouse_up:left"]({}, cx);
   assert.deepEqual(moves(), []);
+  localStorage.removeItem("spaces.folded");
+});
+
+test("dock-spaces: a chevron press drops a leftover drag, so the row's release moves nothing", () => {
+  localStorage.removeItem("spaces.folded");
+  three();
+  handlers()["space-C:on_mouse_down:left"]();
+  handlers()["space-agent-t1:on_mouse_move"]({}, cx); // over A, then let go outside the list
+  const spy = { ...cx, stops: 0, stop_propagation() { this.stops++; } };
+  handlers()["space-fold-A:on_mouse_down:left"]({}, spy);
+  handlers()["space-A:on_mouse_up:left"]({}, cx); // the release reaches the row (the chevron has no mouse-up)
+  assert.deepEqual(moves(), []);
+  assert.equal(spy.stops, 1);
+  localStorage.removeItem("spaces.folded");
+});
+
+test("dock-spaces: a folded parent wears the active highlight for its hidden worktree; unfolding gives it back", () => {
+  const s = repoAndWorktree("W", true);
+  assert.equal(bgs()["space-R"], "selected");
+  handlers()["space-fold-R:on_mouse_down:left"]({}, cx);
+  clearBgs();
+  s.render(cx);
+  assert.equal(bgs()["space-W"], "selected");
+  assert.notEqual(bgs()["space-R"], "selected");
   localStorage.removeItem("spaces.folded");
 });
