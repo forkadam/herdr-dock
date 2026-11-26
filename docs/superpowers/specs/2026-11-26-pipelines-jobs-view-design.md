@@ -83,9 +83,10 @@ and time, and the running job(s) standing out with a live elapsed time and a lin
   `allow_failure` → **warn** (warn glyph, counted as passed-with-warning, and it does not turn its stage red).
   `done` in a stage's `done/total` = finished jobs (passed, failed, canceled, skipped, warn); `total` excludes
   manual jobs that never ran. A stage's glyph is the worst of its display buckets.
-- GitLab: stage order = order of first appearance after the existing sort by job id. `per_page=100`; a pipeline
-  with more than 100 jobs shows the first 100 and the count line says `100+ jobs`.
-- GitHub: a "stage" is a workflow run of the head sha (as today); jobs come from each run's `/jobs`, `step` from
+- GitLab: stage order = order of first appearance after the existing sort by job id. `per_page=100`; GitLab may
+  return a pipeline's jobs newest first, so a pipeline with more than 100 jobs shows 100 of them (not necessarily
+  the first 100) and the count line says `100+ jobs`.
+- GitHub: a "stage" is a workflow run of the head sha (as today); jobs come from each run's `/jobs?per_page=100`, `step` from
   the job's `steps` (the first `in_progress` step; index is 1-based; total = steps.length).
 - `stages` is still derived (name, worst status) and gains `done` and `total` counts.
 
