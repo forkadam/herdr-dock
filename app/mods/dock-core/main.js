@@ -170,13 +170,35 @@ function gitlabPipeline(p, jobs) {
     // still-failed pipeline, so it comes from the failed jobs (a retry that fails again moves it); never updated_at.
     finishedAt: lastFail ?? p.finished_at ?? null,
     stages: [...byStage].map(([name, sts]) => ({ name, status: worst(sts) })),
-    failedJobs
+    failedJobs,
+    jobs: [],
+    groups: [],
+    jobsTruncated: false
   };
 }
 var secondsBetween = (a, b) => {
   const d = (Date.parse(b) - Date.parse(a)) / 1e3;
   return Number.isFinite(d) ? d : null;
 };
+function githubJob(j, run2) {
+  const steps = Array.isArray(j.steps) ? j.steps : [];
+  const at = steps.findIndex((st) => st.status === "in_progress");
+  return {
+    id: j.id,
+    name: j.name,
+    stage: run2.name,
+    group: `gh:${run2.id}`,
+    status: normalizeStatus("github", j),
+    label: null,
+    allowFailure: false,
+    duration: j.started_at && j.completed_at ? secondsBetween(j.started_at, j.completed_at) : null,
+    startedAt: j.started_at ?? null,
+    webUrl: j.html_url ?? null,
+    step: at < 0 ? null : { index: at + 1, total: steps.length, name: steps[at].name },
+    logLine: null,
+    bridge: false
+  };
+}
 function githubLatest(runsJson, jobsByRunId) {
   const runs = runsJson?.workflow_runs ?? [];
   if (!runs.length) return null;
@@ -203,6 +225,19 @@ function githubLatest(runsJson, jobsByRunId) {
   const finishedAt = stamps.length ? stamps.reduce((a, b) => Date.parse(b) > Date.parse(a) ? b : a) : null;
   const times = same.map(time).filter(Boolean);
   const earliest = same.find((r) => time(r) === Math.min(...times)) ?? newest;
+  const newestFirst = [...same].sort((a, b) => time(b) - time(a));
+  const jobs = newestFirst.flatMap((r) => (jobsByRunId?.[r.id]?.jobs ?? []).map((j) => githubJob(j, r)));
+  const groups = newestFirst.map((r) => ({
+    key: `gh:${r.id}`,
+    name: r.name,
+    ref: r.head_branch,
+    status: normalizeStatus("github", r),
+    webUrl: r.html_url
+  }));
+  const jobsTruncated = same.some((r) => {
+    const e = jobsByRunId?.[r.id];
+    return e != null && (e.total_count ?? 0) > (e.jobs?.length ?? 0);
+  });
   return {
     id: newest.head_sha,
     // the alert identity; the UI shows number
@@ -214,7 +249,10 @@ function githubLatest(runsJson, jobsByRunId) {
     createdAt: earliest.created_at,
     finishedAt,
     stages,
-    failedJobs
+    failedJobs,
+    jobs,
+    groups,
+    jobsTruncated
   };
 }
 var alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;

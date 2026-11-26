@@ -1,0 +1,16 @@
+{"total_count":1,"jobs":[
+{"id":7101,"name":"build","status":"in_progress","conclusion":null,"html_url":"https://github.com/o/r/actions/runs/401/job/7101","started_at":"2026-11-26T09:00:10Z","completed_at":null,"steps":[
+{"name":"step 1","number":1,"status":"completed"},
+{"name":"step 2","number":2,"status":"completed"},
+{"name":"step 3","number":3,"status":"completed"},
+{"name":"step 4","number":4,"status":"completed"},
+{"name":"step 5","number":5,"status":"completed"},
+{"name":"step 6","number":6,"status":"completed"},
+{"name":"step 7","number":7,"status":"in_progress"},
+{"name":"step 8","number":8,"status":"queued"},
+{"name":"step 9","number":9,"status":"queued"},
+{"name":"step 10","number":10,"status":"queued"},
+{"name":"step 11","number":11,"status":"queued"},
+{"name":"step 12","number":12,"status":"queued"}
+]}
+]}

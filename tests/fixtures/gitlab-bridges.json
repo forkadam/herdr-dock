@@ -1,0 +1,4 @@
+[
+{"id":9102,"name":"trigger-deploy","stage":"deploy","status":"success","allow_failure":false,"duration":null,"started_at":"2026-11-26T11:00:00Z","web_url":"https://gitlab.example.com/team/api/-/pipelines/20","pipeline":{"id":20,"project_id":42},"downstream_pipeline":{"id":21,"project_id":42,"status":"running","web_url":"https://gitlab.example.com/team/api/-/pipelines/21"}},
+{"id":9103,"name":"trigger-infra","stage":"deploy","status":"success","allow_failure":false,"duration":null,"started_at":null,"web_url":"https://gitlab.example.com/team/api/-/pipelines/20","pipeline":{"id":20,"project_id":42},"downstream_pipeline":{"id":55,"project_id":77,"project_path":"team/infra","status":"success","web_url":"https://gitlab.example.com/team/infra/-/pipelines/55"}}
+]

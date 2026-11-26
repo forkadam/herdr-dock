@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeStatus, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval, nextAlerted } from "../src/shared/ci.js";
+import { normalizeStatus, gitlabJob, gitlabBridge, gitlabCommitPipeline, gitlabPipeline, githubLatest, alertFor, alertKey, ciInterval, gitInterval, nextAlerted } from "../src/shared/ci.js";
 
 const fx = (n) => JSON.parse(readFileSync(new URL(`./fixtures/${n}`, import.meta.url), "utf8"));
 
@@ -195,4 +195,69 @@ test("fix 2: alerted per worktree is a capped list; any key in it suppresses; ol
   assert.equal(list.length, 20);
   assert.equal(list[0], "k5");
   assert.equal(list[19], "k24");
+});
+
+test("gitlabJob maps status, label, duration, startedAt", () => {
+  const m = gitlabJob({ status: "manual" }, "gl:1");
+  assert.equal(m.status, "pending");
+  assert.equal(m.label, "manual");
+  const f = gitlabJob({ status: "failed", allow_failure: true }, "gl:1");
+  assert.deepEqual([f.status, f.label, f.allowFailure], ["failed", "allowed to fail", true]);
+  const r = gitlabJob({ status: "running", started_at: "2026-11-26T12:00:00Z", duration: 3 }, "gl:1");
+  assert.deepEqual([r.startedAt, r.label, r.duration, r.group, r.bridge, r.step, r.logLine], ["2026-11-26T12:00:00Z", null, 3, "gl:1", false, null, null]);
+  assert.equal(gitlabJob({ status: "waiting_for_resource" }, "g").label, "waiting");
+  assert.equal(gitlabJob({ status: "preparing" }, "g").label, "waiting");
+  assert.equal(gitlabJob({ status: "created" }, "g").label, "created");
+  assert.equal(gitlabJob({ status: "scheduled" }, "g").label, "scheduled");
+});
+
+test("gitlabBridge uses the downstream pipeline", () => {
+  const b = { id: 7, name: "child", stage: "deploy", status: "success", web_url: "B", pipeline: { project_id: 42 } };
+  const same = gitlabBridge({ ...b, downstream_pipeline: { status: "running", web_url: "D", project_id: 42 } }, "gl:1");
+  assert.deepEqual([same.status, same.webUrl, same.label, same.bridge], ["running", "D", "child pipeline", true]);
+  const other = gitlabBridge({ ...b, downstream_pipeline: { status: "running", web_url: "D", project_id: 43 } }, "gl:1");
+  assert.equal(other.label, "→ downstream");
+  const path = gitlabBridge({ ...b, downstream_pipeline: { status: "running", web_url: "D", project_id: 43, project_path: "team/infra" } }, "gl:1");
+  assert.equal(path.label, "→ team/infra");
+  const none = gitlabBridge(b, "gl:1");
+  assert.deepEqual([none.status, none.webUrl, none.bridge], ["passed", "B", true]);
+});
+
+test("gitlabCommitPipeline: two pipelines of one commit", () => {
+  const jobs = fx("gitlab-jobs.json");
+  const bridges = fx("gitlab-bridges.json");
+  const tag = { id: 20, status: "running", ref: "v1.0", sha: "s", web_url: "T", created_at: "2026-11-26T11:00:00Z" };
+  const branch = { id: 10, status: "failed", ref: "main", sha: "s", web_url: "M", created_at: "2026-11-26T10:00:00Z" };
+  const p = gitlabCommitPipeline([{ pipeline: tag, jobs: [jobs[3], jobs[0]], bridges }, { pipeline: branch, jobs: jobs.slice(0, 3), bridges: null }]);
+  assert.equal(p.id, 20);
+  assert.equal(p.status, "failed");
+  assert.deepEqual(p.groups.map((g) => g.ref), ["v1.0", "main"]);
+  assert.deepEqual(p.groups.map((g) => [g.key, g.name]), [["gl:20", "#20"], ["gl:10", "#10"]]);
+  assert.deepEqual(p.jobs.map((j) => [j.id, j.group]), [
+    [9001, "gl:20"], [9004, "gl:20"], [9102, "gl:20"], [9103, "gl:20"],
+    [9001, "gl:10"], [9002, "gl:10"], [9003, "gl:10"],
+  ]);
+  assert.deepEqual(p.stages, gitlabPipeline(tag, [jobs[3], jobs[0]]).stages);
+  assert.deepEqual(p.failedJobs.map((j) => j.name), ["unit"]);
+  assert.equal(p.jobsTruncated, false);
+});
+
+test("gitlabCommitPipeline: 100 jobs sets jobsTruncated", () => {
+  const many = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, name: `j${i}`, stage: "test", status: "success" }));
+  const pl = { id: 1, status: "success", ref: "main", sha: "s" };
+  assert.equal(gitlabCommitPipeline([{ pipeline: pl, jobs: many, bridges: [] }]).jobsTruncated, true);
+  assert.equal(gitlabCommitPipeline([{ pipeline: pl, jobs: many.slice(1), bridges: [] }]).jobsTruncated, false);
+});
+
+test("githubLatest: jobs carry the run as group and the in-progress step", () => {
+  const run = { id: 401, run_number: 1, name: "CI", head_branch: "main", head_sha: "x", status: "in_progress", conclusion: null, html_url: "R", created_at: "2026-11-26T09:00:00Z" };
+  const p = githubLatest({ workflow_runs: [run] }, { 401: fx("github-jobs-steps.json") });
+  assert.equal(p.jobs.length, 1);
+  const j = p.jobs[0];
+  assert.deepEqual(j.step, { index: 7, total: 12, name: "step 7" });
+  assert.deepEqual([j.stage, j.group, j.status, j.startedAt, j.bridge], ["CI", "gh:401", "running", "2026-11-26T09:00:10Z", false]);
+  assert.deepEqual(p.groups, [{ key: "gh:401", name: "CI", ref: "main", status: "running", webUrl: "R" }]);
+  const two = githubLatest(fx("github-runs.json"), {});
+  assert.deepEqual(two.groups.map((g) => g.key), ["gh:302", "gh:301"]);
+  assert.deepEqual(two.jobs, []);
 });
