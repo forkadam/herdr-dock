@@ -80,3 +80,13 @@ test("lru: setting an existing key refreshes its order without growing", () => {
   assert.equal(c.get("a"), 3);
   assert.equal(c.size, 2);
 });
+
+test("pauseFor: only a real 0 remaining pauses a 403", () => {
+  const now = 1000;
+  assert.equal(pauseFor({ status: 403, now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: null, now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: "", now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: "0x0", now }), 0);
+  assert.equal(pauseFor({ status: 403, remaining: "0", now }), 60000);
+  assert.equal(pauseFor({ status: 403, remaining: 0, now }), 60000);
+});
