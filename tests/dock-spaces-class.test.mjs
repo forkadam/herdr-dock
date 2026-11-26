@@ -133,3 +133,40 @@ test("dock-spaces: switching between the narrow rail and full brings the active 
   s3.render(cx);
   assert.deepEqual(scrolls(), [1, 3]);
 });
+
+test("dock-spaces: the chevron folds a space's agents and never selects or moves it", () => {
+  localStorage.removeItem("spaces.folded");
+  three();
+  handlers()["space-fold-A:on_mouse_down:left"]({}, cx);
+  s3.render(cx);
+  assert.equal(s3.activeAt, 1); // A's two agent rows are hidden
+  assert.deepEqual(moves(), []);
+  assert.deepEqual(JSON.parse(localStorage.getItem("spaces.folded")), ["A"]);
+  scrolls().length = 0;
+  s3.render(cx); s3.render(cx); // later redraws at rest
+  assert.deepEqual(scrolls(), []);
+  localStorage.removeItem("spaces.folded");
+});
+test("dock-spaces: folds come back with a new panel; an id that's gone is dropped at the next change", () => {
+  localStorage.setItem("spaces.folded", JSON.stringify(["A", "GONE"]));
+  three();
+  assert.equal(s3.activeAt, 1);
+  handlers()["space-fold-C:on_mouse_down:left"]?.({}, cx); // C has no children: no chevron
+  s3.toggleFold("B", cx);
+  assert.deepEqual(JSON.parse(localStorage.getItem("spaces.folded")), ["A", "B"]);
+  localStorage.removeItem("spaces.folded");
+});
+test("dock-spaces: the active worktree inside a folded parent: the parent is highlighted and scrolled to", () => {
+  localStorage.setItem("spaces.folded", JSON.stringify(["R"]));
+  resetHost();
+  herdr.data.layout = left(300);
+  herdr.data.spaces = [{ id: "R", name: "repo", folder: "/r", tabs: [{ id: "tr" }], active: false },
+                       { id: "W", name: "repo", folder: "/r-wt", tabs: [{ id: "tw" }], active: true }];
+  const s = new Spaces(); s.init({}, cx);
+  s.git['[null,"/r"]'] = { name: "repo", branch: "main", ahead: 0, behind: 0, repo: '[null,"/r/.git"]', linked: false };
+  s.git['[null,"/r-wt"]'] = { name: "repo", branch: "feat", ahead: 0, behind: 0, repo: '[null,"/r/.git"]', linked: true };
+  s.render(cx);
+  assert.equal(s.activeAt, 0);
+  assert.ok(scrolls().includes(0));
+  localStorage.removeItem("spaces.folded");
+});

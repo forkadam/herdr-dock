@@ -129,6 +129,36 @@ function sharedNames(names) {
   }
   return twice;
 }
+var URGENCY = { blocked: 4, done: 3, working: 2, idle: 1 };
+function foldRows(rows, folded) {
+  const childrenOf = (k) => {
+    const r = rows[k], kids = [];
+    for (let j = k + 1; j < rows.length; j++) {
+      const x = rows[j];
+      if (r.tree ? !(x.agent && x.w === r.w) : !x.agent && !x.tree) break;
+      kids.push(x);
+    }
+    return kids;
+  };
+  const out = [];
+  for (let k = 0; k < rows.length; k++) {
+    const r = rows[k];
+    if (r.agent) {
+      out.push(r);
+      continue;
+    }
+    const kids = childrenOf(k);
+    if (!kids.length || !folded.has(r.w.id)) {
+      out.push({ ...r, children: kids.length, folded: false });
+      continue;
+    }
+    const top = kids.filter((x) => x.agent).reduce((m, x) => (URGENCY[x.agent.status] ?? 0) > (URGENCY[m] ?? 0) ? x.agent.status : m, null);
+    const holdsActive = kids.some((x) => !x.agent && x.w.active);
+    out.push({ ...r, children: kids.length, folded: true, hidden: kids.length, top, holdsActive });
+    k += kids.length;
+  }
+  return out;
+}
 
 // src/shared/path.js
 function slashPath(p) {
@@ -205,6 +235,11 @@ var Spaces = class extends View {
       this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     } catch {
       this.folded = /* @__PURE__ */ new Set();
+    }
+    try {
+      this.foldedSpaces = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]"));
+    } catch {
+      this.foldedSpaces = /* @__PURE__ */ new Set();
     }
     this.refreshMachines(cx);
     cx.timer.every(15e3, (cx2) => this.refreshMachines(cx2));
@@ -468,6 +503,14 @@ var Spaces = class extends View {
     }
     cx.notify();
   }
+  // Fold or unfold a space's children; ids of spaces that are gone are dropped as folds change.
+  toggleFold(id, cx) {
+    this.foldedSpaces.has(id) ? this.foldedSpaces.delete(id) : this.foldedSpaces.add(id);
+    const ids = new Set(spaces().map((s) => s.id));
+    for (const k of this.foldedSpaces) if (!ids.has(k)) this.foldedSpaces.delete(k);
+    localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
+    cx.notify();
+  }
   menu(w) {
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
   }
@@ -513,7 +556,7 @@ var Spaces = class extends View {
   }
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
-    const rows = collapsed ? this.ordered() : withAgents(this.ordered(), agents());
+    const rows = collapsed ? this.ordered() : foldRows(withAgents(this.ordered(), agents()), this.foldedSpaces);
     const dupes = sharedNames(rows.filter((r) => r.agent).map((r) => this.nameFor(r.agent)));
     const draw = (r) => r.agent ? this.agentRow(r, t, dupes) : collapsed ? this.compact(r, t) : this.row(r, t);
     this.activeAt = -1;
@@ -529,7 +572,7 @@ var Spaces = class extends View {
     const loadingRow = (m) => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, (el) => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "\u2026" : "Loading\u2026");
     if (!remote.length) {
       if (loading(null) && !rows.length) return [loadingRow(null)];
-      this.activeAt = rows.findIndex((r) => r.w.active);
+      this.activeAt = rows.findIndex((r) => r.w.active || r.holdsActive);
       this.agentsAbove = agentRows(rows.slice(0, Math.max(this.activeAt, 0)));
       return rows.map(draw);
     }
@@ -575,7 +618,7 @@ var Spaces = class extends View {
         cx.notify();
       }).child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
       const items = [cell(head), ...guidance, ...folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)]];
-      const first = folded ? -1 : mine.findIndex((r) => r.w.active);
+      const first = folded ? -1 : mine.findIndex((r) => r.w.active || r.holdsActive);
       if (first >= 0) {
         this.activeAt = before + 1 + guidance.length + first;
         this.agentsAbove = agentsBefore + agentRows(mine.slice(0, first));
@@ -597,8 +640,8 @@ var Spaces = class extends View {
     const where2 = [repo, branch].filter(Boolean).join(" \xB7 ");
     return h_flex().flex_auto().min_w(where2 ? SIDE_MIN : 0).gap(5).justify_end().items_center().text_size(11.5).text_color(t.dim).when(Boolean(where2), (el) => el.child(div3().min_w(0).truncate().child(where2))).when(g.ahead > 0, (el) => el.child(div3().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`))).when(g.behind > 0, (el) => el.child(div3().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
-  row({ w, i, g, tree }, t) {
-    const on = w.active;
+  row({ w, i, g, tree, children = 0, folded = false, hidden = 0, top = null, holdsActive = false }, t) {
+    const on = w.active || holdsActive;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex((s) => s.id === this.pressed);
     const colors = shared2("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
@@ -609,7 +652,12 @@ var Spaces = class extends View {
       this.pressed = w.id;
       this.over = w.id;
     }).on_mouse_move((_e, cx) => this.dragOver(w, cx)).on_mouse_up("left", (_e, cx) => this.dragEnd(w, cx)).on_mouse_down("right", () => this.menu(w)).child(
-      h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg3("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div3().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div3().flex_1())
+      h_flex().gap(9).items_center().when(Boolean(tree), (el) => el.pl(22).child(svg3("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))).when(!tree, (el) => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?"))).child(div3().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name)).child(g ? this.gitTail(g, tree, w.name, t) : div3().flex_1()).when(folded && hidden > 0, (el) => el.child(div3().flex_none().text_size(11).text_color(t.dim).child(String(hidden)))).when(folded && Boolean(top) && top !== "idle", (el) => el.child(agentStatus(t, { status: top }, true))).when(children > 0, (el) => el.child(div3().id(`space-fold-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(folded ? "Show this space's agents and worktrees" : "Fold this space's agents and worktrees").on_mouse_down("left", (_e, cx) => {
+        cx.stop_propagation();
+        this.pressed = null;
+        this.over = null;
+        this.toggleFold(w.id, cx);
+      }).child(svg3(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11))))
     );
   }
   // herdr-dock: an agent under its space: its icon, its name (the peer name when proven), a Copy

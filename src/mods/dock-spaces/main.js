@@ -14,7 +14,7 @@ import { featureMode, iconRail, requestFocus } from "../_feature.js";
 import { showTerminal } from "../_page.js";
 import { agentIcon, agentStatus } from "../_agent.js";
 import { readPeerNames, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
-import { withAgents, rowLabel, sharedNames } from "../../shared/agent-rows.js";
+import { withAgents, rowLabel, sharedNames, foldRows } from "../../shared/agent-rows.js";
 import { slashPath } from "../../shared/path.js";
 
 function find(node, id) {
@@ -103,6 +103,8 @@ export default class Spaces extends View {
       for (const state of Object.values(this.reconnecting)) state.busy = false;
     } catch { this.reconnecting = {}; }
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
+    // herdr-dock: spaces whose children (agents, worktrees) are folded away; this.folded is machines'.
+    try { this.foldedSpaces = new Set(JSON.parse(localStorage.getItem("spaces.folded") ?? "[]")); } catch { this.foldedSpaces = new Set(); }
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Refresh only when the refs could have changed (see `due`).
@@ -369,6 +371,15 @@ export default class Spaces extends View {
     cx.notify();
   }
 
+  // Fold or unfold a space's children; ids of spaces that are gone are dropped as folds change.
+  toggleFold(id, cx) {
+    this.foldedSpaces.has(id) ? this.foldedSpaces.delete(id) : this.foldedSpaces.add(id);
+    const ids = new Set(spaces().map((s) => s.id));
+    for (const k of this.foldedSpaces) if (!ids.has(k)) this.foldedSpaces.delete(k);
+    localStorage.setItem("spaces.folded", JSON.stringify([...this.foldedSpaces]));
+    cx.notify();
+  }
+
   menu(w) {
     // A popup is as tall as its items; height is only the most.
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
@@ -422,7 +433,7 @@ export default class Spaces extends View {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     // herdr-dock: each space's agents under it (not in the narrow rail).
-    const rows = collapsed ? this.ordered() : withAgents(this.ordered(), agents());
+    const rows = collapsed ? this.ordered() : foldRows(withAgents(this.ordered(), agents()), this.foldedSpaces);
     const dupes = sharedNames(rows.filter((r) => r.agent).map((r) => this.nameFor(r.agent)));
     const draw = (r) => (r.agent ? this.agentRow(r, t, dupes) : collapsed ? this.compact(r, t) : this.row(r, t));
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
@@ -441,7 +452,7 @@ export default class Spaces extends View {
     const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) {
       if (loading(null) && !rows.length) return [loadingRow(null)];
-      this.activeAt = rows.findIndex(r => r.w.active);
+      this.activeAt = rows.findIndex(r => r.w.active || r.holdsActive);
       this.agentsAbove = agentRows(rows.slice(0, Math.max(this.activeAt, 0)));
       return rows.map(draw);
     }
@@ -501,7 +512,7 @@ export default class Spaces extends View {
             .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(login); this.copiedLogin = login; cx.notify(); })
             .child(this.copiedLogin === login ? "Copied" : "Copy")))] : [];
       const items = [cell(head), ...guidance, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
-      const first = folded ? -1 : mine.findIndex(r => r.w.active);
+      const first = folded ? -1 : mine.findIndex(r => r.w.active || r.holdsActive);
       if (first >= 0) {
         this.activeAt = before + 1 + guidance.length + first;
         this.agentsAbove = agentsBefore + agentRows(mine.slice(0, first));
@@ -535,8 +546,9 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree }, t) {
-    const on = w.active;
+  row({ w, i, g, tree, children = 0, folded = false, hidden = 0, top = null, holdsActive = false }, t) {
+    // A folded parent stands for the active worktree hidden inside it.
+    const on = w.active || holdsActive;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const colors = shared("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
@@ -571,7 +583,16 @@ export default class Spaces extends View {
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
+          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+          // herdr-dock: folded, how many rows it hides and the most urgent hidden state; the chevron folds.
+          .when(folded && hidden > 0, el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(String(hidden))))
+          .when(folded && Boolean(top) && top !== "idle", el => el.child(agentStatus(t, { status: top }, true)))
+          .when(children > 0, el => el.child(div().id(`space-fold-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim)
+            .cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
+            .tooltip(folded ? "Show this space's agents and worktrees" : "Fold this space's agents and worktrees")
+            // Its own press: never the row's select or drag (and a leftover drag press is dropped).
+            .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.pressed = null; this.over = null; this.toggleFold(w.id, cx); })
+            .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11)))),
       );
   }
 

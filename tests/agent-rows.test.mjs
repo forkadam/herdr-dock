@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { withAgents, rowLabel, sharedNames, spaceTags } from "../src/shared/agent-rows.js";
+import { withAgents, rowLabel, sharedNames, spaceTags, foldRows } from "../src/shared/agent-rows.js";
 
 const row = (id, tree = null) => ({ w: { id, machine: null }, tree });
 const ag = (address, space) => ({ address, space });
@@ -33,4 +33,29 @@ test("spaceTags adds the branch only where different spaces share a name, never 
 test("spaceTags: no branch or master leaves the plain name", () => {
   const tags = spaceTags([sa("t1", "S1", "api"), sa("t2", "S2", "api")], (a) => (a.address === "t1" ? "master" : null));
   assert.deepEqual([...tags.values()], ["api", "api"]);
+});
+
+const fr = () => {
+  const A = { id: "A" }, Aw = { id: "Aw" }, B = { id: "B" };
+  return [{ w: A, tree: null }, { w: A, agent: { status: "idle" }, depth: 1 }, { w: Aw, tree: "└─" },
+          { w: Aw, agent: { status: "done" }, depth: 2 }, { w: B, tree: null }];
+};
+const ids = (out) => out.map((r) => r.w.id + (r.agent ? "@" : ""));
+test("foldRows: a folded space hides its agents, worktrees and theirs; says how many and the most urgent", () => {
+  const out = foldRows(fr(), new Set(["A"]));
+  assert.deepEqual(ids(out), ["A", "B"]);
+  assert.deepEqual([out[0].folded, out[0].children, out[0].hidden, out[0].top], [true, 3, 3, "done"]);
+  assert.deepEqual([out[1].folded, out[1].children], [false, 0]);
+});
+test("foldRows: a folded worktree hides only its own agents; nothing folded shows everything", () => {
+  const out = foldRows(fr(), new Set(["Aw"]));
+  assert.deepEqual(ids(out), ["A", "A@", "Aw", "B"]);
+  assert.deepEqual([out[0].children, out[2].folded, out[2].hidden, out[2].top], [3, true, 1, "done"]);
+  assert.deepEqual(ids(foldRows(fr(), new Set())), ["A", "A@", "Aw", "Aw@", "B"]);
+  assert.equal(foldRows(fr(), new Set(["B"]))[4].folded, false); // nothing to fold
+});
+test("foldRows: a folded parent holds the active worktree hidden inside it", () => {
+  const rows = fr(); rows[2].w.active = true;
+  assert.equal(foldRows(rows, new Set(["A"]))[0].holdsActive, true);
+  assert.ok(!foldRows(rows, new Set())[0].holdsActive);
 });

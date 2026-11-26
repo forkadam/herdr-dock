@@ -53,3 +53,34 @@ export function spaceTags(list, branchOf) {
   }
   return tags;
 }
+
+const URGENCY = { blocked: 4, done: 3, working: 2, idle: 1 };
+
+// Spaces' rows (withAgents output) with each space row's children counted and a folded space's
+// children left out. A top-level space's children are every row up to the next top-level space (its
+// agents, its worktrees and theirs); a worktree's are its own agent rows right after it. A folded row
+// also says how many rows it hides, the most urgent hidden agent state, and whether the active
+// space is hidden inside it.
+export function foldRows(rows, folded) {
+  const childrenOf = (k) => {
+    const r = rows[k], kids = [];
+    for (let j = k + 1; j < rows.length; j++) {
+      const x = rows[j];
+      if (r.tree ? !(x.agent && x.w === r.w) : !x.agent && !x.tree) break;
+      kids.push(x);
+    }
+    return kids;
+  };
+  const out = [];
+  for (let k = 0; k < rows.length; k++) {
+    const r = rows[k];
+    if (r.agent) { out.push(r); continue; }
+    const kids = childrenOf(k);
+    if (!kids.length || !folded.has(r.w.id)) { out.push({ ...r, children: kids.length, folded: false }); continue; }
+    const top = kids.filter((x) => x.agent).reduce((m, x) => ((URGENCY[x.agent.status] ?? 0) > (URGENCY[m] ?? 0) ? x.agent.status : m), null);
+    const holdsActive = kids.some((x) => !x.agent && x.w.active);
+    out.push({ ...r, children: kids.length, folded: true, hidden: kids.length, top, holdsActive });
+    k += kids.length;
+  }
+  return out;
+}
