@@ -2357,7 +2357,7 @@ test("budget low: a watched running pipeline re-polls after 30 s, not 10 s", asy
   const c = createCollector(io);
   const n = () => io.fetches.filter((f) => f.url === PIPES).length;
   await c.select(WT);
-  const at = async (dt) => { io.t = T0 + dt; io.shared("dock.git.watching"); io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
+  const at = async (dt) => { io.t = T0 + dt; io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
   await at(0);
   const first = n();
   await at(10000);

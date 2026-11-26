@@ -8,7 +8,7 @@ import { theme, shared, setShared, props, closeOverlay, checking } from "herdr";
 import { gitCommand } from "../_git-command.js";
 import { badgeOf } from "../dock-git/view.js";
 import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
-import { ago, duration, canRetry, bucketOf, countLine, elapsed, viewGroups } from "./format.js";
+import { ago, duration, canRetry, bucketOf, countLine, elapsed, viewGroups, budgetLine } from "./format.js";
 
 const MOD = "dock-pipelines";
 const WARN = "#d29922";
@@ -273,6 +273,8 @@ export default class Pipelines extends View {
       return out;
     }
     out.push(this.pipelineLine(t, d));
+    const budget = budgetLine(d.budget, Date.now());
+    if (budget) out.push(div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text));
     const jobs = this.jobList(t, d);
     if (jobs) out.push(jobs);
     out.push(this.retryButton(t, p, d.retryError));

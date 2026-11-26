@@ -166,6 +166,22 @@ function viewGroups(pipeline, branch) {
   if (rest.length) out.push({ key: "", title: "Jobs", webUrl: null, stages: build(rest, null) });
   return out;
 }
+var API_NAME = { github: "GitHub", gitlab: "GitLab" };
+function thousands(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+function budgetLine(budget, now) {
+  if (!budget) return null;
+  const name = `${API_NAME[budget.provider] ?? budget.provider} API`;
+  if (typeof budget.limitedUntil === "number" && budget.limitedUntil > now) {
+    const at = new Date(budget.limitedUntil);
+    const pad = (n) => String(n).padStart(2, "0");
+    return { tone: "warn", text: `${name} limit reached \u2014 resumes at ${pad(at.getHours())}:${pad(at.getMinutes())}` };
+  }
+  const { remaining, limit } = budget;
+  if (!Number.isFinite(remaining) || !Number.isFinite(limit)) return null;
+  return { tone: "dim", text: `${name}: ${thousands(remaining)} of ${thousands(limit)} left` };
+}
 
 // src/mods/dock-pipelines/main.js
 var MOD = "dock-pipelines";
@@ -363,6 +379,8 @@ var Pipelines = class extends View {
       return out;
     }
     out.push(this.pipelineLine(t, d));
+    const budget = budgetLine(d.budget, Date.now());
+    if (budget) out.push(div().px(16).pt(3).flex_none().text_size(11.5).text_color(budget.tone === "warn" ? WARN : t.dim).child(budget.text));
     const jobs = this.jobList(t, d);
     if (jobs) out.push(jobs);
     out.push(this.retryButton(t, p, d.retryError));

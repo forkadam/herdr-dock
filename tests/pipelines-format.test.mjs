@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ago, duration, bucketOf, countLine, stageSummary, elapsed, viewGroups } from "../src/mods/dock-pipelines/format.js";
+import { ago, duration, bucketOf, countLine, stageSummary, elapsed, viewGroups, budgetLine } from "../src/mods/dock-pipelines/format.js";
 
 const NOW = Date.parse("2026-11-22T12:00:00Z");
 
@@ -177,4 +177,34 @@ test("viewGroups: two builds with the same title (a push and a pull_request run 
   assert.deepEqual(v.map((g) => g.title), ["CI · pull_request", "CI · push", "Lint"]);
   // The stage header is still left out: the stage carries the workflow's name, not the title.
   assert.equal(v[0].stages[0].name, null);
+});
+
+const hhmm = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+test("budgetLine: a dim line with thousands separators, the provider's name for each host", () => {
+  assert.deepEqual(budgetLine({ provider: "github", remaining: 4321, limit: 5000, limitedUntil: null }, NOW),
+    { tone: "dim", text: "GitHub API: 4,321 of 5,000 left" });
+  assert.deepEqual(budgetLine({ provider: "gitlab", remaining: 12, limit: 2000, limitedUntil: null }, NOW),
+    { tone: "dim", text: "GitLab API: 12 of 2,000 left" });
+  assert.equal(budgetLine({ provider: "github", remaining: 1234567, limit: 2000000 }, NOW).text, "GitHub API: 1,234,567 of 2,000,000 left");
+});
+
+test("budgetLine: a limit still ahead gives the warn line with the local HH:MM, whatever the numbers are", () => {
+  const until = NOW + 20 * 60 * 1000;
+  const want = `GitHub API limit reached — resumes at ${hhmm(until)}`;
+  assert.deepEqual(budgetLine({ provider: "github", remaining: 0, limit: 5000, limitedUntil: until }, NOW), { tone: "warn", text: want });
+  assert.deepEqual(budgetLine({ provider: "github", remaining: null, limit: null, limitedUntil: until }, NOW), { tone: "warn", text: want });
+  assert.match(budgetLine({ provider: "gitlab", remaining: null, limit: null, limitedUntil: until }, NOW).text, /^GitLab API limit reached — resumes at \d\d:\d\d$/);
+});
+
+test("budgetLine: a limit in the past gives the dim line; no usable numbers or no budget gives null", () => {
+  assert.deepEqual(budgetLine({ provider: "github", remaining: 10, limit: 5000, limitedUntil: NOW - 1 }, NOW),
+    { tone: "dim", text: "GitHub API: 10 of 5,000 left" });
+  assert.equal(budgetLine({ provider: "github", remaining: null, limit: null, limitedUntil: NOW - 1 }, NOW), null);
+  assert.equal(budgetLine({ provider: "github", remaining: 5, limit: null, limitedUntil: null }, NOW), null);
+  assert.equal(budgetLine(null, NOW), null);
+  assert.equal(budgetLine(undefined, NOW), null);
 });

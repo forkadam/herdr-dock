@@ -257,3 +257,31 @@ test("dock-pipelines: a running job redraws each second only while the panel is 
   await cx.tick(3);
   assert.equal(cx.notified, 3);
 });
+
+test("dock-pipelines: the budget line is drawn right under the pipeline line, before the job list", () => {
+  const d = gitlabDetail();
+  d.budget = { provider: "gitlab", remaining: 1987, limit: 2000, limitedUntil: null };
+  draw(d);
+  assert.deepEqual(between("a1b2c3d4", "2 jobs · 2 running"), ["a1b2c3d4", "GitLab API: 1,987 of 2,000 left"]);
+});
+
+test("dock-pipelines: no budget, or no readable numbers, draws no budget line", () => {
+  const d = gitlabDetail();
+  draw(d);
+  assert.equal(texts().some((s) => s.includes("API")), false);
+  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: null };
+  draw(d);
+  assert.equal(texts().some((s) => s.includes("API")), false);
+});
+
+test("dock-pipelines: while a limit pause lasts the warn line shows and the job list is still drawn", () => {
+  const d = gitlabDetail();
+  d.budget = { provider: "gitlab", remaining: null, limit: null, limitedUntil: Date.now() + 10 * 60 * 1000 };
+  draw(d);
+  const all = texts();
+  const warn = all.find((s) => s.startsWith("GitLab API limit reached — resumes at "));
+  assert.match(warn, /\d\d:\d\d$/);
+  assert.equal(all.some((s) => s.includes("left")), false);
+  assert.ok(all.indexOf(warn) < all.indexOf("2 jobs · 2 running"), "the warn line is above the job list");
+  assert.deepEqual(rowOf("e2e", "integration"), ["e2e", "1m34s", "↗", "> 112/340 specs passed"]);
+});
