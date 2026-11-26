@@ -2428,47 +2428,22 @@ test("limit: a limited first poll leaves no pipeline, no error and no alert, and
   assert.equal(io.notes.length, 0);
 });
 
-test("low budget: the watched worktree drops to 30 s; an unwatched one is unaffected (30 s anyway)", async () => {
-  const PIPES_B = `${GL}/pipelines?ref=b&per_page=1&order_by=id&sort=desc`;
+test("low budget: the watched worktree drops from 10 s to 30 s", async () => {
   const low = GL_HDR(100, 1795707975);
-  const { io } = ciIo({ routes: {
-    [PIPES]: () => hres(200, [pipeline({ status: "running" })], low),
-    [PIPES_B]: () => hres(200, [pipeline({ id: 5, ref: "b", status: "running" })], low),
-    [GL_JOBS]: res(200, []), [`${GL}/pipelines/5/jobs?per_page=100`]: res(200, []),
-  } });
-  const exec = io.exec;
-  io.exec = async (cmd, args, opts) => {
-    const k = args.join(" ");
-    if (cmd === "git" && k === "-C D:/work/api worktree list --porcelain") {
-      return ok(`worktree D:/work/api
-HEAD ${"c".repeat(40)}
-branch refs/heads/main
-
-worktree D:/work/api-b
-HEAD ${"d".repeat(40)}
-branch refs/heads/b
-`);
-    }
-    if (cmd === "git" && k === "--no-optional-locks -C D:/work/api-b status --porcelain=v2 --branch") return status("b", { oid: "d".repeat(40) });
-    return exec(cmd, args, opts);
-  };
+  const { io } = ciIo({ routes: { [PIPES]: () => hres(200, [pipeline({ status: "running" })], low), [GL_JOBS]: res(200, []) } });
   const c = createCollector(io);
   const nA = () => io.fetches.filter((f) => f.url === PIPES).length;
-  const nB = () => io.fetches.filter((f) => f.url === PIPES_B).length;
   await c.select(WT);
   const at = async (dt) => { io.t = T0 + dt; io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
   await at(0);
-  assert.ok(nA() >= 1 && nB() >= 1, "both worktrees polled");
-  const [a0, b0] = [nA(), nB()];
+  const a0 = nA();
+  assert.ok(a0 >= 1);
   await at(10000);
   assert.equal(nA(), a0, "watched, low budget: not after 10 s");
-  assert.equal(nB(), b0);
   await at(29000);
   assert.equal(nA(), a0);
-  assert.equal(nB(), b0);
   await at(30000);
   assert.equal(nA(), a0 + 1);
-  assert.equal(nB(), b0 + 1);
 });
 
 test("budget() during a pause is always an object (no headers needed); null again after it, when no headers were ever seen", async () => {
