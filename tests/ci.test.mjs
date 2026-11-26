@@ -258,7 +258,7 @@ test("githubLatest: jobs carry the run as group and the in-progress step", () =>
   const j = p.jobs[0];
   assert.deepEqual(j.step, { index: 7, total: 12, name: "step 7" });
   assert.deepEqual([j.stage, j.group, j.status, j.startedAt, j.bridge], ["CI", "gh:401", "running", "2026-11-26T09:00:10Z", false]);
-  assert.deepEqual(p.groups, [{ key: "gh:401", name: "CI", ref: "main", status: "running", webUrl: "R" }]);
+  assert.deepEqual(p.groups, [{ key: "gh:401", id: 401, name: "CI", ref: "main", event: null, status: "running", webUrl: "R" }]);
   const two = githubLatest(fx("github-runs.json"), {});
   assert.deepEqual(two.groups.map((g) => g.key), ["gh:302", "gh:301"]);
   assert.deepEqual(two.jobs, []);
@@ -382,4 +382,38 @@ test("lastLogLine: redact runs after the escape strip and before the 200-charact
   assert.equal(lastLogLine(`a\n${"x".repeat(190)}${TOKEN}\n`, redact), `${"x".repeat(190)}***`);
   // No redact given: the text as is.
   assert.equal(lastLogLine("a\nuse glpat-sec\x1b[0mret123\n"), `use ${TOKEN}`);
+});
+
+// --- final whole-branch review: an alert identity per failed pipeline / run ------------------------
+
+test("failedKeys: GitLab one key per failed pipeline (its id + its own failed-job finish stamp), newest first", () => {
+  const fail = (id, fin) => [{ id, name: `unit${id}`, stage: "test", status: "failed", finished_at: fin }];
+  const p = (id, status, created) => ({ id, status, ref: `r${id}`, sha: "s", created_at: created });
+  const both = gitlabCommitPipeline([
+    { pipeline: p(20, "failed", "2026-11-26T10:02:00Z"), jobs: fail(201, "2026-11-26T10:06:00Z"), bridges: null },
+    { pipeline: p(10, "failed", "2026-11-26T10:01:00Z"), jobs: fail(101, "2026-11-26T10:05:00Z"), bridges: null },
+  ]);
+  assert.deepEqual(both.failedKeys, ["20|2026-11-26T10:06:00Z", "10|2026-11-26T10:05:00Z"]);
+  const one = gitlabCommitPipeline([
+    { pipeline: p(20, "running", "2026-11-26T10:02:00Z"), jobs: null, bridges: null },
+    { pipeline: p(10, "failed", "2026-11-26T10:01:00Z"), jobs: fail(101, "2026-11-26T10:05:00Z"), bridges: null },
+  ]);
+  assert.deepEqual(one.failedKeys, ["10|2026-11-26T10:05:00Z"]);
+  assert.deepEqual(gitlabCommitPipeline([{ pipeline: p(20, "success"), jobs: null, bridges: null }]).failedKeys, []);
+});
+
+test("failedKeys: GitHub one key per failed run (run id + its updated_at)", () => {
+  const run = (id, conclusion, updated_at) => ({ id, name: `w${id}`, head_branch: "main", head_sha: "x", status: "completed", conclusion, created_at: "2026-11-26T09:00:00Z", updated_at });
+  const p = githubLatest({ workflow_runs: [run(1, "failure", "2026-11-26T09:10:00Z"), run(2, "failure", "2026-11-26T09:05:00Z"), run(3, "success", "2026-11-26T09:20:00Z")] }, {});
+  assert.deepEqual(p.failedKeys, ["1|2026-11-26T09:10:00Z", "2|2026-11-26T09:05:00Z"]);
+});
+
+test("alertFor: a second failed pipeline beside an already-alerted one alerts, naming only its own jobs", () => {
+  const fail = (id, fin) => [{ id, name: `unit${id}`, stage: "test", status: "failed", finished_at: fin }];
+  const p = (id, status) => ({ id, status, ref: `r${id}`, sha: "s", created_at: "2026-11-26T10:00:00Z" });
+  const branch = { pipeline: p(10, "failed"), jobs: fail(101, "2026-11-26T10:05:00Z"), bridges: null };
+  const prev = gitlabCommitPipeline([{ pipeline: p(20, "running"), jobs: null, bridges: null }, branch]);
+  const cur = gitlabCommitPipeline([{ pipeline: p(20, "failed"), jobs: fail(201, "2026-11-26T10:09:00Z"), bridges: null }, branch]);
+  const a = alertFor({ prev, cur, alerted: ["10|2026-11-26T10:05:00Z"], startedAt: 0, ...who });
+  assert.deepEqual(a, { title: "api · main", body: "Pipeline failed: unit201" });
 });

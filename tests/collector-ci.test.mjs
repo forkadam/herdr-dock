@@ -1324,3 +1324,124 @@ test("retry() on a failed commit with a running tag pipeline posts to the failed
   assert.ok(io.fetches.some((f) => f.url === `${GL}/pipelines/10/retry` && f.init.method === "POST"));
   assert.ok(!io.fetches.some((f) => f.url === `${GL}/pipelines/20/retry`));
 });
+
+// --- final whole-branch review: alerts and Retry across several failed pipelines / runs of one commit ------
+
+// A tag pipeline 20 and a branch pipeline 10 of HEAD, each with one test job (unit20 / unit10).
+function twoFailed({ created = "2026-11-22T10:01:00Z" } = {}) {
+  const pl = (id, ref) => (status) => pipeline({ id, ref, status, created_at: created, web_url: `https://gitlab.corp/grp/api/-/pipelines/${id}` });
+  const p10 = pl(10, "main");
+  const p20 = pl(20, "v1.0.0");
+  const failJobs = (id, fin) => [{ id: id * 10 + 1, name: `unit${id}`, stage: "test", status: "failed", finished_at: fin }];
+  const runJobs = (id) => [{ id: id * 10 + 1, name: `unit${id}`, stage: "test", status: "running" }];
+  const s = { pipes: [p20("failed"), p10("failed")], jobs: { 10: failJobs(10, "2026-11-22T10:05:00Z"), 20: failJobs(20, "2026-11-22T10:06:00Z") } };
+  const routes = {
+    [PIPES]: () => res(200, [s.pipes.find((p) => p.id === 10)]),
+    [SHAQ]: () => res(200, s.pipes),
+    [glJobs(10)]: () => res(200, s.jobs[10]),
+    [glJobs(20)]: () => res(200, s.jobs[20]),
+    [`${GL}/pipelines/10/retry`]: res(201, { id: 10, status: "running" }),
+    [`${GL}/pipelines/20/retry`]: res(201, { id: 20, status: "running" }),
+  };
+  return { s, routes, p10, p20, failJobs, runJobs };
+}
+const posts = (io) => io.fetches.filter((f) => f.init?.method === "POST").map((f) => f.url);
+
+test("F1 (a): tag 20 and branch 10 both failed: one alert at start-up for a fresh failure, Retry posts to both, no alert while 20 runs", async () => {
+  const { s, routes, p10, p20, runJobs } = twoFailed();
+  const { io, shared } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 1, "one alert for both");
+  assert.equal(io.notes[0].body, "Pipeline failed: unit20 (+1 more)");
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["20|2026-11-22T10:06:00Z", "10|2026-11-22T10:05:00Z"] });
+  await c.select(WT);
+  assert.deepEqual(await c.retry(), { ok: true, error: null });
+  assert.deepEqual(posts(io).sort(), [`${GL}/pipelines/10/retry`, `${GL}/pipelines/20/retry`]);
+  s.pipes = [p20("running"), p10("failed")];
+  s.jobs[20] = runJobs(20);
+  io.t += 1000; await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 1, "20 running, 10 still failed: no new alert");
+});
+
+test("F1 (a2): the same two failures, old at start-up: no alert", async () => {
+  const { routes } = twoFailed({ created: "2026-11-22T09:00:00Z" });
+  const { io } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 0);
+});
+
+test("F1 (b, c): 20 retried from the web while 10 stays failed: no alert; 20 failing again: exactly one, naming its job", async () => {
+  const { s, routes, p10, p20, failJobs, runJobs } = twoFailed({ created: "2026-11-22T09:00:00Z" });
+  const { io, shared } = ciIo({ routes });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 0, "old failures at start-up");
+  s.pipes = [p20("running"), p10("failed")];
+  s.jobs[20] = runJobs(20);
+  io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 0, "(b) 20 running from the web: no alert");
+  s.pipes = [p20("failed"), p10("failed")];
+  s.jobs[20] = failJobs(20, "2026-11-22T10:20:00Z");
+  io.t += 30000; await c.tick();
+  assert.equal(io.notes.length, 1, "(c) 20 failed again: one alert");
+  assert.equal(io.notes[0].body, "Pipeline failed: unit20");
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["20|2026-11-22T10:20:00Z"] });
+  io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 1);
+});
+
+test("F1 (d): GitHub, two failed runs of a sha, one rerun from the web and running: no new alert", async () => {
+  const SHA = "bbbb000000000000000000000000000000000002";
+  const run = (id, name, status, conclusion, updated_at) => ({
+    id, name, run_number: id, head_branch: "main", head_sha: SHA, status, conclusion,
+    html_url: `https://github.com/o/r/actions/runs/${id}`, created_at: "2026-11-22T10:01:00Z", updated_at,
+  });
+  let runs = [run(1, "CI", "completed", "failure", "2026-11-22T10:09:00Z"), run(2, "Lint", "completed", "failure", "2026-11-22T10:04:00Z")];
+  const body = () => res(200, { total_count: runs.length, workflow_runs: runs });
+  const { io, shared } = ciIo({
+    origin: "https://github.com/o/r.git", st: status("main", { oid: SHA }),
+    routes: {
+      "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": body,
+      [`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=20`]: body,
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(io.notes.length, 1, "both runs failed after start-up: one alert");
+  assert.deepEqual(shared.get("dock.git.alerted"), { [WT]: ["1|2026-11-22T10:09:00Z", "2|2026-11-22T10:04:00Z"] });
+  runs = [run(1, "CI", "in_progress", null, "2026-11-22T10:12:00Z"), runs[1]];
+  io.t += 300000; await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 1, "run 1 rerun from the web: no alert");
+});
+
+test("F1 (e): start-up: an old failed branch pipeline beside a tag pipeline created after start doesn't alert", async () => {
+  const old = pipeline({ id: 10, ref: "main", status: "failed", created_at: "2026-11-22T09:00:00Z" });
+  const tag = pipeline({ id: 20, ref: "v1.0.0", status: "running", created_at: "2026-11-22T10:01:00Z" });
+  const { io } = ciIo({
+    routes: {
+      [PIPES]: res(200, [old]), [SHAQ]: res(200, [tag, old]),
+      [glJobs(10)]: res(200, jobsDone("2026-11-22T09:05:00Z")),
+      [glJobs(20)]: res(200, [{ id: 950, name: "pack", stage: "build", status: "running" }]),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 0);
+});
+
+test("F1: GitLab Retry with no failed or canceled pipeline is an error, with no POST", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  const r = await c.retry();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /no failed or canceled/);
+  assert.deepEqual(posts(io), []);
+});

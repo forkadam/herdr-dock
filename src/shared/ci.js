@@ -62,6 +62,12 @@ export function gitlabBridge(b, groupKey) {
   };
 }
 
+// One failed pipeline (GitLab) or run (GitHub) of a Pipeline: its alert key, and what alertFor needs to tell a new
+// failure from one already seen. Each has its own key, so a second failed build of the commit being retried, or
+// passing, never changes the key of the one still failed.
+const failure = (id, finishedAt, createdAt, jobs) =>
+  ({ key: `${id}|${finishedAt ?? null}`, id, finishedAt: finishedAt ?? null, createdAt: createdAt ?? null, jobs });
+
 export function gitlabPipeline(p, jobs) {
   const list = Array.isArray(jobs) ? jobs : [];
   const byStage = new Map();
@@ -77,6 +83,10 @@ export function gitlabPipeline(p, jobs) {
     }
   }
   const status = normalizeStatus("gitlab", p);
+  const finishedAt = lastFail ?? p.finished_at ?? null;
+  const failures = status === "failed"
+    ? [failure(p.id, finishedAt, p.created_at, failedJobs.map((j) => j.name))]
+    : [];
   return {
     id: p.id,
     number: p.id ?? null, // what the UI shows as #<number>
@@ -88,16 +98,20 @@ export function gitlabPipeline(p, jobs) {
     createdAt: p.created_at,
     // The alert key's finish time. The pipelines list endpoint has no finished_at, and updated_at moves on a
     // still-failed pipeline, so it comes from the failed jobs (a retry that fails again moves it); never updated_at.
-    finishedAt: lastFail ?? p.finished_at ?? null,
+    finishedAt,
     stages: [...byStage].map(([name, sts]) => ({ name, status: worst(sts) })),
     failedJobs,
+    failedKeys: failures.map((f) => f.key),
+    failures,
     jobs: [],
     groups: [],
     jobsTruncated: false,
   };
 }
 
-const gitlabGroup = (p) => ({ key: `gl:${p.id}`, name: `#${p.id}`, ref: p.ref, status: normalizeStatus("gitlab", p), webUrl: p.web_url });
+const gitlabGroup = (p) => ({
+  key: `gl:${p.id}`, id: p.id, name: `#${p.id}`, ref: p.ref, event: p.source ?? null, status: normalizeStatus("gitlab", p), webUrl: p.web_url,
+});
 
 // Every pipeline of one commit (a branch and a tag pipeline can share it), newest first, as one Pipeline: the
 // newest one's identity and stages, the worst status, every failed job, and all jobs with bridges by pipeline.
@@ -106,9 +120,9 @@ export function gitlabCommitPipeline(entries) {
   const parts = entries.map((e) => gitlabPipeline(e.pipeline, e.jobs));
   const base = parts[0];
   const status = worst(parts.map((x) => x.status));
-  // While failed, the alert identity (id + finishedAt) is the failed pipelines' own: a tag pipeline starting or
-  // passing beside a failed branch pipeline must not alert again. finishedAt is the latest over them, so an older
-  // pipeline of the commit failing later still moves the key. The UI's number, link and age stay the newest's.
+  // While failed, id + finishedAt (what clears a stale Retry error) are the failed pipelines' own, so a tag pipeline
+  // starting or passing beside a failed branch pipeline moves neither. Alerts key on each failed pipeline instead
+  // (failures). The UI's number, link and age stay the newest's.
   const keyed = status === "failed" ? parts.filter((x) => x.status === "failed") : parts;
   const finishedAt = latestStamp(keyed.map((x) => x.finishedAt).filter(Boolean));
   const jobs = entries.flatMap((e) => {
@@ -125,6 +139,8 @@ export function gitlabCommitPipeline(entries) {
     status,
     busy: parts.some((x) => x.busy),
     failedJobs: parts.flatMap((x) => x.failedJobs),
+    failedKeys: parts.flatMap((x) => x.failedKeys),
+    failures: parts.flatMap((x) => x.failures),
     finishedAt,
     jobs,
     groups: entries.map((e) => gitlabGroup(e.pipeline)),
@@ -162,15 +178,20 @@ export function githubLatest(runsJson, jobsByRunId) {
   const same = runs.filter((r) => r.head_sha === newest.head_sha);
   const stages = same.map((r) => ({ name: r.name, status: normalizeStatus("github", r) }));
   const failedJobs = [];
+  const failures = [];
   same.forEach((r, i) => {
     if (stages[i].status !== "failed") return;
+    const names = [];
     for (const j of jobsByRunId?.[r.id]?.jobs ?? []) {
       if (normalizeStatus("github", j) !== "failed") continue;
+      names.push(j.name);
       failedJobs.push({
         name: j.name, stage: r.name, webUrl: j.html_url,
         duration: j.started_at && j.completed_at ? secondsBetween(j.started_at, j.completed_at) : null,
       });
     }
+    // A rerun keeps the run id and moves updated_at, so a rerun that fails again is a new key.
+    failures.push(failure(r.id, r.updated_at, r.created_at, names));
   });
   const failedRun = same.find((_, i) => stages[i].status === "failed");
   // finishedAt: the newest updated_at of the commit's failed runs (a rerun that fails again moves it), so a
@@ -183,7 +204,8 @@ export function githubLatest(runsJson, jobsByRunId) {
   const newestFirst = [...same].sort((a, b) => time(b) - time(a));
   const jobs = newestFirst.flatMap((r) => (jobsByRunId?.[r.id]?.jobs ?? []).map((j) => githubJob(j, r)));
   const groups = newestFirst.map((r) => ({
-    key: `gh:${r.id}`, name: r.name, ref: r.head_branch, status: normalizeStatus("github", r), webUrl: r.html_url,
+    key: `gh:${r.id}`, id: r.id, name: r.name, ref: r.head_branch, event: r.event ?? null, status: normalizeStatus("github", r),
+    webUrl: r.html_url,
   }));
   const jobsTruncated = same.some((r) => {
     const e = jobsByRunId?.[r.id];
@@ -201,14 +223,16 @@ export function githubLatest(runsJson, jobsByRunId) {
     finishedAt,
     stages,
     failedJobs,
+    failedKeys: failures.map((f) => f.key),
+    failures,
     jobs,
     groups,
     jobsTruncated,
   };
 }
 
-// The dock.git.alerted value for a failed pipeline: its id plus when it finished, so a Retry that fails again
-// (same GitLab pipeline id, same GitHub sha) is a new failure.
+// A dock.git.alerted key: an id plus when it finished, so a Retry that fails again (same id) is a new failure. Each
+// failed pipeline / run has one (Pipeline.failedKeys); this is the key of a Pipeline taken as one failure.
 export const alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;
 
 const ALERTED_MAX = 20;
@@ -223,22 +247,39 @@ export function nextAlerted(prev, key) {
   return list.slice(-ALERTED_MAX);
 }
 
-export function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
-  if (cur.status !== "failed") return null;
-  // alerted: a list of keys (or, in older stores, one key or a bare id). A bare id still suppresses that pipeline.
-  const key = alertKey(cur);
-  if (alertedList(alerted).some((k) => k != null && (k === key || String(k) === String(cur.id)))) return null;
-  const refinished = prev?.finishedAt != null && cur.finishedAt != null && prev.finishedAt !== cur.finishedAt;
-  const fresh = prev
-    ? prev.status !== "failed" || prev.id !== cur.id || refinished
-    : Date.parse(cur.createdAt) > startedAt;
-  if (!fresh) return null;
-  const jobs = cur.failedJobs ?? [];
+// A Pipeline's failed builds. One mapped before failures existed (or built by hand) is one failure under its own id.
+const failuresOf = (p) =>
+  Array.isArray(p?.failures) ? p.failures
+    : p?.status === "failed" ? [failure(p.id, p.finishedAt, p.createdAt, null)] : [];
+
+// The failed builds of `cur` to alert about: not in `alerted`, and new. With a previous poll, new means that build
+// wasn't failed then, or failed again since (both finish stamps known and different: a stamp still unknown, say its
+// jobs couldn't be read, is not a new failure). With none (start-up, a branch switch), the build was created after
+// the dock started; its own created time, not the newest build's, so a tag build created after start-up doesn't
+// make an old branch failure new.
+export function freshFailures({ prev, cur, alerted, startedAt }) {
+  if (cur?.status !== "failed") return [];
+  // alerted: a list of keys (or, in older stores, one key or a bare id). A bare id still suppresses that build.
+  const seen = alertedList(alerted);
+  const before = prev ? failuresOf(prev) : null;
+  return failuresOf(cur).filter((f) => {
+    if (seen.some((k) => k != null && (k === f.key || String(k) === String(f.id)))) return false;
+    if (!before) return Date.parse(f.createdAt) > startedAt;
+    return !before.some((b) => String(b.id) === String(f.id)
+      && (b.finishedAt == null || f.finishedAt == null || b.finishedAt === f.finishedAt));
+  });
+}
+
+// The notification for freshFailures(args), or null. The body names the failed jobs of the newly failed builds only.
+export function alertFor(args) {
+  const fresh = freshFailures(args);
+  if (!fresh.length) return null;
+  const jobs = fresh.flatMap((f) => f.jobs ?? (args.cur.failedJobs ?? []).map((j) => j.name));
   const more = jobs.length - 1;
   const body = jobs.length
-    ? `Pipeline failed: ${jobs[0].name}${more > 0 ? ` (+${more} more)` : ""}`
+    ? `Pipeline failed: ${jobs[0]}${more > 0 ? ` (+${more} more)` : ""}`
     : "Pipeline failed";
-  return { title: `${repo} · ${branch}`, body };
+  return { title: `${args.repo} · ${args.branch}`, body };
 }
 
 export function ciInterval({ status, upstreamChangedAt, now, watched }) {

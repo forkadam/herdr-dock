@@ -407,12 +407,15 @@ export function createCiClient(io, log) {
   const latest = (host, provider, path, head, opts) =>
     (provider === "github" ? githubLatestOf : gitlabLatest)(host, path, head, opts);
 
-  // Retry: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed run of that commit, and
-  // reruns each canceled run whole (a canceled run has no failed jobs to rerun).
+  // Retry: GitLab retries each failed or canceled pipeline of the commit (a tag and a branch pipeline can both have
+  // failed); GitHub reruns the failed jobs of each failed run of that commit, and reruns each canceled run whole (a
+  // canceled run has no failed jobs to rerun).
   async function retry(host, provider, path, pipeline, runIds, canceledRunIds) {
     let posts;
     if (provider === "gitlab") {
-      posts = [`projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(pipeline.id)}/retry`];
+      const ids = (pipeline.groups ?? []).filter((g) => g.status === "failed" || g.status === "canceled").map((g) => g.id);
+      posts = ids.map((id) => `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry`);
+      if (!posts.length) return { ok: false, error: "no failed or canceled pipelines" };
     } else {
       const repo = path.split("/").map(encodeURIComponent).join("/");
       posts = [

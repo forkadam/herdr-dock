@@ -185,6 +185,7 @@ function gitlabBridge(b, groupKey) {
     bridge: true
   };
 }
+var failure = (id, finishedAt, createdAt, jobs) => ({ key: `${id}|${finishedAt ?? null}`, id, finishedAt: finishedAt ?? null, createdAt: createdAt ?? null, jobs });
 function gitlabPipeline(p, jobs) {
   const list = Array.isArray(jobs) ? jobs : [];
   const byStage = /* @__PURE__ */ new Map();
@@ -200,6 +201,8 @@ function gitlabPipeline(p, jobs) {
     }
   }
   const status = normalizeStatus("gitlab", p);
+  const finishedAt = lastFail ?? p.finished_at ?? null;
+  const failures = status === "failed" ? [failure(p.id, finishedAt, p.created_at, failedJobs.map((j) => j.name))] : [];
   return {
     id: p.id,
     number: p.id ?? null,
@@ -212,15 +215,25 @@ function gitlabPipeline(p, jobs) {
     createdAt: p.created_at,
     // The alert key's finish time. The pipelines list endpoint has no finished_at, and updated_at moves on a
     // still-failed pipeline, so it comes from the failed jobs (a retry that fails again moves it); never updated_at.
-    finishedAt: lastFail ?? p.finished_at ?? null,
+    finishedAt,
     stages: [...byStage].map(([name, sts]) => ({ name, status: worst(sts) })),
     failedJobs,
+    failedKeys: failures.map((f) => f.key),
+    failures,
     jobs: [],
     groups: [],
     jobsTruncated: false
   };
 }
-var gitlabGroup = (p) => ({ key: `gl:${p.id}`, name: `#${p.id}`, ref: p.ref, status: normalizeStatus("gitlab", p), webUrl: p.web_url });
+var gitlabGroup = (p) => ({
+  key: `gl:${p.id}`,
+  id: p.id,
+  name: `#${p.id}`,
+  ref: p.ref,
+  event: p.source ?? null,
+  status: normalizeStatus("gitlab", p),
+  webUrl: p.web_url
+});
 function gitlabCommitPipeline(entries) {
   if (!entries.length) return null;
   const parts = entries.map((e) => gitlabPipeline(e.pipeline, e.jobs));
@@ -242,6 +255,8 @@ function gitlabCommitPipeline(entries) {
     status,
     busy: parts.some((x) => x.busy),
     failedJobs: parts.flatMap((x) => x.failedJobs),
+    failedKeys: parts.flatMap((x) => x.failedKeys),
+    failures: parts.flatMap((x) => x.failures),
     finishedAt,
     jobs,
     groups: entries.map((e) => gitlabGroup(e.pipeline)),
@@ -280,10 +295,13 @@ function githubLatest(runsJson, jobsByRunId) {
   const same = runs.filter((r) => r.head_sha === newest.head_sha);
   const stages = same.map((r) => ({ name: r.name, status: normalizeStatus("github", r) }));
   const failedJobs = [];
+  const failures = [];
   same.forEach((r, i) => {
     if (stages[i].status !== "failed") return;
+    const names = [];
     for (const j of jobsByRunId?.[r.id]?.jobs ?? []) {
       if (normalizeStatus("github", j) !== "failed") continue;
+      names.push(j.name);
       failedJobs.push({
         name: j.name,
         stage: r.name,
@@ -291,6 +309,7 @@ function githubLatest(runsJson, jobsByRunId) {
         duration: j.started_at && j.completed_at ? secondsBetween(j.started_at, j.completed_at) : null
       });
     }
+    failures.push(failure(r.id, r.updated_at, r.created_at, names));
   });
   const failedRun = same.find((_, i) => stages[i].status === "failed");
   const failedRuns = same.filter((_, i) => stages[i].status === "failed");
@@ -302,8 +321,10 @@ function githubLatest(runsJson, jobsByRunId) {
   const jobs = newestFirst.flatMap((r) => (jobsByRunId?.[r.id]?.jobs ?? []).map((j) => githubJob(j, r)));
   const groups = newestFirst.map((r) => ({
     key: `gh:${r.id}`,
+    id: r.id,
     name: r.name,
     ref: r.head_branch,
+    event: r.event ?? null,
     status: normalizeStatus("github", r),
     webUrl: r.html_url
   }));
@@ -324,12 +345,13 @@ function githubLatest(runsJson, jobsByRunId) {
     finishedAt,
     stages,
     failedJobs,
+    failedKeys: failures.map((f) => f.key),
+    failures,
     jobs,
     groups,
     jobsTruncated
   };
 }
-var alertKey = (p) => `${p.id}|${p.finishedAt ?? null}`;
 var ALERTED_MAX = 20;
 var alertedList = (v) => Array.isArray(v) ? v : v == null ? [] : [v];
 function nextAlerted(prev, key) {
@@ -337,17 +359,24 @@ function nextAlerted(prev, key) {
   list.push(key);
   return list.slice(-ALERTED_MAX);
 }
-function alertFor({ prev, cur, alerted, startedAt, repo, branch }) {
-  if (cur.status !== "failed") return null;
-  const key = alertKey(cur);
-  if (alertedList(alerted).some((k) => k != null && (k === key || String(k) === String(cur.id)))) return null;
-  const refinished = prev?.finishedAt != null && cur.finishedAt != null && prev.finishedAt !== cur.finishedAt;
-  const fresh = prev ? prev.status !== "failed" || prev.id !== cur.id || refinished : Date.parse(cur.createdAt) > startedAt;
-  if (!fresh) return null;
-  const jobs = cur.failedJobs ?? [];
+var failuresOf = (p) => Array.isArray(p?.failures) ? p.failures : p?.status === "failed" ? [failure(p.id, p.finishedAt, p.createdAt, null)] : [];
+function freshFailures({ prev, cur, alerted, startedAt }) {
+  if (cur?.status !== "failed") return [];
+  const seen = alertedList(alerted);
+  const before = prev ? failuresOf(prev) : null;
+  return failuresOf(cur).filter((f) => {
+    if (seen.some((k) => k != null && (k === f.key || String(k) === String(f.id)))) return false;
+    if (!before) return Date.parse(f.createdAt) > startedAt;
+    return !before.some((b) => String(b.id) === String(f.id) && (b.finishedAt == null || f.finishedAt == null || b.finishedAt === f.finishedAt));
+  });
+}
+function alertFor(args) {
+  const fresh = freshFailures(args);
+  if (!fresh.length) return null;
+  const jobs = fresh.flatMap((f) => f.jobs ?? (args.cur.failedJobs ?? []).map((j) => j.name));
   const more = jobs.length - 1;
-  const body = jobs.length ? `Pipeline failed: ${jobs[0].name}${more > 0 ? ` (+${more} more)` : ""}` : "Pipeline failed";
-  return { title: `${repo} \xB7 ${branch}`, body };
+  const body = jobs.length ? `Pipeline failed: ${jobs[0]}${more > 0 ? ` (+${more} more)` : ""}` : "Pipeline failed";
+  return { title: `${args.repo} \xB7 ${args.branch}`, body };
 }
 function ciInterval({ status, upstreamChangedAt, now, watched }) {
   if (watched && (status === "running" || status === "pending")) return 1e4;
@@ -740,7 +769,9 @@ ${st.stderr ?? ""}`;
   async function retry(host, provider, path, pipeline, runIds, canceledRunIds) {
     let posts;
     if (provider === "gitlab") {
-      posts = [`projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(pipeline.id)}/retry`];
+      const ids = (pipeline.groups ?? []).filter((g) => g.status === "failed" || g.status === "canceled").map((g) => g.id);
+      posts = ids.map((id) => `projects/${encodeURIComponent(path)}/pipelines/${encodeURIComponent(id)}/retry`);
+      if (!posts.length) return { ok: false, error: "no failed or canceled pipelines" };
     } else {
       const repo = path.split("/").map(encodeURIComponent).join("/");
       posts = [
@@ -1020,17 +1051,20 @@ function createCollector(io) {
   const branchLabel = ({ branch, sha }) => branch ?? (sha ? `detached @${sha.slice(0, 7)}` : "detached");
   function maybeAlert(wt, repo, cur, head) {
     const alerted = io.shared(ALERTED_KEY);
-    const a = alertFor({
+    const args = {
       prev: wt.ci.prev,
       cur,
       alerted: alerted?.[wt.id],
       startedAt,
       repo: repoName(repo.mainPath, repo.machine),
       branch: branchLabel(head)
-    });
-    if (!a) return;
+    };
+    const fresh = freshFailures(args);
+    if (!fresh.length) return;
+    const a = alertFor(args);
     const all = alerted && typeof alerted === "object" && !Array.isArray(alerted) ? alerted : {};
-    io.setShared(ALERTED_KEY, { ...all, [wt.id]: nextAlerted(all[wt.id], alertKey(cur)) });
+    const keys = fresh.reduce((list, f) => nextAlerted(list, f.key), all[wt.id]);
+    io.setShared(ALERTED_KEY, { ...all, [wt.id]: keys });
     try {
       const name = `dock-core.${gitCommandName("git.show", { worktree: wt.id })}`;
       io.notify({ ...a, level: "error", action: { name, args: { worktree: wt.id } } });

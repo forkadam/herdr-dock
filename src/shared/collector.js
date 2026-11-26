@@ -5,7 +5,7 @@
 // compare io.now() on each tick. The HTTP/CLI route lives in ci-client.js.
 // (No Node built-ins: bundled into Herdr mods.)
 import { parseWorktrees, parseStatus, parseRevParse, parseRemote, worktreeId } from "./git.js";
-import { gitInterval, ciInterval, alertFor, alertKey, nextAlerted } from "./ci.js";
+import { gitInterval, ciInterval, alertFor, freshFailures, nextAlerted } from "./ci.js";
 import { createCiClient } from "./ci-client.js";
 import { limiter } from "./limiter.js";
 import { gitCommandName } from "./gitcmd.js";
@@ -195,14 +195,18 @@ export function createCollector(io) {
 
   function maybeAlert(wt, repo, cur, head) {
     const alerted = io.shared(ALERTED_KEY);
-    const a = alertFor({
+    const args = {
       prev: wt.ci.prev, cur, alerted: alerted?.[wt.id], startedAt, repo: repoName(repo.mainPath, repo.machine), branch: branchLabel(head),
-    });
-    if (!a) return;
+    };
+    const fresh = freshFailures(args);
+    if (!fresh.length) return;
+    const a = alertFor(args);
     // Recorded before notifying, so a crash or restart mid-alert can't alert twice.
-    // Per worktree, the last 20 alert keys: a branch switch back to an old failure doesn't alert again.
+    // Per worktree, the last 20 alert keys, one per failed pipeline / run that alerted: a branch switch back to an
+    // old failure doesn't alert again.
     const all = alerted && typeof alerted === "object" && !Array.isArray(alerted) ? alerted : {};
-    io.setShared(ALERTED_KEY, { ...all, [wt.id]: nextAlerted(all[wt.id], alertKey(cur)) });
+    const keys = fresh.reduce((list, f) => nextAlerted(list, f.key), all[wt.id]);
+    io.setShared(ALERTED_KEY, { ...all, [wt.id]: keys });
     try {
       // Herdr drops a mod command's args, so the worktree rides in the name (args kept for readers).
       const name = `dock-core.${gitCommandName("git.show", { worktree: wt.id })}`;
@@ -591,8 +595,8 @@ export function createCollector(io) {
     publishDetail();
   }
 
-  // Retries the selected pipeline: GitLab retries the pipeline; GitHub reruns the failed jobs of each failed
-  // run of that commit.
+  // Retries the selected pipeline: GitLab retries each failed or canceled pipeline of the commit; GitHub reruns the
+  // failed jobs of each failed run of that commit, and each canceled run whole.
   async function retry() {
     const ci = wtRecs.get(selected)?.ci;
     const p = ci?.pipeline;
