@@ -21,7 +21,8 @@ not count against the rate limit (used count unchanged: 35 → 35).
 
 ## Goals
 
-- Finished builds' jobs (and GitLab bridges) are fetched once and reused until that build changes.
+- Finished builds' jobs are fetched once and reused until that build changes (GitLab bridges are revalidated by
+  ETag on every full poll).
 - Every GET on the fetch route sends the URL's last ETag; a 304 reuses the stored answer (free on GitHub).
 - The dock reads each host's remaining budget from response headers and:
   - when the remaining budget is low, drops the watched 10 s cadence to the normal 30 s and skips log traces;
@@ -75,11 +76,12 @@ standard one; the once-per-host log line settles it on deploy.
 
 ### Finished-build job cache
 
-- `jobsCache: Map<key, { stamp, jobs, bridges }>`, keys `gl|<host>|<path>|<pipelineId>` and
-  `gh|<host>|<path>|<runId>`, at most 100 entries.
+- `jobsCache: Map<key, { stamp, jobs }>`, keys `gl|<host>|<path>|<pipelineId>` and
+  `gh|<host>|<path>|<runId>`, at most 100 entries. Jobs only: GitLab bridges are never cached (a retried child
+  pipeline may not move the parent's `updated_at`), so they are fetched on every full poll and revalidated by ETag.
 - Stamp: GitLab pipeline `updated_at` + status; GitHub run `updated_at` + status + conclusion.
 - A build whose normalized status is finished (passed, failed, canceled, skipped) and whose stamp matches its cache
-  entry reuses the cached jobs/bridges with no request. A running/pending build always fetches (with its ETag).
+  entry reuses the cached jobs with no request. A running/pending build always fetches (with its ETag).
 - A Retry (or any change) moves `updated_at`, so the stamp no longer matches and the jobs are fetched again.
 - Applies to full and non-full polls and to both routes (fetch and CLI).
 

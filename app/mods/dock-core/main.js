@@ -489,7 +489,16 @@ function finishedStamp(provider, b) {
   if (!b?.updated_at || b.status === "canceling" || !FINISHED.has(normalizeStatus(provider, b))) return null;
   return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
 }
-var bridgesSettled = (bridges) => bridges.every((b) => !b.downstream_pipeline || FINISHED.has(normalizeStatus("gitlab", b.downstream_pipeline)));
+function frozenCopy(v) {
+  const freeze = (x) => {
+    if (x && typeof x === "object") {
+      for (const k of Object.keys(x)) freeze(x[k]);
+      Object.freeze(x);
+    }
+    return x;
+  };
+  return freeze(JSON.parse(JSON.stringify(v)));
+}
 function loginHint(provider, host) {
   if (provider === "github") return host === "github.com" ? "gh auth login" : `gh auth login --hostname ${host}`;
   return `glab auth login --hostname ${host}`;
@@ -505,15 +514,10 @@ function createCiClient(io, log) {
   const hosts = /* @__PURE__ */ new Map();
   const etags = lru(ETAGS);
   const jobsCache = lru(JOBS_CACHE);
-  const remember = (key, stamp, lists) => {
-    const prev = jobsCache.get(key);
-    const entry = prev?.stamp === stamp ? prev : { stamp };
-    for (const [k, v] of Object.entries(lists)) if (v) entry[k] = v;
-    jobsCache.set(key, entry);
-  };
-  const cachedFor = (key, stamp) => {
+  const remember = (key, stamp, jobs) => jobsCache.set(key, { stamp, jobs: frozenCopy(jobs) });
+  const cachedJobs = (key, stamp) => {
     const e = stamp ? jobsCache.get(key) : void 0;
-    return e?.stamp === stamp ? e : {};
+    return e?.stamp === stamp ? e.jobs : void 0;
   };
   const deadlines = /* @__PURE__ */ new Set();
   const secrets = /* @__PURE__ */ new Set();
@@ -803,10 +807,12 @@ ${r.stdout ?? ""}`)) {
       }
     };
   }
-  const budgetLow = (host) => {
+  function budget(host) {
     const h = hosts.get(host);
-    return Boolean(h && !h.cli && isLow(h.budget));
-  };
+    if (!h || h.cli || !h.budget) return null;
+    const { remaining, limit, resetAt } = h.budget;
+    return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+  }
   async function branchOrCommit(req, host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
       req("GET", branchPath),
@@ -867,15 +873,14 @@ ${r.stdout ?? ""}`)) {
       const wantJobs = full || ["failed", "running"].includes(normalizeStatus("gitlab", p));
       const key = `gl|${host}|${path}|${p.id}`;
       const stamp = finishedStamp("gitlab", p);
-      const cached = cachedFor(key, stamp);
-      const list = (have, url) => have ? { ok: true, data: have } : poll.req("GET", url);
+      const cached = wantJobs ? cachedJobs(key, stamp) : void 0;
       const [j, b] = await Promise.all([
-        wantJobs ? list(cached.jobs, `${at}/jobs?per_page=100`) : null,
-        full ? list(cached.bridges, `${at}/bridges?per_page=100`) : null
+        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`),
+        full ? poll.req("GET", `${at}/bridges?per_page=100`) : null
       ]);
       const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
       const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
-      if (stamp && (jobs || bridges)) remember(key, stamp, { jobs, bridges: bridges && bridgesSettled(bridges) ? bridges : null });
+      if (stamp && jobs && !cached) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
     if (poll.limited) return poll.limited;
@@ -885,8 +890,11 @@ ${r.stdout ?? ""}`)) {
     return { ok: true, pipeline };
   }
   async function logLines(host, path, pipeline, req) {
-    if (budgetLow(host)) return;
     const key = `${host}|${path}`;
+    if (budget(host)?.low) {
+      lastLog.delete(key);
+      return;
+    }
     const prev = lastLog.get(key) ?? /* @__PURE__ */ new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
     const kept = /* @__PURE__ */ new Map();
@@ -951,15 +959,15 @@ ${r.stdout ?? ""}`)) {
     await Promise.all((full ? ofHead : failed).map(async (run2) => {
       const key = `gh|${host}|${path}|${run2.id}`;
       const stamp = finishedStamp("github", run2);
-      const cached = cachedFor(key, stamp);
-      if (cached.jobs) {
-        jobsByRunId[run2.id] = cached.jobs;
+      const cached = cachedJobs(key, stamp);
+      if (cached) {
+        jobsByRunId[run2.id] = cached;
         return;
       }
       const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`);
       if (j.ok) {
         jobsByRunId[run2.id] = j.data;
-        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, { jobs: j.data });
+        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, j.data);
       } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run2.id}: ${j.error}`);
     }));
     if (poll.limited) return poll.limited;
@@ -1003,14 +1011,7 @@ ${r.stdout ?? ""}`)) {
       const h = hosts.get(host);
       return now < (h?.blockedUntil ?? 0) || now < (h?.limitedUntil ?? 0);
     },
-    // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers)
-    // or before any were seen.
-    budget: (host) => {
-      const h = hosts.get(host);
-      if (!h || h.cli || !h.budget) return null;
-      const { remaining, limit, resetAt } = h.budget;
-      return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
-    },
+    budget,
     // The refresh button: clear backoff, and let hosts without a login check again.
     reset() {
       for (const h of hosts.values()) {

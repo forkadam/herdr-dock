@@ -22,7 +22,7 @@ const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth log
 const MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
 const ETAGS = 300; // URLs whose last ETag and answer are kept
 const CLI_PAUSE = 60000; // the CLI route has no reset time: a limit message pauses the host this long
-const JOBS_CACHE = 100; // finished builds whose jobs (and GitLab bridges) are kept
+const JOBS_CACHE = 100; // finished builds whose jobs are kept
 const FINISHED = new Set(["passed", "failed", "canceled", "skipped"]);
 
 class Timeout extends Error {}
@@ -35,10 +35,18 @@ function finishedStamp(provider, b) {
   return provider === "github" ? `${b.updated_at}|${b.status}|${b.conclusion}` : `${b.updated_at}|${b.status}`;
 }
 
-// A finished GitLab pipeline's bridges can still show a downstream pipeline that runs on (a trigger without
-// `strategy: depend` succeeds as soon as it starts one), so they are cached only once every downstream has ended.
-const bridgesSettled = (bridges) =>
-  bridges.every((b) => !b.downstream_pipeline || FINISHED.has(normalizeStatus("gitlab", b.downstream_pipeline)));
+// A deep copy that nothing can change: a cached list must answer later polls as it was fetched, whatever happens to
+// the answer it came from (the ETag store keeps that same object).
+function frozenCopy(v) {
+  const freeze = (x) => {
+    if (x && typeof x === "object") {
+      for (const k of Object.keys(x)) freeze(x[k]);
+      Object.freeze(x);
+    }
+    return x;
+  };
+  return freeze(JSON.parse(JSON.stringify(v)));
+}
 
 export function loginHint(provider, host) {
   if (provider === "github") return host === "github.com" ? "gh auth login" : `gh auth login --hostname ${host}`;
@@ -63,19 +71,15 @@ export function createCiClient(io, log) {
   // Fetch route only: url -> { etag, data } of the last JSON answer that carried an ETag. A 304 to the next GET
   // reuses data (GitHub doesn't count a 304 against the limit).
   const etags = lru(ETAGS);
-  // Finished builds' lists, which can't change until the build does: "gl|<host>|<path>|<pipeline id>" or
-  // "gh|<host>|<path>|<run id>" -> { stamp, jobs?, bridges? } (each list kept once fetched). Reused while the build's
-  // stamp stays; a running build never reads it.
+  // Finished builds' jobs, which can't change until the build does: "gl|<host>|<path>|<pipeline id>" or
+  // "gh|<host>|<path>|<run id>" -> { stamp, jobs } (a frozen copy). Reused while the build's stamp stays; a running
+  // build never reads it. GitLab bridges are never kept: a retried child pipeline may not move the parent's
+  // updated_at, so they are asked on every full poll (with their ETag).
   const jobsCache = lru(JOBS_CACHE);
-  const remember = (key, stamp, lists) => {
-    const prev = jobsCache.get(key);
-    const entry = prev?.stamp === stamp ? prev : { stamp };
-    for (const [k, v] of Object.entries(lists)) if (v) entry[k] = v;
-    jobsCache.set(key, entry);
-  };
-  const cachedFor = (key, stamp) => {
+  const remember = (key, stamp, jobs) => jobsCache.set(key, { stamp, jobs: frozenCopy(jobs) });
+  const cachedJobs = (key, stamp) => {
     const e = stamp ? jobsCache.get(key) : undefined;
-    return e?.stamp === stamp ? e : {};
+    return e?.stamp === stamp ? e.jobs : undefined;
   };
   const deadlines = new Set(); // in-flight requests: { deadline, reject, ctl }
   const secrets = new Set(); // every token seen, to scrub from any text that leaves this module
@@ -396,11 +400,14 @@ export function createCiClient(io, log) {
       get limited() { return hit && { ...hit }; },
     };
   }
-  // Under 10 % of the host's budget left: log tails are skipped. Never on the CLI route (no headers there).
-  const budgetLow = (host) => {
+  // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers) or
+  // before any were seen. low: under 10 % left (log tails are skipped).
+  function budget(host) {
     const h = hosts.get(host);
-    return Boolean(h && !h.cli && isLow(h.budget));
-  };
+    if (!h || h.cli || !h.budget) return null;
+    const { remaining, limit, resetAt } = h.budget;
+    return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
+  }
 
   // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has builds of
   // that commit (a tag build of HEAD is filed under the tag, not the branch), and only those are kept: a server
@@ -477,15 +484,14 @@ export function createCiClient(io, log) {
       const wantJobs = full || ["failed", "running"].includes(normalizeStatus("gitlab", p));
       const key = `gl|${host}|${path}|${p.id}`;
       const stamp = finishedStamp("gitlab", p);
-      const cached = cachedFor(key, stamp);
-      const list = (have, url) => (have ? { ok: true, data: have } : poll.req("GET", url));
+      const cached = wantJobs ? cachedJobs(key, stamp) : undefined;
       const [j, b] = await Promise.all([
-        wantJobs ? list(cached.jobs, `${at}/jobs?per_page=100`) : null,
-        full ? list(cached.bridges, `${at}/bridges?per_page=100`) : null,
+        !wantJobs ? null : cached ? { ok: true, data: cached } : poll.req("GET", `${at}/jobs?per_page=100`),
+        full ? poll.req("GET", `${at}/bridges?per_page=100`) : null,
       ]);
       const jobs = listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`);
       const bridges = listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, `bridges|${host}|${path}|${p.id}`);
-      if (stamp && (jobs || bridges)) remember(key, stamp, { jobs, bridges: bridges && bridgesSettled(bridges) ? bridges : null });
+      if (stamp && jobs && !cached) remember(key, stamp, jobs);
       return { pipeline: p, jobs, bridges };
     }));
     if (poll.limited) return poll.limited;
@@ -499,10 +505,14 @@ export function createCiClient(io, log) {
   // traces are awaited on purpose, so the poll publishes its jobs with their lines: a slow trace delays that
   // poll's publish by at most 8 s (16 s with a 416 retry). The in-flight skip guards overlapping polls of two
   // worktrees of one repo, which can happen after the selection moves between them. On a low budget there are no
-  // traces at all: the calls left go to the lists and jobs.
+  // traces at all: the calls left go to the lists and jobs, and the repo's kept lines are dropped, so a line from
+  // before the low stretch never comes back after it.
   async function logLines(host, path, pipeline, req) {
-    if (budgetLow(host)) return;
     const key = `${host}|${path}`;
+    if (budget(host)?.low) {
+      lastLog.delete(key);
+      return;
+    }
     const prev = lastLog.get(key) ?? new Map();
     const runningJobs = pipeline.jobs.filter((j) => j.status === "running" && !j.bridge);
     const kept = new Map(); // a job no longer running drops its entry
@@ -570,15 +580,15 @@ export function createCiClient(io, log) {
     await Promise.all((full ? ofHead : failed).map(async (run) => {
       const key = `gh|${host}|${path}|${run.id}`;
       const stamp = finishedStamp("github", run);
-      const cached = cachedFor(key, stamp);
-      if (cached.jobs) {
-        jobsByRunId[run.id] = cached.jobs;
+      const cached = cachedJobs(key, stamp);
+      if (cached) {
+        jobsByRunId[run.id] = cached;
         return;
       }
       const j = await poll.req("GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`);
       if (j.ok) {
         jobsByRunId[run.id] = j.data;
-        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, { jobs: j.data });
+        if (stamp && Array.isArray(j.data?.jobs)) remember(key, stamp, j.data);
       } else if (!j.limited) log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
     if (poll.limited) return poll.limited;
@@ -632,14 +642,7 @@ export function createCiClient(io, log) {
       const h = hosts.get(host);
       return now < (h?.blockedUntil ?? 0) || now < (h?.limitedUntil ?? 0);
     },
-    // The host's API budget from the latest answer with rate-limit headers; null on the CLI route (no headers)
-    // or before any were seen.
-    budget: (host) => {
-      const h = hosts.get(host);
-      if (!h || h.cli || !h.budget) return null;
-      const { remaining, limit, resetAt } = h.budget;
-      return { remaining, limit, resetAt, limitedUntil: isLimited(h) ? h.limitedUntil : null, low: isLow(h.budget) };
-    },
+    budget,
     // The refresh button: clear backoff, and let hosts without a login check again.
     reset() {
       for (const h of hosts.values()) {

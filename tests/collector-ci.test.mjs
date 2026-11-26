@@ -1960,7 +1960,7 @@ const GH_R = "https://api.github.com/repos/o/r/actions/runs";
 const ghFailed = { origin: "https://github.com/o/r.git", st: status("main", { oid: "f".repeat(40) }) };
 const F_HEAD = { branch: "main", sha: "f".repeat(40) };
 
-test("GitLab: a finished pipeline's jobs and bridges are fetched once while its updated_at and status stay", async () => {
+test("GitLab: a finished pipeline's jobs are fetched once while its updated_at and status stay; its bridges every full poll", async () => {
   const done = pipeline({ status: "success", updated_at: U1 });
   const { io, c } = await clientOf("gitlab.corp", {
     routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, [BRIDGE]) },
@@ -1968,7 +1968,8 @@ test("GitLab: a finished pipeline's jobs and bridges are fetched once while its 
   const first = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
   const second = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
   assert.equal(calls(io, glJobs(48213)), 1);
-  assert.equal(calls(io, glBridges(48213)), 1);
+  // A retried child pipeline may not move the parent's updated_at: bridges are always asked (with their ETag).
+  assert.equal(calls(io, glBridges(48213)), 2);
   assert.equal(second.ok, true);
   assert.deepEqual(second.pipeline.jobs, first.pipeline.jobs);
   assert.deepEqual(second.pipeline.jobs.map((j) => [j.id, j.bridge]), [[901, false], [902, false], [903, false], [904, true]]);
@@ -2007,17 +2008,6 @@ test("GitLab: a canceling pipeline (shown as canceled, its jobs still stopping) 
   assert.equal(calls(io, glJobs(48213)), 2);
 });
 
-test("GitLab: a finished pipeline whose bridge's downstream pipeline still runs refetches its bridges", async () => {
-  const done = pipeline({ status: "success", updated_at: U1 });
-  const { io, c } = await clientOf("gitlab.corp", {
-    routes: { [PIPES]: res(200, [done]), [SHAQ]: res(200, [done]), [glJobs(48213)]: res(200, passedJobs), [glBridges(48213)]: res(200, [RUNNING_BRIDGE]) },
-  });
-  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
-  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
-  assert.equal(calls(io, glJobs(48213)), 1);
-  assert.equal(calls(io, glBridges(48213)), 2);
-});
-
 test("GitLab: jobs cached by a plain poll are reused by a full one, which fetches only the bridges", async () => {
   const failed = pipeline({ updated_at: U1 });
   const { io, c } = await clientOf("gitlab.corp", {
@@ -2029,7 +2019,120 @@ test("GitLab: jobs cached by a plain poll are reused by a full one, which fetche
   assert.equal(calls(io, glBridges(48213)), 1);
   assert.deepEqual(r.pipeline.jobs.map((j) => j.id), [901, 902, 903, 904]);
   await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
-  assert.equal(calls(io, glBridges(48213)), 1);
+  assert.equal(calls(io, glJobs(48213)), 1);
+  assert.equal(calls(io, glBridges(48213)), 2);
+});
+
+test("GitLab: a status-only change (same updated_at) refetches", async () => {
+  let st = "failed";
+  const rows = () => res(200, [pipeline({ status: st, updated_at: U1 })]);
+  const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: rows, [SHAQ]: rows, [glJobs(48213)]: res(200, JOBS) } });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 1);
+  st = "success";
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(calls(io, glJobs(48213)), 2);
+});
+
+test("GitLab: manual and created pipelines (pending) are never cached", async () => {
+  for (const st of ["manual", "created"]) {
+    const p = pipeline({ status: st, updated_at: U1 });
+    const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [p]), [SHAQ]: res(200, [p]), [glJobs(48213)]: res(200, JOBS) } });
+    for (let i = 0; i < 3; i++) await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+    assert.equal(calls(io, glJobs(48213)), 3, st);
+  }
+});
+
+test("GitHub: a Retry (completed -> in_progress with a new updated_at -> completed) refetches at each step", async () => {
+  const runs = fx("github-runs.json");
+  const at = (status, conclusion, updated_at) => ({
+    ...runs, workflow_runs: runs.workflow_runs.map((r) => (r.id === 301 ? { ...r, status, conclusion, updated_at } : { ...r, updated_at: U1 })),
+  });
+  let answer = at("completed", "failure", U1);
+  const jobs = `${GH_R}/301/jobs?per_page=100`;
+  const { io, c } = await clientOf("github.com", {
+    ...ghFailed, routes: { [`${GH_R}?branch=main&per_page=20`]: () => res(200, answer), [jobs]: res(200, fx("github-jobs-301.json")) },
+  });
+  const poll = () => c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  await poll();
+  await poll();
+  assert.equal(calls(io, jobs), 1);
+  answer = at("in_progress", null, U2);
+  await poll();
+  await poll();
+  assert.equal(calls(io, jobs), 3, "a running run is fetched every poll");
+  answer = at("completed", "failure", "2026-11-22T10:30:00Z");
+  await poll();
+  assert.equal(calls(io, jobs), 4, "completed again with a new stamp: fetched");
+  await poll();
+  assert.equal(calls(io, jobs), 4, "then cached");
+});
+
+test("GitHub: a conclusion-only change (same updated_at) refetches", async () => {
+  const runs = fx("github-runs.json");
+  const at = (conclusion) => ({ ...runs, workflow_runs: runs.workflow_runs.map((r) => ({ ...r, updated_at: U1, ...(r.id === 301 ? { conclusion } : {}) })) });
+  let answer = at("failure");
+  const jobs = `${GH_R}/301/jobs?per_page=100`;
+  const { io, c } = await clientOf("github.com", {
+    ...ghFailed, routes: { [`${GH_R}?branch=main&per_page=20`]: () => res(200, answer), [jobs]: res(200, fx("github-jobs-301.json")) },
+  });
+  const poll = () => c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  await poll();
+  await poll();
+  assert.equal(calls(io, jobs), 1);
+  answer = at("cancelled");
+  await poll();
+  assert.equal(calls(io, jobs), 2);
+});
+
+test("CLI route: a finished pipeline's jobs come from the cache; a limit message discards the poll", async () => {
+  const done = JSON.stringify([pipeline({ updated_at: U1 })]);
+  const { io, c } = await cliClientOf({
+    [`${P}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`]: ok(done),
+    [`${P}/pipelines?sha=${HEAD_SHA}&order_by=id&sort=desc&per_page=5`]: ok(done),
+    [`${P}/pipelines/48213/jobs?per_page=100`]: ok(JSON.stringify(JOBS)),
+  });
+  const jobCalls = () => io.calls.filter((x) => x.cmd === "glab" && x.args.at(-1) === `${P}/pipelines/48213/jobs?per_page=100`).length;
+  const first = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(c.via("gitlab.corp"), "glab");
+  const second = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(jobCalls(), 1);
+  assert.deepEqual(second.pipeline, first.pipeline);
+  // A new stamp makes it ask again, and the CLI's limit message discards the whole poll.
+  const moved = JSON.stringify([pipeline({ updated_at: U2 })]);
+  const { io: io2, c: c2 } = await cliClientOf({
+    [`${P}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`]: ok(moved),
+    [`${P}/pipelines?sha=${HEAD_SHA}&order_by=id&sort=desc&per_page=5`]: ok(moved),
+    [`${P}/pipelines/48213/jobs?per_page=100`]: { code: 1, stdout: "", stderr: "glab: HTTP 429 Too Many Requests" },
+  });
+  assert.deepEqual(await c2.latest("gitlab.corp", "gitlab", "grp/api", MAIN), LIMITED(io2.t + 60000));
+});
+
+test("cached jobs are a copy: changing the first answer's objects doesn't change a later poll", async () => {
+  const body = jobsDone("2026-11-22T10:05:00Z").map((j) => ({ ...j }));
+  const failed = pipeline({ updated_at: U1 });
+  const gl = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [failed]), [SHAQ]: res(200, [failed]), [glJobs(48213)]: res(200, body) } });
+  const first = await gl.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  const want = structuredClone(first.pipeline);
+  for (const j of body) Object.assign(j, { status: "success", name: "changed" });
+  first.pipeline.jobs[0].name = "changed too";
+  first.pipeline.failedJobs.length = 0;
+  assert.deepEqual((await gl.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN)).pipeline, want);
+
+  const runs = fx("github-runs.json");
+  runs.workflow_runs = runs.workflow_runs.map((r) => ({ ...r, updated_at: U1 }));
+  const jobs = fx("github-jobs-301.json");
+  const gh = await clientOf("github.com", {
+    ...ghFailed, routes: { [`${GH_R}?branch=main&per_page=20`]: res(200, runs), [`${GH_R}/301/jobs?per_page=100`]: res(200, jobs) },
+  });
+  const a = await gh.c.latest("github.com", "github", "o/r", F_HEAD, { full: true });
+  const wantGh = structuredClone(a.pipeline);
+  for (const j of jobs.jobs) {
+    j.conclusion = "success";
+    for (const s of j.steps ?? []) s.name = "changed";
+  }
+  assert.deepEqual((await gh.c.latest("github.com", "github", "o/r", F_HEAD, { full: true })).pipeline, wantGh);
 });
 
 test("GitHub: a completed run's jobs are fetched once; a run still in_progress is fetched every poll", async () => {
@@ -2096,6 +2199,25 @@ test("low budget: no trace calls", async () => {
   assert.equal(c.budget("gitlab.corp").low, true);
   assert.equal(io.fetches.filter((f) => f.url.endsWith("/trace")).length, 0);
   assert.deepEqual(r.pipeline.jobs.map((j) => j.logLine), [null, null, null]);
+});
+
+test("low budget: a log line stored before the low stretch never comes back", async () => {
+  let h = { "ratelimit-remaining": "4000", "ratelimit-limit": "5000" };
+  let trace = () => textRes(206, "one\nbefore\n");
+  const { io, c } = await clientOf("gitlab.corp", {
+    routes: fullRoutes({ [PIPES]: () => hres(200, [running()], h), [glJobs(48213)]: res(200, [RUNNING_JOBS[1]]), [traceUrl(912)]: () => trace() }),
+  });
+  const poll = () => c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(await poll(), 912), "before");
+  h = { "ratelimit-remaining": "100", "ratelimit-limit": "5000" };
+  await poll(); // the list's answer makes the budget low; this poll's trace is skipped
+  assert.equal(lineOf(await poll(), 912), null);
+  const traces = calls(io, traceUrl(912));
+  assert.equal(traces, 1);
+  h = { "ratelimit-remaining": "4000", "ratelimit-limit": "5000" };
+  trace = () => textRes(500, "");
+  assert.equal(lineOf(await poll(), 912), null, "the line from before the low stretch is gone");
+  assert.equal(calls(io, traceUrl(912)), traces + 1);
 });
 
 test("a limit hit on the jobs call makes latest() return limited", async () => {
