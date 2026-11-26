@@ -417,3 +417,26 @@ test("alertFor: a second failed pipeline beside an already-alerted one alerts, n
   const a = alertFor({ prev, cur, alerted: ["10|2026-11-26T10:05:00Z"], startedAt: 0, ...who });
   assert.deepEqual(a, { title: "api · main", body: "Pipeline failed: unit201" });
 });
+
+test("groups carry their event: GitHub run.event, GitLab pipeline.source; null when absent", () => {
+  const gl = gitlabCommitPipeline([
+    { pipeline: { id: 20, status: "success", ref: "v1", sha: "s", source: "push" }, jobs: null, bridges: null },
+    { pipeline: { id: 10, status: "success", ref: "main", sha: "s" }, jobs: null, bridges: null },
+  ]);
+  assert.deepEqual(gl.groups.map((g) => [g.id, g.event]), [[20, "push"], [10, null]]);
+  const run = (id, event) => ({ id, name: "CI", head_branch: "main", head_sha: "x", status: "completed", conclusion: "success", created_at: `2026-11-26T09:0${id}:00Z`, event });
+  const gh = githubLatest({ workflow_runs: [run(1, "push"), run(2, "pull_request")] }, {});
+  assert.deepEqual(gh.groups.map((g) => [g.id, g.event]), [[2, "pull_request"], [1, "push"]]);
+});
+
+test("lastLogLine strips OSC sequences, charset escapes and leftover control characters", () => {
+  // An OSC 8 hyperlink ended by BEL, and a title ended by ST (ESC then a backslash).
+  assert.equal(lastLogLine("a\nsee \x1b]8;;https://x.example\x07the docs\x1b]8;;\x07 now\n"), "see the docs now");
+  assert.equal(lastLogLine("a\n\x1b]0;title\x1b\\done\n"), "done");
+  // A charset escape (tput sgr0 ends with ESC ( B).
+  assert.equal(lastLogLine("a\n\x1b[1mbold\x1b(B\x1b[m plain\n"), "bold plain");
+  // A lone ESC and other control characters left over.
+  assert.equal(lastLogLine("a\nstep \x1bone\x00\x08 two\x7f\n"), "step one two");
+  // A tab is kept.
+  assert.equal(lastLogLine("a\nk\tv\n"), "k\tv");
+});

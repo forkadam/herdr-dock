@@ -72,6 +72,7 @@ export function elapsed(startedAt, now) {
 // The commit's builds as groups -> stages -> job rows, groups newest first as given. `index` is the job's place in
 // pipeline.jobs. A group whose only stage carries the group's own name (a GitHub workflow) gets no stage header.
 // Jobs that belong to no listed group (state written before groups existed) go in a trailing "Jobs" group.
+// Two builds with the same title (a push and a pull_request run of one GitHub workflow) also say their event.
 export function viewGroups(pipeline, branch) {
   const jobs = pipeline.jobs ?? [];
   const groups = pipeline.groups ?? [];
@@ -90,9 +91,11 @@ export function viewGroups(pipeline, branch) {
     }));
   };
   const indexed = jobs.map((job, index) => ({ job, index }));
-  const out = groups.map((g) => ({
+  const titles = groups.map((g) => (g.ref && g.ref !== branch ? `${g.name} · ${g.ref}` : g.name));
+  const shared = (t) => titles.filter((x) => x === t).length > 1;
+  const out = groups.map((g, i) => ({
     key: g.key,
-    title: g.ref && g.ref !== branch ? `${g.name} · ${g.ref}` : g.name,
+    title: shared(titles[i]) && g.event ? `${titles[i]} · ${g.event}` : titles[i],
     webUrl: g.webUrl,
     stages: build(indexed.filter((r) => r.job.group === g.key), g.name),
   }));

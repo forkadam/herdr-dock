@@ -360,13 +360,14 @@ function nextAlerted(prev, key) {
   return list.slice(-ALERTED_MAX);
 }
 var failuresOf = (p) => Array.isArray(p?.failures) ? p.failures : p?.status === "failed" ? [failure(p.id, p.finishedAt, p.createdAt, null)] : [];
+var listed = (p, id) => !Array.isArray(p.groups) || p.groups.some((g) => String(g.id) === String(id));
 function freshFailures({ prev, cur, alerted, startedAt }) {
   if (cur?.status !== "failed") return [];
   const seen = alertedList(alerted);
   const before = prev ? failuresOf(prev) : null;
   return failuresOf(cur).filter((f) => {
     if (seen.some((k) => k != null && (k === f.key || String(k) === String(f.id)))) return false;
-    if (!before) return Date.parse(f.createdAt) > startedAt;
+    if (!before || !listed(prev, f.id)) return Date.parse(f.createdAt) > startedAt;
     return !before.some((b) => String(b.id) === String(f.id) && (b.finishedAt == null || f.finishedAt == null || b.finishedAt === f.finishedAt));
   });
 }
@@ -389,7 +390,7 @@ function gitInterval({ open }) {
 }
 function lastLogLine(text, redact = (s) => s) {
   if (!text) return null;
-  const lines2 = text.slice(-16384).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/section_(start|end):\d+:[^\r\n]*/g, "").split("\n").map((l) => l.replace(/\r+$/, "")).map((l) => l.slice(l.lastIndexOf("\r") + 1).trim()).filter(Boolean);
+  const lines2 = text.slice(-16384).replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b[()][A-Za-z0-9]/g, "").replace(/section_(start|end):\d+:[^\r\n]*/g, "").split("\n").map((l) => l.replace(/\r+$/, "")).map((l) => l.slice(l.lastIndexOf("\r") + 1).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").trim()).filter(Boolean);
   return lines2.length ? redact(lines2[lines2.length - 1]).slice(0, 200) : null;
 }
 
@@ -422,6 +423,7 @@ var RELOGIN = 3e5;
 var COMMIT_GROUPS = 3;
 var LOG_JOBS = 2;
 var TRACE_TAIL = "bytes=-16384";
+var TRACE_TAIL_CHARS = 16384;
 var TRACE_TIMEOUT = 8e3;
 var NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
 var MISSING_CLI = /ENOENT|not found|not recognized|no such file/i;
@@ -444,6 +446,14 @@ function createCiClient(io, log) {
   };
   const lastLog = /* @__PURE__ */ new Map();
   const rangeLogged = /* @__PURE__ */ new Set();
+  const failing = /* @__PURE__ */ new Set();
+  const failedOnce = (kind, host, path, line) => {
+    const k = `${kind}|${host}|${path}`;
+    if (failing.has(k)) return;
+    failing.add(k);
+    log(line);
+  };
+  const succeeded = (kind, host, path) => failing.delete(`${kind}|${host}|${path}`);
   const rec = (host) => {
     if (!hosts.has(host)) hosts.set(host, {
       want: null,
@@ -645,38 +655,51 @@ ${st.stderr ?? ""}`;
       return viaCli(host, h, method, path, wantJson, opts);
     }
   }
-  async function branchOrCommit(host, path, branchPath, commitPath, rows) {
+  async function branchOrCommit(host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
       request(host, "GET", branchPath),
       request(host, "GET", commitPath, { noBackoff: true })
     ]);
     const found = c.ok ? rows(c.data) : null;
-    if (found?.length) return c;
-    if (!found) log(`CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
-    return b;
+    if (!found) {
+      failedOnce("commit", host, path, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      return b;
+    }
+    succeeded("commit", host, path);
+    const mine = found.filter(ofHead);
+    return mine.length ? { ...c, rows: mine } : b;
   }
-  const runsOf = (host, path, { branch, sha }, branchPath, commitPath, rows) => !branch ? request(host, "GET", commitPath) : !sha ? request(host, "GET", branchPath) : branchOrCommit(host, path, branchPath, commitPath, rows);
-  function listOf(r, what) {
+  async function runsOf(host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
+    const r = !branch ? await request(host, "GET", commitPath) : !sha ? await request(host, "GET", branchPath) : await branchOrCommit(host, path, branchPath, commitPath, rows, ofHead);
+    if (!r.ok) return r;
+    const list = r.rows ?? rows(r.data);
+    return list ? { ok: true, data: list } : { ok: false, error: "bad response", hostFailure: false };
+  }
+  function listOf(r, what, once) {
     if (!r) return null;
-    if (r.ok && Array.isArray(r.data)) return [...r.data].sort((a, b) => a.id - b.id);
-    log(`CI: ${what}: ${r.error ?? "bad response"}`);
+    if (r.ok && Array.isArray(r.data)) {
+      if (once) succeeded(...once);
+      return [...r.data].sort((a, b) => a.id - b.id);
+    }
+    const line = `CI: ${what}: ${r.error ?? "bad response"}`;
+    if (once) failedOnce(...once, line);
+    else log(line);
     return null;
   }
   async function gitlabLatest(host, path, head, { full = false } = {}) {
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
-    const rows = (d) => Array.isArray(d) ? d : null;
     const r = await runsOf(
       host,
       path,
       head,
       `${pipes}ref=${encodeURIComponent(head.branch)}&per_page=1&order_by=id&sort=desc`,
       head.branch ? `${pipes}sha=${sha}&order_by=id&sort=desc&per_page=5` : `${pipes}sha=${sha}&per_page=1&order_by=id&sort=desc`,
-      rows
+      (d) => Array.isArray(d) ? d : null,
+      (p) => p.sha === head.sha
     );
     if (!r.ok) return r;
-    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
     const kept = [];
     const refs = /* @__PURE__ */ new Set();
     for (const p of r.data) {
@@ -694,7 +717,7 @@ ${st.stderr ?? ""}`;
       return {
         pipeline: p,
         jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`)
+        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, ["bridges", host, path])
       };
     }));
     const pipeline = gitlabCommitPipeline(entries);
@@ -722,9 +745,13 @@ ${st.stderr ?? ""}`;
     e.busy = true;
     try {
       let r = await request(host, "GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
-      if (r.ok && (r.status === 206 || r.status === 200) && !rangeLogged.has(host)) {
-        rangeLogged.add(host);
-        log(`CI: ${host} trace Range ${r.status === 206 ? "honoured" : "ignored"}`);
+      if (r.ok && !rangeLogged.has(host)) {
+        const byStatus = r.status === 206 || r.status === 200;
+        if (byStatus || r.status == null) {
+          rangeLogged.add(host);
+          const honoured = byStatus ? r.status === 206 : String(r.data ?? "").length <= TRACE_TAIL_CHARS;
+          log(`CI: ${host} trace Range ${honoured ? "honoured" : "ignored"}${byStatus ? "" : " (by size)"}`);
+        }
       }
       if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
       if (r.ok) {
@@ -741,29 +768,29 @@ ${st.stderr ?? ""}`;
   async function githubLatestOf(host, path, head, { full = false } = {}) {
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
-    const rows = (d) => Array.isArray(d?.workflow_runs) ? d.workflow_runs : null;
     const r = await runsOf(
       host,
       path,
       head,
       `${runs}branch=${encodeURIComponent(head.branch)}&per_page=20`,
       `${runs}head_sha=${encodeURIComponent(head.sha)}&per_page=20`,
-      rows
+      (d) => Array.isArray(d?.workflow_runs) ? d.workflow_runs : null,
+      (x) => x.head_sha === head.sha
     );
     if (!r.ok) return r;
-    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
-    const first = githubLatest(r.data, {});
+    const answer2 = { workflow_runs: r.data };
+    const first = githubLatest(answer2, {});
     if (!first) return { ok: true, pipeline: null };
-    const ofHead = r.data.workflow_runs.filter((x) => x.head_sha === first.id);
+    const ofHead = r.data.filter((x) => x.head_sha === first.id);
     const failed = ofHead.filter((x) => normalizeStatus("github", x) === "failed");
     const jobsByRunId = {};
     await Promise.all((full ? ofHead : failed).map(async (run2) => {
-      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs`);
+      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run2.id)}/jobs?per_page=100`);
       if (j.ok) jobsByRunId[run2.id] = j.data;
       else log(`CI: jobs of ${host}/${path} run ${run2.id}: ${j.error}`);
     }));
     const canceled = ofHead.filter((x) => normalizeStatus("github", x) === "canceled");
-    return { ok: true, pipeline: githubLatest(r.data, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
+    return { ok: true, pipeline: githubLatest(answer2, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }
   const latest = (host, provider, path, head, opts) => (provider === "github" ? githubLatestOf : gitlabLatest)(host, path, head, opts);
   async function retry(host, provider, path, pipeline, runIds, canceledRunIds) {
@@ -1222,12 +1249,12 @@ function createCollector(io) {
     for (const id of keep) view.delete(id);
     if (io.autoAdd === false) return;
     if (resolving) return;
-    const listed = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
+    const listed2 = new Set(readAdded().map((a) => idOf(a.machine, a.path)));
     const extra = [];
     for (const r of view.values()) {
       if (r.added || r.error) continue;
       const w = [...r.wts.values()].find((x) => x.open);
-      if (w && !listed.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
+      if (w && !listed2.has(idOf(r.machine ?? null, w.path))) extra.push({ path: w.path, machine: r.machine ?? null });
     }
     if (extra.length) io.setShared(REPOS_KEY, [...io.shared(REPOS_KEY) ?? [], ...extra]);
   }

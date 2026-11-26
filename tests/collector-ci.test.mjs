@@ -354,7 +354,7 @@ test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for th
     routes: {
       [RUNS]: res(200, all),
       [HEAD_RUNS]: res(200, { total_count: 2, workflow_runs: all.workflow_runs.filter((r) => r.head_sha === SHA) }),
-      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs?per_page=100": res(200, fx("github-jobs-301.json")),
       [RERUN]: res(201, {}),
     },
   });
@@ -369,7 +369,7 @@ test("(k) GitHub: two workflows on one sha, one failed; rerun-failed-jobs for th
   // GitHub refuses API requests with no User-Agent (HTTP 403), and Herdr's fetch sends none.
   assert.equal(io.fetches[0].init.headers["User-Agent"], "herdr-dock");
   // The branch's runs, HEAD's runs, and only the failed run's jobs.
-  assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, HEAD_RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs"]);
+  assert.deepEqual(io.fetches.map((f) => f.url), [RUNS, HEAD_RUNS, "https://api.github.com/repos/o/r/actions/runs/301/jobs?per_page=100"]);
   await c.select(WT);
   assert.deepEqual(detailOf(io).pipeline.failedJobs.map((j) => j.name), ["test"]);
   assert.deepEqual(await c.retry(), { ok: true, error: null });
@@ -889,7 +889,7 @@ test("GitHub: no run for HEAD yet -> the branch's newest commit, older than HEAD
     routes: {
       "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": res(200, fx("github-runs.json")),
       [`https://api.github.com/repos/o/r/actions/runs?head_sha=${"f".repeat(40)}&per_page=20`]: res(200, { total_count: 0, workflow_runs: [] }),
-      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs?per_page=100": res(200, fx("github-jobs-301.json")),
     },
   });
   const c = createCollector(io);
@@ -1052,8 +1052,8 @@ test("GitLab full: the log line is redacted, even where the 200-character cut sp
 test("GitHub full: jobs of every run of HEAD are fetched; not full only failed runs'", async () => {
   const routes = {
     [GH_BRANCH]: res(200, ciOnly()), [GH_HEAD(TAG_SHA)]: res(200, fx("github-runs-tag.json")),
-    [`${GH}/45823655383/jobs`]: res(200, fx("github-jobs-45823655383.json")),
-    [`${GH}/45822438336/jobs`]: res(200, fx("github-jobs-45822438336.json")),
+    [`${GH}/45823655383/jobs?per_page=100`]: res(200, fx("github-jobs-45823655383.json")),
+    [`${GH}/45822438336/jobs?per_page=100`]: res(200, fx("github-jobs-45822438336.json")),
   };
   const head = { branch: "main", sha: TAG_SHA };
   const full = await clientOf("github.com", { ...ghTag, routes });
@@ -1070,7 +1070,7 @@ test("GitHub full: jobs of every run of HEAD are fetched; not full only failed r
   assert.equal(r.pipeline.jobs[1].step.index, 9);
   assert.equal(r.pipeline.jobs[1].step.total, 12);
   assert.deepEqual(full.io.fetches.slice(0, 2).map((f) => f.url), [GH_BRANCH, GH_HEAD(TAG_SHA)]);
-  assert.equal(full.io.fetches.filter((f) => f.url.endsWith("/jobs")).length, 2);
+  assert.equal(full.io.fetches.filter((f) => f.url.endsWith("/jobs?per_page=100")).length, 2);
 
   const plain = await clientOf("github.com", { ...ghTag, routes });
   const q = await plain.c.latest("github.com", "github", "acme/app", head);
@@ -1134,7 +1134,7 @@ test("the HEAD-commit query never backs off the host (GitHub)", async () => {
     routes: {
       "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": res(200, fx("github-runs.json")),
       [`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=20`]: later(res(503, { message: "busy" })),
-      "https://api.github.com/repos/o/r/actions/runs/301/jobs": res(200, fx("github-jobs-301.json")),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs?per_page=100": res(200, fx("github-jobs-301.json")),
     },
   });
   const r = await c.latest("github.com", "github", "o/r", { branch: "main", sha: SHA });
@@ -1444,4 +1444,117 @@ test("F1: GitLab Retry with no failed or canceled pipeline is an error, with no 
   assert.equal(r.ok, false);
   assert.match(r.error, /no failed or canceled/);
   assert.deepEqual(posts(io), []);
+});
+
+// --- final whole-branch review: client minors ---------------------------------------------------------
+
+// A client whose fetch always fails with a TLS error, so every call goes through glab api (answered by `cli`,
+// keyed by the path relative to the API root).
+async function cliClientOf(answers) {
+  const tls = () => { throw Object.assign(new Error("fetch failed"), { cause: { code: "CERT" } }); };
+  const cli = {};
+  for (const [path, a] of Object.entries(answers)) cli[`glab api --hostname gitlab.corp ${path}`] = a;
+  return clientOf("gitlab.corp", { routes: new Proxy({}, { get: () => tls }), cli });
+}
+const P = "projects/grp%2Fapi";
+const cliRunning = (trace) => ({
+  [`${P}/pipelines?ref=main&per_page=1&order_by=id&sort=desc`]: ok(JSON.stringify([running()])),
+  [`${P}/pipelines?sha=${HEAD_SHA}&order_by=id&sort=desc&per_page=5`]: ok(JSON.stringify([running()])),
+  [`${P}/pipelines/48213/jobs?per_page=100`]: ok(JSON.stringify([RUNNING_JOBS[1]])),
+  [`${P}/pipelines/48213/bridges?per_page=100`]: ok("[]"),
+  [`-H Range: bytes=-16384 ${P}/jobs/912/trace`]: ok(trace),
+});
+
+test("M1: on the glab route a trace up to 16384 characters logs Range honoured (by size), once per host", async () => {
+  const { io, c } = await cliClientOf(cliRunning("a\nlast\n"));
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(c.via("gitlab.corp"), "glab");
+  assert.equal(lineOf(r, 912), "last");
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.deepEqual(io.logs.filter((l) => l.includes("trace Range")), ["CI: gitlab.corp trace Range honoured (by size)"]);
+});
+
+test("M1: on the glab route a trace over 16384 characters logs Range ignored (by size)", async () => {
+  const { io, c } = await cliClientOf(cliRunning(`${"x".repeat(20000)}\nlast\n`));
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  assert.equal(lineOf(r, 912), "last");
+  assert.deepEqual(io.logs.filter((l) => l.includes("trace Range")), ["CI: gitlab.corp trace Range ignored (by size)"]);
+});
+
+test("M2: a failing HEAD-commit query logs once until it succeeds again", async () => {
+  let shaq = res(404, { message: "404 Not found" });
+  const { io, c } = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: () => shaq, [glJobs(48213)]: res(200, JOBS) } });
+  const lines = () => io.logs.filter((l) => l.includes("HEAD commit query"));
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(lines().length, 1, "two failing polls: one line");
+  shaq = res(200, []);
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  shaq = res(404, { message: "404 Not found" });
+  await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(lines().length, 2, "success then failure: a second line");
+});
+
+test("M2: a failing bridges call (an older GitLab) logs once until it succeeds again", async () => {
+  let bridges = res(404, { message: "404 Not found" });
+  const { io, c } = await clientOf("gitlab.corp", { routes: passedRoutes({ [glBridges(48213)]: () => bridges }) });
+  const lines = () => io.logs.filter((l) => l.includes("bridges of"));
+  const poll = () => c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true });
+  await poll(); await poll();
+  assert.deepEqual(lines(), ["CI: bridges of gitlab.corp/grp/api pipeline 48213: HTTP 404"]);
+  bridges = res(200, []);
+  await poll();
+  bridges = res(404, { message: "404 Not found" });
+  await poll();
+  assert.equal(lines().length, 2, "success then failure: a second line");
+});
+
+test("M4: GitLab commit-query rows of another sha are dropped; with none left the branch result stands", async () => {
+  const other = pipeline({ id: 99, ref: "other", sha: "d".repeat(40), status: "success" });
+  const { c } = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: res(200, [other]), [glJobs(48213)]: res(200, JOBS) } });
+  const r = await c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.equal(r.pipeline.id, 48213);
+  assert.deepEqual(r.pipeline.groups.map((g) => g.key), ["gl:48213"]);
+  const tag = pipeline({ id: 20, ref: "v1.0.0", status: "success" });
+  const mixed = await clientOf("gitlab.corp", { routes: { [PIPES]: res(200, [pipeline()]), [SHAQ]: res(200, [other, tag]) } });
+  const m = await mixed.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN);
+  assert.deepEqual(m.pipeline.groups.map((g) => g.key), ["gl:20"]);
+});
+
+test("M4: GitHub commit-query runs of another sha are dropped; with none left the branch result stands", async () => {
+  const SHA = "bbbb000000000000000000000000000000000002";
+  const otherRun = { id: 900, run_number: 9, name: "CI", head_branch: "other", head_sha: "e".repeat(40), status: "completed", conclusion: "success",
+    html_url: "https://github.com/o/r/actions/runs/900", created_at: "2026-11-23T09:00:00Z" };
+  const { c } = await clientOf("github.com", {
+    origin: "https://github.com/o/r.git",
+    routes: {
+      "https://api.github.com/repos/o/r/actions/runs?branch=main&per_page=20": res(200, fx("github-runs.json")),
+      [`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=20`]: res(200, { total_count: 1, workflow_runs: [otherRun] }),
+      "https://api.github.com/repos/o/r/actions/runs/301/jobs?per_page=100": res(200, fx("github-jobs-301.json")),
+    },
+  });
+  const r = await c.latest("github.com", "github", "o/r", { branch: "main", sha: SHA });
+  assert.equal(r.pipeline.id, SHA);
+  assert.deepEqual(r.pipeline.groups.map((g) => g.key), ["gh:302", "gh:301"]);
+});
+
+test("F1: an old failed tag pipeline that drops out for one poll (commit query failing) and comes back doesn't alert", async () => {
+  const old = (id, ref) => pipeline({ id, ref, status: "failed", created_at: "2026-11-22T09:00:00Z" });
+  let shaq = res(200, [old(20, "v1.0.0"), old(10, "main")]);
+  const { io } = ciIo({
+    routes: {
+      [PIPES]: res(200, [old(10, "main")]), [SHAQ]: () => shaq,
+      [glJobs(10)]: res(200, jobsDone("2026-11-22T09:05:00Z")), [glJobs(20)]: res(200, jobsDone("2026-11-22T09:06:00Z")),
+    },
+  });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.equal(io.notes.length, 0, "old failures at start-up");
+  shaq = res(502, { message: "502 Bad Gateway" });
+  io.t += 300000; await c.tick();
+  assert.deepEqual(detailOf(io).pipeline.groups.map((g) => g.key), ["gl:10"], "the branch result only");
+  shaq = res(200, [old(20, "v1.0.0"), old(10, "main")]);
+  io.t += 300000; await c.tick();
+  assert.equal(io.notes.length, 0, "20 is back, still the same old failure");
 });

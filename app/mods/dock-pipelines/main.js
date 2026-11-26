@@ -154,9 +154,11 @@ function viewGroups(pipeline, branch) {
     }));
   };
   const indexed = jobs.map((job, index) => ({ job, index }));
-  const out = groups.map((g) => ({
+  const titles = groups.map((g) => g.ref && g.ref !== branch ? `${g.name} \xB7 ${g.ref}` : g.name);
+  const shared2 = (t) => titles.filter((x) => x === t).length > 1;
+  const out = groups.map((g, i) => ({
     key: g.key,
-    title: g.ref && g.ref !== branch ? `${g.name} \xB7 ${g.ref}` : g.name,
+    title: shared2(titles[i]) && g.event ? `${titles[i]} \xB7 ${g.event}` : titles[i],
     webUrl: g.webUrl,
     stages: build(indexed.filter((r) => r.job.group === g.key), g.name)
   }));
@@ -201,7 +203,7 @@ var Pipelines = class extends View {
         for (let tick = 0; !this.closed; tick++) {
           if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
           await cx2.sleep(TICK_MS);
-          if (!this.closed && this.anyRunning()) cx2.notify();
+          if (!this.closed && this.shown() && this.anyRunning()) cx2.notify();
         }
       } finally {
         this.looping = false;
@@ -209,7 +211,8 @@ var Pipelines = class extends View {
     });
   }
   // On screen: the dialog while it lives; in the right panel, while the panel shows and Pipelines is its feature
-  // (the test dock-browser uses).
+  // (the test dock-browser uses). The manifest allows only the right region ("regions": ["right"]), so a view not
+  // in the right panel is the dialog.
   shown() {
     if (props()?.overlay || props()?.dockRegion !== "right") return true;
     const applied = shared("dock.config.applied");

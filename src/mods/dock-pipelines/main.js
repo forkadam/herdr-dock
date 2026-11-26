@@ -56,7 +56,8 @@ export default class Pipelines extends View {
         for (let tick = 0; !this.closed; tick++) {
           if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
           await cx.sleep(TICK_MS);
-          if (!this.closed && this.anyRunning()) cx.notify();
+          // Hidden (the right panel on another feature, or closed), a redraw would only cost battery.
+          if (!this.closed && this.shown() && this.anyRunning()) cx.notify();
         }
       } finally {
         this.looping = false;
@@ -65,7 +66,8 @@ export default class Pipelines extends View {
   }
 
   // On screen: the dialog while it lives; in the right panel, while the panel shows and Pipelines is its feature
-  // (the test dock-browser uses).
+  // (the test dock-browser uses). The manifest allows only the right region ("regions": ["right"]), so a view not
+  // in the right panel is the dialog.
   shown() {
     if (props()?.overlay || props()?.dockRegion !== "right") return true;
     const applied = shared("dock.config.applied");

@@ -240,3 +240,20 @@ test("dock-pipelines: Herdr's lifecycle close() clears the heartbeat and stops t
   assert.equal(cx.notified, notified);
   assert.equal(v.looping, false);
 });
+
+test("dock-pipelines: a running job redraws each second only while the panel is on screen", async () => {
+  resetHost();
+  herdr.data.checking = false;
+  herdr.data.props = { dockRegion: "right" };
+  herdr.data.shared.set("dock.git.detail", tagDetail());
+  herdr.data.shared.set("dock.config.applied", { right: { hidden: false, features: [{ mod: "dock-pipelines" }, { mod: "dock-browser" }] } });
+  herdr.data.shared.set("dock.right.shown", true);
+  herdr.data.shared.set("dock.right.active", "dock-browser");
+  const cx = loopCx();
+  new Pipelines().init({}, cx);
+  await cx.tick(3);
+  assert.equal(cx.notified, 0, "hidden behind another feature: no redraws");
+  herdr.data.shared.set("dock.right.active", "dock-pipelines");
+  await cx.tick(3);
+  assert.equal(cx.notified, 3);
+});

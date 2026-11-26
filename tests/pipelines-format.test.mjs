@@ -163,3 +163,18 @@ test("bucketOf: unrecognized status is pending; bridges and unknown", () => {
 test("stageSummary: no jobs", () => {
   assert.deepEqual(stageSummary([]), { bucket: "pending", done: 0, total: 0 });
 });
+
+test("viewGroups: two builds with the same title (a push and a pull_request run of one workflow) say their event", () => {
+  const pipeline = {
+    groups: [
+      { key: "gh:2", name: "CI", ref: "main", event: "pull_request", webUrl: "u2" },
+      { key: "gh:1", name: "CI", ref: "main", event: "push", webUrl: "u1" },
+      { key: "gh:3", name: "Lint", ref: "main", event: "push", webUrl: "u3" },
+    ],
+    jobs: [job({ id: 1, group: "gh:1", stage: "CI" }), job({ id: 2, group: "gh:2", stage: "CI" }), job({ id: 3, group: "gh:3", stage: "Lint" })],
+  };
+  const v = viewGroups(pipeline, "main");
+  assert.deepEqual(v.map((g) => g.title), ["CI · pull_request", "CI · push", "Lint"]);
+  // The stage header is still left out: the stage carries the workflow's name, not the title.
+  assert.equal(v[0].stages[0].name, null);
+});

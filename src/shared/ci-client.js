@@ -13,6 +13,7 @@ const COMMIT_GROUPS = 3; // GitLab: pipelines of one commit shown, the newest pe
 // Log tails per full poll. The HTTP limiter is shared by every host and worktree, so logs never take more than half.
 const LOG_JOBS = 2;
 const TRACE_TAIL = "bytes=-16384"; // lastLogLine reads only the last 16 KB
+const TRACE_TAIL_CHARS = 16384; // the CLI route has no status: a body this short or shorter is taken as the tail
 const TRACE_TIMEOUT = 8000;
 // glab auth status output that clearly means "no login" (anything else non-zero may be the network).
 const NOT_LOGGED_IN = /not (been )?authenticated|not logged in|no token|auth login|\b401\b|unauthori[sz]ed/i;
@@ -44,6 +45,16 @@ export function createCiClient(io, log) {
   // worktree, because only the watched worktree polls full.
   const lastLog = new Map();
   const rangeLogged = new Set(); // hosts whose answer to a Range request was logged (does GitLab honour it?)
+  // "<kind>|<host>|<path>" of calls that may fail on every poll (the HEAD-commit query; bridges on an older
+  // GitLab): logged once, then again only after a success.
+  const failing = new Set();
+  const failedOnce = (kind, host, path, line) => {
+    const k = `${kind}|${host}|${path}`;
+    if (failing.has(k)) return;
+    failing.add(k);
+    log(line);
+  };
+  const succeeded = (kind, host, path) => failing.delete(`${kind}|${host}|${path}`);
   const rec = (host) => {
     if (!hosts.has(host)) hosts.set(host, {
       want: null, provider: undefined, login: null, loginDone: false, loginError: null, loginRetryAt: 0, token: null,
@@ -263,33 +274,50 @@ export function createCiClient(io, log) {
     }
   }
 
-  // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has results
-  // (a tag build of HEAD is filed under the tag, not the branch); else the branch's newest, as before. Only the
+  // Asks by branch and by HEAD commit at once (the branch first). The commit's answer wins when it has builds of
+  // that commit (a tag build of HEAD is filed under the tag, not the branch), and only those are kept: a server
+  // that ignores the filter must not show another branch's builds. Else the branch's newest, as before. Only the
   // branch query speaks for the host's health: the commit query failing never backs the host off, so it can't
-  // block this poll's jobs call or the next polls.
-  async function branchOrCommit(host, path, branchPath, commitPath, rows) {
+  // block this poll's jobs call or the next polls. Its failure is logged once until it answers again.
+  async function branchOrCommit(host, path, branchPath, commitPath, rows, ofHead) {
     const [b, c] = await Promise.all([
       request(host, "GET", branchPath),
       request(host, "GET", commitPath, { noBackoff: true }),
     ]);
     const found = c.ok ? rows(c.data) : null;
-    if (found?.length) return c;
-    if (!found) log(`CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
-    return b;
+    if (!found) {
+      failedOnce("commit", host, path, `CI: ${host}/${path}: HEAD commit query: ${c.ok ? "bad response" : c.error}`);
+      return b;
+    }
+    succeeded("commit", host, path);
+    const mine = found.filter(ofHead);
+    return mine.length ? { ...c, rows: mine } : b;
   }
 
-  // A worktree's runs: by branch and HEAD commit; by sha alone when detached; by branch alone before a first commit.
-  const runsOf = (host, path, { branch, sha }, branchPath, commitPath, rows) =>
-    !branch ? request(host, "GET", commitPath)
-      : !sha ? request(host, "GET", branchPath)
-        : branchOrCommit(host, path, branchPath, commitPath, rows);
+  // A worktree's runs as { ok, data: [row] } or an error: by branch and HEAD commit; by sha alone when detached; by
+  // branch alone before a first commit. rows(data) is the list in an answer (null if malformed); ofHead(row)
+  // whether a row is a build of the HEAD commit.
+  async function runsOf(host, path, { branch, sha }, branchPath, commitPath, rows, ofHead) {
+    const r = !branch ? await request(host, "GET", commitPath)
+      : !sha ? await request(host, "GET", branchPath)
+        : await branchOrCommit(host, path, branchPath, commitPath, rows, ofHead);
+    if (!r.ok) return r;
+    const list = r.rows ?? rows(r.data);
+    return list ? { ok: true, data: list } : { ok: false, error: "bad response", hostFailure: false };
+  }
 
   // A job (or bridge) list sorted by id, or null with a log line. Jobs may come newest first: stage order and the
-  // first failed job need id order. Without jobs the status (and an alert) still stand.
-  function listOf(r, what) {
+  // first failed job need id order. Without jobs the status (and an alert) still stand. `once` ([kind, host, path])
+  // marks a call that may fail on every poll (bridges on an older GitLab): logged once until it succeeds.
+  function listOf(r, what, once) {
     if (!r) return null;
-    if (r.ok && Array.isArray(r.data)) return [...r.data].sort((a, b) => a.id - b.id);
-    log(`CI: ${what}: ${r.error ?? "bad response"}`);
+    if (r.ok && Array.isArray(r.data)) {
+      if (once) succeeded(...once);
+      return [...r.data].sort((a, b) => a.id - b.id);
+    }
+    const line = `CI: ${what}: ${r.error ?? "bad response"}`;
+    if (once) failedOnce(...once, line);
+    else log(line);
     return null;
   }
 
@@ -299,13 +327,11 @@ export function createCiClient(io, log) {
     const enc = encodeURIComponent(path);
     const pipes = `projects/${enc}/pipelines?`;
     const sha = encodeURIComponent(head.sha);
-    const rows = (d) => (Array.isArray(d) ? d : null);
     const r = await runsOf(host, path, head,
       `${pipes}ref=${encodeURIComponent(head.branch)}&per_page=1&order_by=id&sort=desc`,
       head.branch ? `${pipes}sha=${sha}&order_by=id&sort=desc&per_page=5` : `${pipes}sha=${sha}&per_page=1&order_by=id&sort=desc`,
-      rows);
+      (d) => (Array.isArray(d) ? d : null), (p) => p.sha === head.sha);
     if (!r.ok) return r;
-    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
     const kept = [];
     const refs = new Set();
     for (const p of r.data) {
@@ -323,7 +349,7 @@ export function createCiClient(io, log) {
       return {
         pipeline: p,
         jobs: listOf(j, `jobs of ${host}/${path} pipeline ${p.id}`),
-        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`),
+        bridges: listOf(b, `bridges of ${host}/${path} pipeline ${p.id}`, ["bridges", host, path]),
       };
     }));
     const pipeline = gitlabCommitPipeline(entries);
@@ -359,9 +385,14 @@ export function createCiClient(io, log) {
     e.busy = true;
     try {
       let r = await request(host, "GET", trace, { ...opts, headers: { Range: TRACE_TAIL } });
-      if (r.ok && (r.status === 206 || r.status === 200) && !rangeLogged.has(host)) {
-        rangeLogged.add(host);
-        log(`CI: ${host} trace Range ${r.status === 206 ? "honoured" : "ignored"}`);
+      if (r.ok && !rangeLogged.has(host)) {
+        // The fetch route has the status (206 or 200); the glab route has none, so the body's length tells.
+        const byStatus = r.status === 206 || r.status === 200;
+        if (byStatus || r.status == null) {
+          rangeLogged.add(host);
+          const honoured = byStatus ? r.status === 206 : String(r.data ?? "").length <= TRACE_TAIL_CHARS;
+          log(`CI: ${host} trace Range ${honoured ? "honoured" : "ignored"}${byStatus ? "" : " (by size)"}`);
+        }
       }
       if (!r.ok && r.status === 416) r = await request(host, "GET", trace, opts);
       if (r.ok) {
@@ -381,25 +412,24 @@ export function createCiClient(io, log) {
   async function githubLatestOf(host, path, head, { full = false } = {}) {
     const repo = path.split("/").map(encodeURIComponent).join("/");
     const runs = `repos/${repo}/actions/runs?`;
-    const rows = (d) => (Array.isArray(d?.workflow_runs) ? d.workflow_runs : null);
     const r = await runsOf(host, path, head,
       `${runs}branch=${encodeURIComponent(head.branch)}&per_page=20`,
       `${runs}head_sha=${encodeURIComponent(head.sha)}&per_page=20`,
-      rows);
+      (d) => (Array.isArray(d?.workflow_runs) ? d.workflow_runs : null), (x) => x.head_sha === head.sha);
     if (!r.ok) return r;
-    if (!rows(r.data)) return { ok: false, error: "bad response", hostFailure: false };
-    const first = githubLatest(r.data, {});
+    const answer = { workflow_runs: r.data };
+    const first = githubLatest(answer, {});
     if (!first) return { ok: true, pipeline: null };
-    const ofHead = r.data.workflow_runs.filter((x) => x.head_sha === first.id);
+    const ofHead = r.data.filter((x) => x.head_sha === first.id);
     const failed = ofHead.filter((x) => normalizeStatus("github", x) === "failed");
     const jobsByRunId = {};
     await Promise.all((full ? ofHead : failed).map(async (run) => {
-      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs`);
+      const j = await request(host, "GET", `repos/${repo}/actions/runs/${encodeURIComponent(run.id)}/jobs?per_page=100`);
       if (j.ok) jobsByRunId[run.id] = j.data;
       else log(`CI: jobs of ${host}/${path} run ${run.id}: ${j.error}`);
     }));
     const canceled = ofHead.filter((x) => normalizeStatus("github", x) === "canceled");
-    return { ok: true, pipeline: githubLatest(r.data, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
+    return { ok: true, pipeline: githubLatest(answer, jobsByRunId), runIds: failed.map((x) => x.id), canceledRunIds: canceled.map((x) => x.id) };
   }
 
   // A worktree's pipeline, every build of its HEAD commit (else its branch's newest): { ok, pipeline: Pipeline |
