@@ -44,16 +44,22 @@ export default class Pipelines extends View {
     this.retrying = false;
     this.mono = "monospace";
     this.closed = false;
-    if (checking()) return;
+    // One loop per instance: if init ran again while it lives, resetting `closed` above keeps it going.
+    if (checking() || this.looping) return;
+    this.looping = true;
     // One loop for the view's life: a redraw each second while a job runs (its elapsed time ticks), and the
     // heartbeat at once and then every 5 s while the panel is on screen. Unverified: whether Herdr ends this loop
     // when the dialog closes. close() (the ×) stops it; if it outlived a dialog closed some other way, it would keep
     // writing the heartbeat (props().overlay stays set), so the collector would keep polling in full.
     cx.spawn(async (cx) => {
-      for (let tick = 0; !this.closed; tick++) {
-        if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
-        await cx.sleep(TICK_MS);
-        if (!this.closed && this.anyRunning()) cx.notify();
+      try {
+        for (let tick = 0; !this.closed; tick++) {
+          if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
+          await cx.sleep(TICK_MS);
+          if (!this.closed && this.anyRunning()) cx.notify();
+        }
+      } finally {
+        this.looping = false;
       }
     });
   }
@@ -190,11 +196,25 @@ export default class Pipelines extends View {
         .text_color(t.dim).child(doing)));
   }
 
+  // Before the first full poll the detail has no jobs yet, only the stages' names and statuses: those as a strip.
+  stageStrip(t, p) {
+    const tones = this.tones(t);
+    const list = Array.isArray(p.stages) ? p.stages : [];
+    if (!list.length) return null;
+    return h_flex().flex_wrap().px(16).pt(10).gap(12).flex_none().text_size(12)
+      .children(list.map((s, i) => {
+        const b = badgeOf({ status: s.status });
+        return h_flex().id(`pl-strip-${i}`).gap(4).flex_none().tooltip(`${s.name}: ${s.status}`)
+          .child(div().text_color(t.foreground).child(s.name))
+          .child(div().text_color(tones[b.tone] ?? t.dim).child(b.glyph || "–"));
+      }));
+  }
+
   // The count line, then every job of the commit's builds: group headers, stage headers, one row per job.
   jobList(t, d) {
     const p = d.pipeline;
     const jobs = Array.isArray(p.jobs) ? p.jobs : [];
-    if (!jobs.length) return null;
+    if (!jobs.length) return this.stageStrip(t, p);
     const now = Date.now();
     const groups = viewGroups(p, d.branch);
     // A lone GitLab pipeline's header would only repeat the pipeline line's #number.

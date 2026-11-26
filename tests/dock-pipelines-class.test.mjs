@@ -9,7 +9,7 @@ const herdr = await import("herdr");
 const { default: Pipelines } = await import("../src/mods/dock-pipelines/main.js");
 const fx = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
 
-// A cx whose sleep waits until the test calls tick(): each tick ends one sleep and lets the loop run on.
+// A cx whose sleep waits until the test calls tick(): each tick ends every pending sleep and lets the loops run on.
 function loopCx() {
   const waiting = [];
   const cx = {
@@ -20,7 +20,7 @@ function loopCx() {
     sleep: () => new Promise((resolve) => waiting.push(resolve)),
     async tick(n = 1) {
       for (let i = 0; i < n; i++) {
-        waiting.shift()?.();
+        for (const wake of waiting.splice(0)) wake(); // a second passes for every sleeper
         await new Promise((r) => setImmediate(r));
       }
     },
@@ -79,6 +79,16 @@ function between(first, next) {
   return all.slice(a, b);
 }
 
+// A job row's strings from its name to the end of the row. Every row starts with its glyph, drawn just before its
+// name, so the row ends one string before the next row's name.
+function rowOf(name, nextRowName) {
+  const all = texts();
+  const a = all.indexOf(name);
+  const b = all.indexOf(nextRowName, a + 1);
+  assert.ok(a >= 0 && b > a, `${name} is drawn before ${nextRowName}`);
+  return all.slice(a, b - 1);
+}
+
 test("dock-pipelines: renders the count line and one row per job under its group/stage", () => {
   draw(tagDetail());
   const all = texts();
@@ -95,13 +105,48 @@ test("dock-pipelines: renders the count line and one row per job under its group
 
 test("dock-pipelines: a GitLab running job shows its log line in the second row", () => {
   draw(gitlabDetail());
-  // Up to the next row's name, so its glyph ends the list.
-  assert.deepEqual(between("e2e", "integration"), ["e2e", "1m34s", "↗", "> 112/340 specs passed", "●"]);
+  assert.deepEqual(rowOf("e2e", "integration"), ["e2e", "1m34s", "↗", "> 112/340 specs passed"]);
 });
 
 test("dock-pipelines: a job with no logLine or step draws no second row", () => {
   draw(gitlabDetail());
   assert.deepEqual(between("integration", "Retry"), ["integration", "1m34s", "↗"]);
+});
+
+test("dock-pipelines: before the first full poll (no jobs yet) the stage strip shows; with jobs it does not", () => {
+  const d = gitlabDetail();
+  d.pipeline.jobs = [];
+  d.pipeline.stages = [{ name: "build", status: "passed" }, { name: "test", status: "running" }];
+  draw(d);
+  const all = texts();
+  assert.ok(all.includes("build") && all.includes("test"), all.join(" | "));
+  // Jobs present: the job list's own stage header is the only "test"; the strip's "build" is gone.
+  d.pipeline.jobs = gitlabDetail().pipeline.jobs;
+  draw(d);
+  assert.equal(texts().filter((s) => s === "test").length, 1);
+  assert.equal(texts().includes("build"), false);
+  // Neither: nothing between the pipeline line's sha and Retry.
+  d.pipeline.jobs = [];
+  d.pipeline.stages = [];
+  draw(d);
+  assert.deepEqual(between("a1b2c3d4", "Retry"), ["a1b2c3d4"]);
+});
+
+test("dock-pipelines: init running again on the same instance starts no second loop", async () => {
+  resetHost();
+  herdr.data.checking = false;
+  herdr.data.props = { overlay: "pl" };
+  herdr.data.shared.set("dock.git.detail", tagDetail());
+  const cx = loopCx();
+  let spawns = 0;
+  const spawn = cx.spawn;
+  cx.spawn = (f) => { spawns += 1; spawn(f); };
+  const v = new Pipelines();
+  v.init({}, cx);
+  v.init({}, cx);
+  assert.equal(spawns, 1);
+  await cx.tick(2);
+  assert.equal(cx.notified, 2);
 });
 
 test("dock-pipelines: clicking a job's open link sends git.open.job with its pipeline.jobs index", () => {

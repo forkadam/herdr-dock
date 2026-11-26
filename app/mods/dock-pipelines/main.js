@@ -194,12 +194,17 @@ var Pipelines = class extends View {
     this.retrying = false;
     this.mono = "monospace";
     this.closed = false;
-    if (checking()) return;
+    if (checking() || this.looping) return;
+    this.looping = true;
     cx.spawn(async (cx2) => {
-      for (let tick = 0; !this.closed; tick++) {
-        if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
-        await cx2.sleep(TICK_MS);
-        if (!this.closed && this.anyRunning()) cx2.notify();
+      try {
+        for (let tick = 0; !this.closed; tick++) {
+          if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
+          await cx2.sleep(TICK_MS);
+          if (!this.closed && this.anyRunning()) cx2.notify();
+        }
+      } finally {
+        this.looping = false;
       }
     });
   }
@@ -296,11 +301,21 @@ var Pipelines = class extends View {
     )));
     return v_flex().id(`pl-job-${index}`).flex_none().ml(14).pr(10).tooltip(job.stage ? `${job.name} (${job.stage})` : job.name).when(running, (el) => el.border_l(2).border_color(t.accent).pl(8)).when(!running, (el) => el.pl(10)).child(top).when(Boolean(doing), (el) => el.child(div().pl(20).pb(2).truncate().font_family(this.mono).text_size(11).text_color(t.dim).child(doing)));
   }
+  // Before the first full poll the detail has no jobs yet, only the stages' names and statuses: those as a strip.
+  stageStrip(t, p) {
+    const tones = this.tones(t);
+    const list = Array.isArray(p.stages) ? p.stages : [];
+    if (!list.length) return null;
+    return h_flex().flex_wrap().px(16).pt(10).gap(12).flex_none().text_size(12).children(list.map((s, i) => {
+      const b = badgeOf({ status: s.status });
+      return h_flex().id(`pl-strip-${i}`).gap(4).flex_none().tooltip(`${s.name}: ${s.status}`).child(div().text_color(t.foreground).child(s.name)).child(div().text_color(tones[b.tone] ?? t.dim).child(b.glyph || "\u2013"));
+    }));
+  }
   // The count line, then every job of the commit's builds: group headers, stage headers, one row per job.
   jobList(t, d) {
     const p = d.pipeline;
     const jobs = Array.isArray(p.jobs) ? p.jobs : [];
-    if (!jobs.length) return null;
+    if (!jobs.length) return this.stageStrip(t, p);
     const now = Date.now();
     const groups = viewGroups(p, d.branch);
     const lone = groups.length === 1 && groups[0].title === `#${p.number}` && groups[0].stages.every((s) => s.name != null);
