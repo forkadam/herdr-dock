@@ -2285,3 +2285,111 @@ test("a limit hit on the HEAD-commit query, the bridges or a trace also makes la
   assert.deepEqual(await trace.c.latest("gitlab.corp", "gitlab", "grp/api", MAIN, { full: true }), LIMITED(T0 + 20000));
   assert.equal(trace.io.logs.filter((l) => l.includes("trace of")).length, 0);
 });
+
+// --- Task 4: limit results, low-budget cadence, detail.budget ---
+const GL_JOBS = `${GL}/pipelines/48213/jobs?per_page=100`;
+const GL_HDR = (remaining, reset) => ({ "ratelimit-remaining": String(remaining), "ratelimit-limit": "2000", "ratelimit-reset": String(reset) });
+
+test("limit: a limited poll keeps the previous pipeline, its status and summary (not unknown), sets no ci.error, raises no alert", async () => {
+  let answer = () => hres(200, [pipeline({ status: "success" })], GL_HDR(1500, 1795707975));
+  const { io } = ciIo({ routes: { [PIPES]: () => answer(), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.equal(wtOf(c).pipeline.status, "passed");
+  answer = () => hres(429, {}, { "retry-after": "120" });
+  io.t = T0 + 301000; // passed pipelines poll every 5 min
+  await c.tick();
+  await until(() => io.fetches.filter((f) => f.url === PIPES).length === 2);
+  const w = wtOf(c);
+  assert.equal(w.pipeline.status, "passed");
+  assert.equal(w.pipeline.id, 48213);
+  assert.equal(w.pipeline.error, null);
+  const d = detailOf(io);
+  assert.equal(d.error, null);
+  assert.equal(d.pipeline.status, "passed");
+  assert.equal(d.budget.limitedUntil, io.t + 120000);
+  assert.equal(io.notes.length, 0);
+  assert.ok(!io.logs.some((l) => l.includes("grp/api: API limit")), "a limit is logged once by the client, not as a poll error");
+});
+
+test("limit: a limited poll after a failure keeps the failed pipeline and does not alert again", async () => {
+  let answer = () => res(200, [pipeline({ status: "running" })]);
+  const { io } = ciIo({ routes: { [PIPES]: () => answer(), [GL_JOBS]: res(200, JOBS) } });
+  const c = createCollector(io);
+  await c.tick();
+  answer = () => res(200, [pipeline({ status: "failed" })]);
+  io.t += 30000;
+  await c.tick();
+  assert.equal(io.notes.length, 1);
+  answer = () => hres(429, {}, { "retry-after": "60" });
+  io.t += 400000;
+  await c.tick();
+  await until(() => io.fetches.filter((f) => f.url === PIPES).length === 3);
+  assert.equal(wtOf(c).pipeline.status, "failed");
+  assert.equal(io.notes.length, 1);
+});
+
+test("limit: while paused no worktree on that host polls; after limitedUntil polling resumes by itself", async () => {
+  let answer = () => res(200, [pipeline({ status: "running" })]);
+  const { io } = ciIo({ routes: { [PIPES]: () => answer(), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
+  await c.tick();
+  assert.equal(n(), 1);
+  answer = () => hres(429, {}, { "retry-after": "90" });
+  io.t = T0 + 30000;
+  await c.tick();
+  assert.equal(n(), 2);
+  const until90 = io.t + 90000;
+  answer = () => res(200, [pipeline({ status: "success" })]);
+  for (let dt = 30000; dt < 90000; dt += 30000) { io.t += 30000; await c.tick(); }
+  assert.equal(n(), 2, "paused: no request goes out");
+  io.t = until90;
+  await c.tick();
+  assert.equal(n(), 3, "polling resumes at limitedUntil");
+  assert.equal(wtOf(c).pipeline.status, "passed");
+});
+
+test("budget low: a watched running pipeline re-polls after 30 s, not 10 s", async () => {
+  const low = GL_HDR(100, 1795707975);
+  const { io } = ciIo({ routes: { [PIPES]: () => hres(200, [pipeline({ status: "running" })], low), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
+  await c.select(WT);
+  const at = async (dt) => { io.t = T0 + dt; io.shared("dock.git.watching"); io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
+  await at(0);
+  const first = n();
+  await at(10000);
+  assert.equal(n(), first, "budget is low: 10 s is too soon");
+  await at(29000);
+  assert.equal(n(), first);
+  await at(30000);
+  assert.equal(n(), first + 1);
+});
+
+test("budget fine: a watched running pipeline still re-polls after 10 s", async () => {
+  const { io } = ciIo({ routes: { [PIPES]: () => hres(200, [pipeline({ status: "running" })], GL_HDR(1900, 1795707975)), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  const n = () => io.fetches.filter((f) => f.url === PIPES).length;
+  await c.select(WT);
+  const at = async (dt) => { io.t = T0 + dt; io.setShared("dock.git.watching", { at: io.t }); await c.tick(); };
+  await at(0);
+  const first = n();
+  await at(10000);
+  assert.equal(n(), first + 1);
+});
+
+test("detail.budget carries provider, remaining, limit and limitedUntil; null when the client has none", async () => {
+  const a = ciIo({ routes: { [PIPES]: res(200, [pipeline({ status: "success" })]) } });
+  const ca = createCollector(a.io);
+  await ca.tick();
+  await ca.select(WT);
+  assert.equal(detailOf(a.io).budget, null, "no headers seen: null");
+
+  const { io } = ciIo({ routes: { [PIPES]: hres(200, [pipeline({ status: "success" })], GL_HDR(1234, 1795707975)), [GL_JOBS]: res(200, []) } });
+  const c = createCollector(io);
+  await c.tick();
+  await c.select(WT);
+  assert.deepEqual(detailOf(io).budget, { provider: "gitlab", remaining: 1234, limit: 2000, limitedUntil: null });
+});

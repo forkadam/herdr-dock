@@ -233,6 +233,11 @@ export function createCollector(io) {
       if (!head.branch && !head.sha) return;
       const target = head.branch ? `ref:${head.branch}` : `sha:${head.sha}`;
       const got = await client.latest(origin.host, login.provider, origin.path, head, { full });
+      if (got.limited) {
+        // The host is paused at its API limit: the poll was discarded whole, so the last good pipeline stays as it
+        // was (no "unknown", no alert). Only `at` moves; ciDue skips the host until the pause ends.
+        return;
+      }
       if (!got.ok) {
         log(`CI: ${origin.host}/${origin.path}: ${got.error}`);
         return Object.assign(ci, { error: got.error, hint: got.hint ?? null, hostFailure: got.hostFailure, done: true });
@@ -271,7 +276,7 @@ export function createCollector(io) {
     const p = wt.ci.pipeline;
     // A pipeline that is failed on one build but still running on another (a tag) polls as running.
     const status = p?.busy ? "running" : p?.status;
-    return now - wt.ci.at >= ciInterval({ status, upstreamChangedAt: wt.upstreamChangedAt, now, watched: isWatched });
+    return now - wt.ci.at >= ciInterval({ status, upstreamChangedAt: wt.upstreamChangedAt, now, watched: isWatched, budgetLow: !!client.budget(host)?.low });
   }
 
   // The published summary of a worktree's pipeline (full details only in dock.git.detail).
@@ -306,6 +311,7 @@ export function createCollector(io) {
     const ci = wt?.ci;
     const head = wt && at ? headOf(wt, at.w) : { branch: null, sha: null };
     const p = ci?.pipeline ?? null;
+    const b = ci?.provider ? client.budget(ci.host) : null;
     const detail = {
       worktree: selected,
       repo: at ? repoName(at.repo.mainPath, at.repo.machine) : null,
@@ -317,6 +323,7 @@ export function createCollector(io) {
       error: ci?.error ?? null,
       hint: ci?.hint ?? null,
       retryError: ci?.retryError ?? null, // the last Retry's failure, until a Retry succeeds
+      budget: b ? { provider: ci.provider, remaining: b.remaining, limit: b.limit, limitedUntil: b.limitedUntil } : null,
     };
     const key = JSON.stringify(detail);
     if (key === detailKey) return;
