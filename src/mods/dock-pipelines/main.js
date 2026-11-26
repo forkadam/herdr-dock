@@ -1,16 +1,27 @@
 // Pipelines: the selected worktree's CI pipeline (dock.git.detail, published by dock-core's collector). Shown
 // in the right panel when placed there, else as a dialog opened by dock-core's git.show (props().overlay set,
-// so it gets a close ×). Every action goes to dock-core through gitCommand.
+// so it gets a close ×). Every action goes to dock-core through gitCommand. While on screen it writes the
+// dock.git.watching heartbeat: the collector fetches every job and the running job's log line only then.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, shared, props, closeOverlay } from "herdr";
+import { theme, shared, setShared, props, closeOverlay, checking } from "herdr";
 import { gitCommand } from "../_git-command.js";
 import { badgeOf } from "../dock-git/view.js";
-import { ago, duration, canRetry } from "./format.js";
+import { rightActiveOf, rightShownOf } from "../../shared/panel.js";
+import { ago, duration, canRetry, bucketOf, countLine, elapsed, viewGroups } from "./format.js";
 
+const MOD = "dock-pipelines";
 const WARN = "#d29922";
 const PROVIDER = { gitlab: "GitLab", github: "GitHub" };
 const RETRY_SHOW_MS = 3000; // "Retrying…" shows this long, then a refresh re-reads the pipeline
+const TICK_MS = 1000; // a running job's elapsed time redraws this often
+const HEARTBEAT_TICKS = 5; // the heartbeat is written every 5th tick; the collector forgets it after 15 s
+const WATCHING_KEY = "dock.git.watching";
+// Each display bucket (format.js bucketOf) as a glyph and one of tones()' keys.
+const GLYPH = { passed: "✓", failed: "✕", running: "●", pending: "○", manual: "○", warn: "⚠", canceled: "–", skipped: "–" };
+const TONE = { passed: "ok", failed: "bad", running: "busy", warn: "warn", pending: "dim", manual: "dim", canceled: "dim", skipped: "dim" };
+// Buckets whose glyph alone is ambiguous, so the row also says the word.
+const WORDED = new Set(["pending", "canceled", "skipped"]);
 // The theme's code face (gpui-base typography.mono), read in render; "monospace" if it can't be read.
 function monoFont(cx) {
   try {
@@ -29,9 +40,35 @@ function emptyText(d) {
 }
 
 export default class Pipelines extends View {
-  init() {
+  init(_props, cx) {
     this.retrying = false;
     this.mono = "monospace";
+    this.closed = false;
+    if (checking()) return;
+    // One loop for the view's life: a redraw each second while a job runs (its elapsed time ticks), and the
+    // heartbeat at once and then every 5 s while the panel is on screen. Unverified: whether Herdr ends this loop
+    // when the dialog closes. close() (the ×) stops it; if it outlived a dialog closed some other way, it would keep
+    // writing the heartbeat (props().overlay stays set), so the collector would keep polling in full.
+    cx.spawn(async (cx) => {
+      for (let tick = 0; !this.closed; tick++) {
+        if (tick % HEARTBEAT_TICKS === 0 && this.shown()) setShared(WATCHING_KEY, { at: Date.now() });
+        await cx.sleep(TICK_MS);
+        if (!this.closed && this.anyRunning()) cx.notify();
+      }
+    });
+  }
+
+  // On screen: the dialog while it lives; in the right panel, while the panel shows and Pipelines is its feature
+  // (the test dock-browser uses).
+  shown() {
+    if (props()?.overlay || props()?.dockRegion !== "right") return true;
+    const applied = shared("dock.config.applied");
+    return rightShownOf(shared("dock.right.shown"), applied) && rightActiveOf(shared("dock.right.active"), applied?.right?.features ?? []) === MOD;
+  }
+
+  anyRunning() {
+    const jobs = shared("dock.git.detail")?.pipeline?.jobs;
+    return Array.isArray(jobs) && jobs.some((j) => bucketOf(j) === "running");
   }
 
   tones(t) {
@@ -52,6 +89,8 @@ export default class Pipelines extends View {
   }
 
   close() {
+    this.closed = true;
+    setShared(WATCHING_KEY, null);
     const id = props()?.overlay;
     if (id) closeOverlay(id);
   }
@@ -106,31 +145,71 @@ export default class Pipelines extends View {
       .when(notes.length > 0, (el) => el.child(div().px(16).text_size(11.5).text_color(t.dim).child(notes.join(" · "))));
   }
 
-  stages(t, p) {
-    const tones = this.tones(t);
-    const list = Array.isArray(p.stages) ? p.stages : [];
-    if (!list.length) return null;
-    return h_flex().flex_wrap().px(16).pt(10).gap(12).flex_none().text_size(12)
-      .children(list.map((s, i) => {
-        const b = badgeOf({ status: s.status });
-        return h_flex().id(`pl-stage-${i}`).gap(4).flex_none().tooltip(`${s.name}: ${s.status}`)
-          .child(div().text_color(t.foreground).child(s.name))
-          .child(div().text_color(tones[b.tone] ?? t.dim).child(b.glyph || "–"));
-      }));
+  // A stage's (or a one-stage build's) worst glyph and done/total, e.g. "● 1/3"; only the glyph when every job
+  // waits for a person (the total leaves those out).
+  summary(t, s) {
+    const text = s.total > 0 ? `${GLYPH[s.bucket]} ${s.done}/${s.total}` : GLYPH[s.bucket];
+    return div().flex_none().font_family(this.mono).text_size(11.5).text_color(this.tones(t)[TONE[s.bucket]]).child(text);
   }
 
-  failedJobs(t, p) {
-    const jobs = Array.isArray(p.failedJobs) ? p.failedJobs : [];
+  groupHeader(t, g, gi, summary) {
+    return h_flex().id(`pl-group-${gi}`).h(24).px(16).pt(gi === 0 ? 0 : 8).gap(8).items_center().flex_none()
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().text_color(t.foreground).child(g.title))
+      .when(Boolean(summary), (el) => el.child(this.summary(t, summary)));
+  }
+
+  stageHeader(t, s, gi, si) {
+    return h_flex().id(`pl-stage-${gi}-${si}`).h(22).px(16).pt(4).gap(8).items_center().flex_none().text_size(12)
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(s.name))
+      .child(this.summary(t, s.summary));
+  }
+
+  // One job: glyph, name, its time (duration, or live elapsed while running) and the provider's word when the glyph
+  // doesn't say it all. A running job has an accent bar and, when known, what it is doing now on a second line:
+  // the log's last line (GitLab) or its current step (GitHub).
+  jobRow(t, job, index, now) {
+    const bucket = bucketOf(job);
+    const running = bucket === "running";
+    const time = running ? elapsed(job.startedAt, now) : duration(job.duration);
+    const word = job.label ?? (WORDED.has(bucket) || (running && !time) ? bucket : null);
+    const step = job.step ? `step ${job.step.index}/${job.step.total} · ${job.step.name}` : null;
+    const doing = running ? job.logLine || step : null;
+    const top = h_flex().h(22).gap(8).items_center().text_size(12)
+      .child(div().flex_none().w(12).text_color(this.tones(t)[TONE[bucket]]).child(GLYPH[bucket]))
+      .child(div().flex_1().min_w(0).truncate().text_color(running ? t.accent : t.foreground).child(job.name))
+      .when(Boolean(time), (el) => el.child(div().flex_none().font_family(this.mono).text_size(11.5)
+        .text_color(running ? t.accent : t.dim).child(time)))
+      .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(word)))
+      .when(Boolean(job.webUrl), (el) => el.child(this.link(t, `pl-job-open-${index}`, "↗", "Open the job",
+        () => gitCommand("git.open.job", { index }))));
+    return v_flex().id(`pl-job-${index}`).flex_none().ml(14).pr(10).tooltip(job.stage ? `${job.name} (${job.stage})` : job.name)
+      .when(running, (el) => el.border_l(2).border_color(t.accent).pl(8))
+      .when(!running, (el) => el.pl(10))
+      .child(top)
+      .when(Boolean(doing), (el) => el.child(div().pl(20).pb(2).truncate().font_family(this.mono).text_size(11)
+        .text_color(t.dim).child(doing)));
+  }
+
+  // The count line, then every job of the commit's builds: group headers, stage headers, one row per job.
+  jobList(t, d) {
+    const p = d.pipeline;
+    const jobs = Array.isArray(p.jobs) ? p.jobs : [];
     if (!jobs.length) return null;
-    const red = t.ansi1 ?? "#e5484d";
-    return v_flex().pt(10).gap(2).flex_none()
-      .children(jobs.map((j, i) => h_flex().id(`pl-job-${i}`).h(24).px(16).gap(8).items_center().flex_none()
-        .text_size(12).tooltip(j.stage ? `${j.name} (stage ${j.stage})` : j.name)
-        .child(div().flex_none().text_color(red).child("✕"))
-        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(j.name))
-        .child(div().flex_none().font_family(this.mono).text_size(11.5).text_color(t.dim).child(duration(j.duration)))
-        .when(Boolean(j.webUrl), (el) => el.child(this.link(t, `pl-job-open-${i}`, "open job ↗", "Open the job log",
-          () => gitCommand("git.open.job", { index: i }))))));
+    const now = Date.now();
+    const groups = viewGroups(p, d.branch);
+    // A lone GitLab pipeline's header would only repeat the pipeline line's #number.
+    const lone = groups.length === 1 && groups[0].title === `#${p.number}` && groups[0].stages.every((s) => s.name != null);
+    const rows = [div().px(16).pb(4).text_size(12).text_color(t.dim).child(countLine(jobs, p.jobsTruncated))];
+    groups.forEach((g, gi) => {
+      // A GitHub workflow is its own only stage: the group header carries the stage's counts.
+      const oneStage = g.stages.length === 1 && g.stages[0].name == null ? g.stages[0].summary : null;
+      if (!lone) rows.push(this.groupHeader(t, g, gi, oneStage));
+      g.stages.forEach((s, si) => {
+        if (s.name != null) rows.push(this.stageHeader(t, s, gi, si));
+        for (const { job, index } of s.jobs) rows.push(this.jobRow(t, job, index, now));
+      });
+    });
+    return v_flex().pt(8).gap(1).flex_none().children(rows);
   }
 
   retryButton(t, p, retryError) {
@@ -164,9 +243,7 @@ export default class Pipelines extends View {
       return out;
     }
     out.push(this.pipelineLine(t, d));
-    const stages = this.stages(t, p);
-    if (stages) out.push(stages);
-    const jobs = this.failedJobs(t, p);
+    const jobs = this.jobList(t, d);
     if (jobs) out.push(jobs);
     out.push(this.retryButton(t, p, d.retryError));
     return out;
