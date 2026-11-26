@@ -261,3 +261,23 @@ test("githubLatest: jobs carry the run as group and the in-progress step", () =>
   assert.deepEqual(two.groups.map((g) => g.key), ["gh:302", "gh:301"]);
   assert.deepEqual(two.jobs, []);
 });
+
+test("gitlabCommitPipeline: an empty list is null", () => {
+  assert.equal(gitlabCommitPipeline([]), null);
+});
+
+test("gitlabCommitPipeline: a full page of bridges sets jobsTruncated", () => {
+  const bridges = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, name: `b${i}`, stage: "test", status: "success" }));
+  const pl = { id: 1, status: "success", ref: "main", sha: "s" };
+  assert.equal(gitlabCommitPipeline([{ pipeline: pl, jobs: [], bridges }]).jobsTruncated, true);
+  assert.equal(gitlabCommitPipeline([{ pipeline: pl, jobs: [], bridges: bridges.slice(1) }]).jobsTruncated, false);
+});
+
+test("gitlabCommitPipeline: finishedAt is the latest over the entries, so an older pipeline failing later moves it", () => {
+  const tag = { id: 20, status: "failed", ref: "v1", sha: "s", finished_at: "2026-11-26T10:00:00Z" };
+  const branch = { id: 10, status: "failed", ref: "main", sha: "s" };
+  const late = [{ id: 1, name: "unit", stage: "test", status: "failed", finished_at: "2026-11-26T11:00:00Z" }];
+  assert.equal(gitlabCommitPipeline([{ pipeline: tag, jobs: [], bridges: [] }, { pipeline: branch, jobs: late, bridges: [] }]).finishedAt, "2026-11-26T11:00:00Z");
+  const ok = { id: 5, status: "success", ref: "main", sha: "s" };
+  assert.equal(gitlabCommitPipeline([{ pipeline: ok, jobs: [], bridges: [] }]).finishedAt, null);
+});

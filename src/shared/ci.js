@@ -97,8 +97,12 @@ const gitlabGroup = (p) => ({ key: `gl:${p.id}`, name: `#${p.id}`, ref: p.ref, s
 // Every pipeline of one commit (a branch and a tag pipeline can share it), newest first, as one Pipeline: the
 // newest one's identity and stages, the worst status, every failed job, and all jobs with bridges by pipeline.
 export function gitlabCommitPipeline(entries) {
-  const base = gitlabPipeline(entries[0].pipeline, entries[0].jobs);
+  if (!entries.length) return null;
   const parts = entries.map((e) => gitlabPipeline(e.pipeline, e.jobs));
+  const base = parts[0];
+  // Latest over all entries, like failedJobs: an older pipeline of the commit failing later must move the alert key.
+  const stamps = parts.map((x) => x.finishedAt).filter(Boolean);
+  const finishedAt = stamps.length ? stamps.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
   const jobs = entries.flatMap((e) => {
     const key = `gl:${e.pipeline.id}`;
     const all = [
@@ -111,9 +115,10 @@ export function gitlabCommitPipeline(entries) {
     ...base,
     status: worst(parts.map((x) => x.status)),
     failedJobs: parts.flatMap((x) => x.failedJobs),
+    finishedAt,
     jobs,
     groups: entries.map((e) => gitlabGroup(e.pipeline)),
-    jobsTruncated: entries.some((e) => (e.jobs?.length ?? 0) >= GITLAB_PAGE),
+    jobsTruncated: entries.some((e) => (e.jobs?.length ?? 0) >= GITLAB_PAGE || (e.bridges?.length ?? 0) >= GITLAB_PAGE),
   };
 }
 
