@@ -1,5 +1,5 @@
 // src/mods/dock-warnings/main.js
-import { View, div as div2 } from "gpui-kit";
+import { View, div } from "gpui-kit";
 import { theme, shared } from "herdr";
 
 // src/mods/_bar.js
@@ -61,13 +61,17 @@ function gitCommand(name, args) {
   run(`dock-core.${gitCommandName(name, args)}`);
 }
 
-// src/mods/_feature.js
-import { div, svg } from "gpui-kit";
-import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
-function requestFocus(myId) {
-  setShared("dock.left.focus", myId);
-  setShared("dock.left.mode", "expanded");
+// src/shared/claude.js
+function formatReset(resetsMs, nowMs) {
+  const diff = resetsMs - nowMs;
+  if (diff <= 0) return "resetting";
+  const totalMin = Math.floor(diff / 6e4);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor(totalMin % 1440 / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `resets in ${d}d ${h}h`;
+  if (h > 0) return `resets in ${h}h ${String(m).padStart(2, "0")}m`;
+  return `resets in ${m}m`;
 }
 
 // src/shared/system.js
@@ -112,7 +116,10 @@ function warningsFor({ sample, gitState, quotaTop, now }) {
   if (running > 0) out.push({ key: "pipelines", text: `\u27F3 ${running}`, tip: `${running} pipeline${running === 1 ? "" : "s"} running`, worktrees });
   const fresh = Number.isFinite(quotaTop?.at) && now - quotaTop.at <= QUOTA_MAX_AGE_MS;
   if (quotaTop && fresh && !quotaTop.stale && quotaTop.p >= QUOTA_WARN_PERCENT) {
-    out.push({ key: "quota", text: `\u26A0 quota ${Math.round(quotaTop.p)}%`, tip: `Agent quota at ${Math.round(quotaTop.p)}%` });
+    const p = Math.round(quotaTop.p);
+    const reset = Number.isFinite(quotaTop.resetsMs) ? ` \xB7 ${formatReset(quotaTop.resetsMs, now)}` : "";
+    const tip = typeof quotaTop.what === "string" && quotaTop.what ? `${quotaTop.what} limit at ${p}%${reset}` : `Agent quota at ${p}%${reset}`;
+    out.push({ key: "quota", text: `\u26A0 quota ${p}%`, tip });
   }
   if (sample && typeof sample.diskFree === "number" && sample.diskFree < DISK_WARN_FREE_PERCENT && now - sample.at < SAMPLE_MAX_AGE_MS) {
     out.push({ key: "disk", text: `\u26A0 disk ${Math.round(sample.diskFree)}%`, tip: `System drive has ${Math.round(sample.diskFree)}% free` });
@@ -120,22 +127,9 @@ function warningsFor({ sample, gitState, quotaTop, now }) {
   return out;
 }
 
-// src/shared/layout.js
-var blockId = (region, index, mod) => `dock-${region}-${index}-${mod}`;
-function leftFeatureId(applied, mod) {
-  const features = Array.isArray(applied?.left?.features) ? applied.left.features : [];
-  const i = features.findIndex((f) => f?.mod === mod);
-  return i < 0 ? null : blockId("left", i, mod);
-}
-
 // src/mods/dock-warnings/main.js
-function showQuotas() {
-  const id = leftFeatureId(shared("dock.config.applied"), "dock-quotas");
-  if (id) requestFocus(id);
-}
 var CLICK = {
-  pipelines: (w) => w.worktrees?.length === 1 ? gitCommand("git.show", { worktree: w.worktrees[0] }) : gitCommand("git.show"),
-  quota: () => showQuotas()
+  pipelines: (w) => w.worktrees?.length === 1 ? gitCommand("git.show", { worktree: w.worktrees[0] }) : gitCommand("git.show")
 };
 var Warnings = class extends View {
   init(_props, cx) {
@@ -143,7 +137,7 @@ var Warnings = class extends View {
   }
   item(t, w) {
     const click = CLICK[w.key];
-    return div2().id(`dock-warning-${w.key}`).flex_none().text_color(w.key === "pipelines" ? t.muted : WARN).tooltip(w.tip).when(Boolean(click), (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
+    return div().id(`dock-warning-${w.key}`).flex_none().text_color(w.key === "pipelines" ? t.muted : WARN).tooltip(w.tip).when(Boolean(click), (el) => el.cursor_pointer().hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => {
       cx.stop_propagation();
       click(w);
     })).child(w.text);

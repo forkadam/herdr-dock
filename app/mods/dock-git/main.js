@@ -1,12 +1,12 @@
 // src/mods/dock-git/main.js
 import { View, div as div2, svg as svg2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { theme, shared as shared2, setShared as setShared3, props, run as run2, exec, pickFolder, window, openOverlay } from "herdr";
+import { theme, shared as shared3, setShared as setShared3, props, run as run2, exec, pickFolder, window, openOverlay } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -14,6 +14,9 @@ function featureMode(sharedMode, focus, myId, region) {
   if (sharedMode === "icons") return "icon";
   if (sharedMode === "expanded" && focus != null && focus !== myId) return "collapsed";
   return "full";
+}
+function isFocused(sharedMode, focus, myId, region) {
+  return region === "left" && sharedMode === "expanded" && focus != null && focus === myId;
 }
 
 // src/mods/_feature.js
@@ -27,6 +30,18 @@ function iconRail(t, iconPath, title, onClick) {
 function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
+}
+function releaseFocus() {
+  setShared("dock.left.focus", null);
+}
+function focusedNow(myId, region) {
+  return isFocused(shared("dock.left.mode"), shared("dock.left.focus"), myId, region);
+}
+function exitTitle(el, t, id) {
+  return el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show all sections").on_click((_e, cx) => {
+    cx.stop_propagation();
+    releaseFocus();
+  });
 }
 
 // src/mods/_git-command.js
@@ -231,14 +246,14 @@ function hideWorktree(hidden, rows, row) {
 }
 
 // src/mods/_page.js
-import { setShared as setShared2, shared } from "herdr";
+import { setShared as setShared2, shared as shared2 } from "herdr";
 
 // src/shared/panel.js
 var PAGE_KEY = "dock.page.active";
 
 // src/mods/_page.js
 function showTerminal() {
-  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
+  if ((shared2(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
 // src/mods/dock-git/main.js
@@ -255,14 +270,14 @@ var Git = class extends View {
     return { ok: t.ansi2 ?? "#46a758", bad: t.ansi1 ?? "#e5484d", busy: t.accent, dim: t.dim, warn: WARN };
   }
   repoById(id) {
-    const repos = shared2("dock.git.state")?.repos;
+    const repos = shared3("dock.git.state")?.repos;
     return Array.isArray(repos) ? repos.find((r) => r.id === id) ?? null : null;
   }
   addRepo(cx) {
     cx.spawn(async () => {
       const picked = await pickFolder({ prompt: "Add a repo" }).catch(() => null);
       if (!picked) return;
-      const next = addRepoPath(shared2(REPOS_KEY), slashPath(picked), window()?.platform);
+      const next = addRepoPath(shared3(REPOS_KEY), slashPath(picked), window()?.platform);
       if (next) setShared3(REPOS_KEY, next);
       gitCommand("git.refresh");
     });
@@ -270,15 +285,15 @@ var Git = class extends View {
   removeRepo(id) {
     const repo = this.repoById(id);
     if (repo) {
-      setShared3(REPOS_KEY, removeRepoPaths(shared2(REPOS_KEY), repo, window()?.platform));
-      const skipped = skipAfterRemove(shared2(SKIPPED_KEY), repo);
+      setShared3(REPOS_KEY, removeRepoPaths(shared3(REPOS_KEY), repo, window()?.platform));
+      const skipped = skipAfterRemove(shared3(SKIPPED_KEY), repo);
       if (skipped) setShared3(SKIPPED_KEY, skipped);
     }
     this.menu = null;
     gitCommand("git.refresh");
   }
   hideWorktree(rows, row) {
-    const { hidden, removeRepo } = hideWorktree(shared2(HIDDEN_KEY), rows, row);
+    const { hidden, removeRepo } = hideWorktree(shared3(HIDDEN_KEY), rows, row);
     if (removeRepo) return this.removeRepo(removeRepo);
     setShared3(HIDDEN_KEY, hidden);
     this.menu = null;
@@ -302,13 +317,15 @@ var Git = class extends View {
     const { command, args } = openUrlCommand(window()?.platform, url);
     exec(command, args).catch((e) => console.log(`dock-git: open failed: ${e?.message ?? e}`));
   }
-  header(t, onTitle, summary) {
+  // `onTitle` (collapsed): the title takes focus. `exit`: this is the focused feature, so the title brings the other
+  // sections back.
+  header(t, onTitle, summary, exit = false) {
     const title = div2().text_size(11.5).font_medium().text_color(t.dim).child("Git projects");
     const button = (id, tip, child, action) => div2().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(5).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => {
       cx.stop_propagation();
       action(cx);
     }).child(child);
-    return h_flex().px(16).pr(onTitle ? 16 : 10).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().gap(2).child(onTitle ? title.id("dock-git-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Git projects").on_click(() => onTitle()) : title.flex_1()).when(Boolean(summary), (el) => el.child(div2().flex_none().text_size(11).text_color(t.dim).child(summary))).when(!onTitle, (el) => el.child(button("git-refresh", "Refresh repos and pipelines", div2().text_size(15).child("\u27F3"), () => gitCommand("git.refresh"))).child(button("git-add", "Add a repo", svg2("mods/workspace-chrome/plus.svg").size(14), (cx) => this.addRepo(cx))));
+    return h_flex().px(16).pr(onTitle ? 16 : 10).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().gap(2).child(onTitle ? title.id("dock-git-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Git projects").on_click(() => onTitle()) : exit ? exitTitle(title.flex_1(), t, "dock-git-title") : title.flex_1()).when(Boolean(summary), (el) => el.child(div2().flex_none().text_size(11).text_color(t.dim).child(summary))).when(!onTitle, (el) => el.child(button("git-refresh", "Refresh repos and pipelines", div2().text_size(15).child("\u27F3"), () => gitCommand("git.refresh"))).child(button("git-add", "Add a repo", svg2("mods/workspace-chrome/plus.svg").size(14), (cx) => this.addRepo(cx))));
   }
   repoRow(t, r, i) {
     const red = t.ansi1 ?? "#e5484d";
@@ -372,8 +389,8 @@ var Git = class extends View {
   render() {
     const t = theme();
     const myId = props()?.dockFeature ?? "dock-git";
-    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
-    const state = shared2("dock.git.state");
+    const face = featureMode(shared3("dock.left.mode"), shared3("dock.left.focus"), myId, props()?.dockRegion);
+    const state = shared3("dock.git.state");
     const sum = gitSummary(state);
     if (face === "icon") {
       const rail = iconRail(t, "mods/dock-git/icon.svg", "Git projects", () => requestFocus(myId));
@@ -383,7 +400,7 @@ var Git = class extends View {
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, () => requestFocus(myId), sum.text));
     }
-    const rows = gitRows(state, shared2("dock.git.selected") ?? null);
+    const rows = gitRows(state, shared3("dock.git.selected") ?? null);
     const children = [];
     rows.forEach((r, i) => {
       if (r.kind === "empty") children.push(div2().px(16).py(4).text_size(12).text_color(t.dim).child(r.text));
@@ -392,7 +409,7 @@ var Git = class extends View {
         if (this.menu === r.id) children.push(this.menuFor(t, rows, r, i));
       }
     });
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null, null)).child(v_flex2().id("git-list").flex_1().min_h(0).pb(6).overflow_y_scrollbar().children(children));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null, null, focusedNow(myId, props()?.dockRegion))).child(v_flex2().id("git-list").flex_1().min_h(0).pb(6).overflow_y_scrollbar().children(children));
   }
 };
 export {

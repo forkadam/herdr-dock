@@ -1,12 +1,12 @@
 // src/mods/dock-header/main.js
 import { View, div as div2, image, svg as svg2 } from "gpui-kit";
 import { h_flex, v_flex as v_flex2 } from "gpui-base";
-import { theme, run, props, window, shared } from "herdr";
+import { theme, run, props, window, shared as shared2 } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -26,7 +26,7 @@ var DockHeader = class extends View {
   render() {
     const t = theme();
     const p = props();
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), p?.dockFeature, p?.dockRegion);
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), p?.dockFeature, p?.dockRegion);
     if (face === "icon") {
       return v_flex2().size_full().bg(t.chrome).items_center().justify_center().child(image(LOGO).size(20).rounded(5));
     }

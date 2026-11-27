@@ -73,6 +73,22 @@ export function quotaGroups(byId, nowMs) {
     .map((p) => ({ id: p.id, title: p.title, agent: p.agent, icon: p.icon ?? null, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
 }
 
+// The bottom bar's quota warning: the highest finite used % across providers (rounded), leaving out windows past their
+// reset, with which limit it is ("Antigravity 5-hour") and when it resets (null when unknown). Null: no reading.
+export function topQuota(byId, nowMs) {
+  let best = null;
+  for (const prov of PROVIDERS) {
+    const r = byId?.[prov.id];
+    for (const w of r?.windows ?? []) {
+      if (!Number.isFinite(w.usedPercent) || isReset(w, nowMs)) continue;
+      if (!best || w.usedPercent > best.used) {
+        best = { used: w.usedPercent, stale: Boolean(r.stale), what: `${prov.title} ${labelOf(w)}`, resetsMs: Number.isFinite(w.resetsMs) ? w.resetsMs : null };
+      }
+    }
+  }
+  return best && { p: Math.round(best.used), stale: best.stale, what: best.what, resetsMs: best.resetsMs };
+}
+
 // Icon-rail badge: the highest finite used % (rounded) across readings, leaving out windows past their reset,
 // stale when the reading it came from is. Null: nothing to show.
 export function iconBadge(readings, nowMs) {

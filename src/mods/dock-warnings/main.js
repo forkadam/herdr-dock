@@ -3,21 +3,12 @@ import { View, div } from "gpui-kit";
 import { theme, shared } from "herdr";
 import { barRow, WARN } from "../_bar.js";
 import { gitCommand } from "../_git-command.js";
-import { requestFocus } from "../_feature.js";
 import { SAMPLE_KEY, warningsFor } from "../../shared/system.js";
-import { leftFeatureId } from "../../shared/layout.js";
 
-// Quotas in the left panel, by its block id (the one features compare dock.left.focus against); nothing when it
-// isn't there, rather than a focus no feature has, which would collapse them all.
-function showQuotas() {
-  const id = leftFeatureId(shared("dock.config.applied"), "dock-quotas");
-  if (id) requestFocus(id);
-}
-
-// One running pipeline: show its worktree; several: just show Git projects.
+// One running pipeline: show its worktree; several: just show Git projects. The quota and disk warnings say all
+// there is in their text and tooltip, so they aren't buttons.
 const CLICK = {
   pipelines: (w) => (w.worktrees?.length === 1 ? gitCommand("git.show", { worktree: w.worktrees[0] }) : gitCommand("git.show")),
-  quota: () => showQuotas(),
 };
 
 export default class Warnings extends View {

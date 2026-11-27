@@ -1,12 +1,12 @@
 // src/mods/dock-quotas/main.js
 import { View, div as div3, svg as svg3, image as image2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex as h_flex2 } from "gpui-base";
-import { theme, shared, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window as window2 } from "herdr";
+import { theme, shared as shared2, setShared as setShared2, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window as window2 } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -14,6 +14,9 @@ function featureMode(sharedMode, focus, myId, region) {
   if (sharedMode === "icons") return "icon";
   if (sharedMode === "expanded" && focus != null && focus !== myId) return "collapsed";
   return "full";
+}
+function isFocused(sharedMode, focus, myId, region) {
+  return region === "left" && sharedMode === "expanded" && focus != null && focus === myId;
 }
 
 // src/mods/_feature.js
@@ -27,6 +30,18 @@ function iconRail(t, iconPath, title, onClick) {
 function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
+}
+function releaseFocus() {
+  setShared("dock.left.focus", null);
+}
+function focusedNow(myId, region) {
+  return isFocused(shared("dock.left.mode"), shared("dock.left.focus"), myId, region);
+}
+function exitTitle(el, t, id) {
+  return el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show all sections").on_click((_e, cx) => {
+    cx.stop_propagation();
+    releaseFocus();
+  });
 }
 
 // src/shared/claude.js
@@ -359,6 +374,19 @@ function quotaRows(usage, nowMs, provider) {
 }
 function quotaGroups(byId, nowMs) {
   return PROVIDERS.filter((p) => byId?.[p.id]?.windows?.length).map((p) => ({ id: p.id, title: p.title, agent: p.agent, icon: p.icon ?? null, plan: planLabel(byId[p.id].plan), rows: quotaRows(byId[p.id], nowMs, p) }));
+}
+function topQuota(byId, nowMs) {
+  let best = null;
+  for (const prov of PROVIDERS) {
+    const r = byId?.[prov.id];
+    for (const w of r?.windows ?? []) {
+      if (!Number.isFinite(w.usedPercent) || isReset(w, nowMs)) continue;
+      if (!best || w.usedPercent > best.used) {
+        best = { used: w.usedPercent, stale: Boolean(r.stale), what: `${prov.title} ${labelOf(w)}`, resetsMs: Number.isFinite(w.resetsMs) ? w.resetsMs : null };
+      }
+    }
+  }
+  return best && { p: Math.round(best.used), stale: best.stale, what: best.what, resetsMs: best.resetsMs };
 }
 function iconBadge(readings, nowMs) {
   let best = null;
@@ -740,22 +768,22 @@ var Quotas = class extends View {
       }
     });
   }
-  // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
-  // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
+  // The highest used % across Claude, Codex and Antigravity, for the bottom bar's warnings: shared dock.quotas.top =
+  // { p, stale, what, resetsMs, at } (what: "Antigravity 5-hour"; at: when it was published), or null with no reading.
+  // Written when any of p, stale, what or resetsMs changes,
   // and again once `at` is TOP_REFRESH_MS old (the 30 s timer calls this), so a reading that stops being
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
     this.publishReadings();
     const now = Date.now();
-    const b = iconBadge([this.claude(), this.codex, this.agy], now);
-    const prev = shared(TOP_KEY) ?? null;
-    if (!b) {
+    const top = topQuota({ claude: this.claude(), codex: this.codex, antigravity: this.agy }, now);
+    const prev = shared2(TOP_KEY) ?? null;
+    if (!top) {
       if (prev !== null) setShared2(TOP_KEY, null);
       return;
     }
-    const p = parseInt(b.text, 10), stale = b.stale;
-    const same = prev && prev.p === p && prev.stale === stale && Number.isFinite(prev.at) && now - prev.at < TOP_REFRESH_MS;
-    if (!same) setShared2(TOP_KEY, { p, stale, at: now });
+    const same = prev && prev.p === top.p && prev.stale === top.stale && prev.what === top.what && prev.resetsMs === top.resetsMs && Number.isFinite(prev.at) && now - prev.at < TOP_REFRESH_MS;
+    if (!same) setShared2(TOP_KEY, { ...top, at: now });
   }
   // Codex's latest rate limits: in each of the last 8 days' session folders (newest first), the most
   // recently modified logs; only their "rate_limits" lines are read (logs can be many MB). The newest
@@ -796,9 +824,11 @@ var Quotas = class extends View {
   groupHeader(t, g, i) {
     return groupHeaderEl(t, g, i, this.icons);
   }
-  header(t, onTitle) {
+  // `onTitle` (collapsed): the title takes focus. `exit`: this is the focused feature, so the title brings the other
+  // sections back.
+  header(t, onTitle, exit = false) {
     const title = div3().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
-    return h_flex2().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().child(onTitle ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle()) : title);
+    return h_flex2().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().child(onTitle ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle()) : exit ? exitTitle(title.flex_1(), t, "dock-quotas-title") : title);
   }
   // One line per window (drawn by draw.js, shared with the bottom-bar strip's hover panel).
   row(t, r, i) {
@@ -807,7 +837,7 @@ var Quotas = class extends View {
   render(cx) {
     const t = theme();
     const myId = props()?.dockFeature ?? "dock-quotas";
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
       const b = iconBadge([this.claude(), this.codex, this.agy], Date.now());
       const rail = iconRail(t, "mods/dock-quotas/icon.svg", "Quotas", () => requestFocus(myId));
@@ -823,7 +853,7 @@ var Quotas = class extends View {
     const setup = this.setupRow(t, "claude");
     const agySetup = this.setupRow(t, "agy");
     let n = 0;
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null)).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(Boolean(agySetup), (el) => el.child(agySetup)).when(!groups.length && !setup, (el) => el.child(div3().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, null, focusedNow(myId, props()?.dockRegion))).child(v_flex2().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar().when(Boolean(setup), (el) => el.child(setup)).when(Boolean(agySetup), (el) => el.child(agySetup)).when(!groups.length && !setup, (el) => el.child(div3().px(16).py(4).text_size(12).text_color(t.dim).tooltip("Claude: arrives after a Claude Code reply. Codex: use it once.").child("no usage recorded yet"))).children(groups.flatMap((g, gi) => [this.groupHeader(t, g, gi), ...g.rows.map((r) => this.row(t, r, n++))])));
   }
 };
 export {

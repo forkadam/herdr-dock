@@ -22,3 +22,13 @@ test("featureMode: a block outside the left panel is always full", () => {
   assert.equal(featureMode("icons", null, "a", undefined), "full");
   assert.equal(featureMode("icons", null, "a", "left"), "icon");
 });
+
+import { isFocused } from "../src/mods/_feature-mode.js";
+
+test("isFocused: only the left feature dock.left.focus names, while expanded", () => {
+  assert.equal(isFocused("expanded", "a", "a", "left"), true);
+  assert.equal(isFocused("expanded", "b", "a", "left"), false);
+  assert.equal(isFocused("expanded", null, "a", "left"), false);
+  assert.equal(isFocused("icons", "a", "a", "left"), false);
+  assert.equal(isFocused("expanded", "a", "a", "right"), false);
+});

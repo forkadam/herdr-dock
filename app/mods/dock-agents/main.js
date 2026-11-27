@@ -1,12 +1,12 @@
 // src/mods/dock-agents/main.js
 import { View, div as div3, svg as svg3 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared as shared2, setShared as setShared3, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared as shared3, setShared as setShared3, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -14,6 +14,9 @@ function featureMode(sharedMode, focus, myId, region) {
   if (sharedMode === "icons") return "icon";
   if (sharedMode === "expanded" && focus != null && focus !== myId) return "collapsed";
   return "full";
+}
+function isFocused(sharedMode, focus, myId, region) {
+  return region === "left" && sharedMode === "expanded" && focus != null && focus === myId;
 }
 
 // src/mods/_feature.js
@@ -27,6 +30,18 @@ function iconRail(t, iconPath, title2, onClick) {
 function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
+}
+function releaseFocus() {
+  setShared("dock.left.focus", null);
+}
+function focusedNow(myId, region) {
+  return isFocused(shared("dock.left.mode"), shared("dock.left.focus"), myId, region);
+}
+function exitTitle(el, t, id) {
+  return el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show all sections").on_click((_e, cx) => {
+    cx.stop_propagation();
+    releaseFocus();
+  });
 }
 
 // src/shared/claude.js
@@ -125,14 +140,14 @@ function slashPath(p) {
 }
 
 // src/mods/_page.js
-import { setShared as setShared2, shared } from "herdr";
+import { setShared as setShared2, shared as shared2 } from "herdr";
 
 // src/shared/panel.js
 var PAGE_KEY = "dock.page.active";
 
 // src/mods/_page.js
 function showTerminal() {
-  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
+  if ((shared2(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
 // src/mods/_agent.js
@@ -162,8 +177,8 @@ function spaceTags(list, branchOf) {
   const tags = /* @__PURE__ */ new Map();
   for (const a of list) {
     const branch = branchOf(a);
-    const shared3 = (spacesByName.get(a.space_name)?.size ?? 0) > 1;
-    tags.set(a.address, shared3 && branch && branch !== "main" && branch !== "master" ? `${a.space_name} \xB7 ${branch}` : a.space_name);
+    const shared4 = (spacesByName.get(a.space_name)?.size ?? 0) > 1;
+    tags.set(a.address, shared4 && branch && branch !== "main" && branch !== "master" ? `${a.space_name} \xB7 ${branch}` : a.space_name);
   }
   return tags;
 }
@@ -206,7 +221,7 @@ var SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
   { id: "grouped", label: "Grouped by space", icon: "layers" }
 ];
-var sortOf = () => SORTS.find((s) => s.id === shared2("agents.sort")) ?? SORTS[0];
+var sortOf = () => SORTS.find((s) => s.id === shared3("agents.sort")) ?? SORTS[0];
 var SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 var SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 function duration(ms) {
@@ -383,10 +398,10 @@ var Agents = class extends View {
   }
   // The "Agents" header with the sort button (the sort menu opens on this mod). `onTitle`
   // (collapsed): the title takes focus, and the row is 31 px instead of 41 so it fits the
-  // 32 px collapsed block.
-  header(t, sort, onTitle) {
+  // 32 px collapsed block. `exit`: this is the focused feature, so the title brings the other sections back.
+  header(t, sort, onTitle, exit = false) {
     const title2 = div3().text_size(11.5).font_medium().text_color(t.dim).child("Agents");
-    return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().justify_between().child(onTitle ? title2.id("dock-agents-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Agents").on_click(() => onTitle()) : title2).child(
+    return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center().justify_between().child(onTitle ? title2.id("dock-agents-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Agents").on_click(() => onTitle()) : exit ? exitTitle(title2.flex_1(), t, "dock-agents-title") : title2).child(
       div3().id("ag-sort").text_size(11).text_color(t.dim).hover((s) => s.text_color(t.foreground)).on_click(() => openOverlay({ mod: "dock-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } })).tooltip(`Sort agents: ${sort.label}`).child(svg3(`mods/workspace-chrome/${sort.icon}.svg`).size(14))
     );
   }
@@ -415,7 +430,7 @@ var Agents = class extends View {
     list = [...pinned, ...rest];
     setAgentOrder(list.map((a) => a.address));
     const myId = props()?.dockFeature ?? "dock-agents";
-    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
+    const face = featureMode(shared3("dock.left.mode"), shared3("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") return iconRail(t, "mods/dock-agents/icon.svg", "Agents", () => requestFocus(myId));
     if (face === "collapsed") {
       return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).child(this.header(t, sort, () => requestFocus(myId)));
@@ -508,7 +523,7 @@ var Agents = class extends View {
       }).child(div3().truncate().text_color(t[g.status] ?? t.dim).child(g.label)).when(byPriority || !open, (el) => el.child(div3().text_color(t.dim).child(String(g.members.length)))).child(div3().flex_1()).when(!open, (el) => el.when(!byPriority && top && top !== "idle", (el2) => el2.child(this.status(t, { status: top }, true))).child(svg3("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
     const rows = collapsed ? list.flatMap(withKids) : groups.flatMap((g) => [header(g), ...this.folded.has(g.id) ? [] : g.members.flatMap(withKids)]);
-    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).when(!collapsed, (el) => el.child(this.header(t, sort, null))).when(
+    return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13).when(!collapsed, (el) => el.child(this.header(t, sort, null, focusedNow(myId, props()?.dockRegion)))).when(
       list.length === 0 && !collapsed,
       (el) => el.child(div3().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not."))
     ).child(v_flex2().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows));

@@ -1,12 +1,12 @@
 // src/mods/dock-pages/main.js
 import { View, div as div2, svg as svg2 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex } from "gpui-base";
-import { appHome, checking, props, readTextFile, setShared as setShared2, shared, theme } from "herdr";
+import { appHome, checking, props, readTextFile, setShared as setShared2, shared as shared2, theme } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -17,9 +17,8 @@ function featureMode(sharedMode, focus, myId, region) {
 }
 
 // src/mods/_feature.js
-function requestFocus(myId) {
-  setShared("dock.left.focus", myId);
-  setShared("dock.left.mode", "expanded");
+function releaseFocus() {
+  setShared("dock.left.focus", null);
 }
 
 // src/shared/layout.js
@@ -90,11 +89,11 @@ var DockPages = class extends View {
     });
   }
   open(mod) {
-    const next = pageClick(pageActiveOf(shared(PAGE_KEY), this.features()), mod);
+    const next = pageClick(pageActiveOf(shared2(PAGE_KEY), this.features()), mod);
     setShared2(PAGE_KEY, next);
   }
   features() {
-    return shared("dock.config.applied")?.pages?.features ?? [];
+    return shared2("dock.config.applied")?.pages?.features ?? [];
   }
   face(t, f, size) {
     const meta = this.meta[f.mod];
@@ -115,8 +114,8 @@ var DockPages = class extends View {
     const myId = props()?.dockFeature ?? "dock-pages";
     const features = this.features();
     for (const f of features) this.load(f.mod, cx);
-    const active = pageActiveOf(shared(PAGE_KEY), features);
-    const face = featureMode(shared("dock.left.mode"), shared("dock.left.focus"), myId, props()?.dockRegion);
+    const active = pageActiveOf(shared2(PAGE_KEY), features);
+    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
     if (face === "icon") {
       return v_flex2().size_full().w(48).min_h(0).bg(t.chrome).items_center().pt(8).gap(4).children(features.map((f, i) => {
         const on = f.mod === active;
@@ -124,11 +123,11 @@ var DockPages = class extends View {
         return div2().id(`page-icon-${i}`).relative().size(32).flex_none().flex().items_center().justify_center().rounded(6).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(title).on_click((_e, cx2) => {
           cx2.stop_propagation();
           this.open(f.mod);
-        }).when(on, (el) => el.child(div2().absolute().left(-8).top(8).w(2).h(16).rounded(1).bg(t.accent))).child(this.face(t, f, 16)).when(badgeOf(shared(`dock.page.badge.${f.mod}`)) !== null, (el) => el.child(this.badge(t, badgeOf(shared(`dock.page.badge.${f.mod}`)))));
+        }).when(on, (el) => el.child(div2().absolute().left(-8).top(8).w(2).h(16).rounded(1).bg(t.accent))).child(this.face(t, f, 16)).when(badgeOf(shared2(`dock.page.badge.${f.mod}`)) !== null, (el) => el.child(this.badge(t, badgeOf(shared2(`dock.page.badge.${f.mod}`)))));
       }));
     }
     if (face === "collapsed") {
-      return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).child(this.header(t, () => requestFocus(myId)));
+      return v_flex2().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).child(this.header(t, releaseFocus));
     }
     const tile = (id, on, tip, face2, badge, onClick) => div2().id(id).relative().size(30).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer().tooltip(tip).when(on, (el) => el.bg(t.raised ?? t.selected).border_1().border_color(t.border).text_color(t.foreground)).when(!on, (el) => el.text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground))).on_click((_e, cx2) => {
       cx2.stop_propagation();
@@ -152,7 +151,7 @@ var DockPages = class extends View {
         on,
         on ? `${title}: click to go back to the terminal` : title,
         this.face(t, f, 15),
-        badgeOf(shared(`dock.page.badge.${f.mod}`)),
+        badgeOf(shared2(`dock.page.badge.${f.mod}`)),
         () => this.open(f.mod)
       );
     });

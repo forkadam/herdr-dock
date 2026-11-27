@@ -130,3 +130,11 @@ test("parseSample: on macOS the memory comes from vm_stat, not freemem", () => {
   // vm_stat unreadable → keep the freemem figure
   assert.equal(parseSample(JSON.stringify({ cpu: 10, mem: 97, diskFree: 40, cores: 8, vm: "", total: GIB16 }), 1).mem, 97);
 });
+
+test("warningsFor: the quota tip names the limit and when it resets", () => {
+  const now = 1_000_000;
+  const tip = (top) => warningsFor({ sample: null, gitState: null, quotaTop: { p: 91, at: now, ...top }, now })[0].tip;
+  assert.equal(tip({ what: "Antigravity 5-hour", resetsMs: now + (3 * 60 + 27) * 60_000 }), "Antigravity 5-hour limit at 91% · resets in 3h 27m");
+  assert.equal(tip({ what: "Claude weekly" }), "Claude weekly limit at 91%");
+  assert.equal(tip({}), "Agent quota at 91%");
+});

@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, readTextFile, home, checking } from "herdr";
-import { featureMode, iconRail, requestFocus } from "../_feature.js";
+import { exitTitle, featureMode, focusedNow, iconRail, requestFocus } from "../_feature.js";
 import { showTerminal } from "../_page.js";
 import { agentIcon, agentStatus } from "../_agent.js";
 import { readPeerNames, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
@@ -677,11 +677,12 @@ export default class Spaces extends View {
       .child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
 
-  // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus).
-  header(t, collapsed, onTitle) {
+  // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus). `exit`: this is the
+  // focused feature, so the title brings the other sections back.
+  header(t, collapsed, onTitle, exit = false) {
     return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
       .when(collapsed, el => el.pl(0).pr(0).justify_center())
-      .when(!collapsed && !onTitle, el => el.child("Spaces"))
+      .when(!collapsed && !onTitle, el => el.child(exit ? exitTitle(div().flex_1(), t, "dock-spaces-title").child("Spaces") : "Spaces"))
       .when(!collapsed && Boolean(onTitle), el => el.child(div().id("dock-spaces-title").flex_1().cursor_pointer()
         .hover(s => s.text_color(t.foreground)).tooltip("Show Spaces").on_click(() => onTitle()).child("Spaces")))
       .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -741,7 +742,7 @@ export default class Spaces extends View {
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(this.header(t, collapsed, null))
+      .child(this.header(t, collapsed, null, focusedNow(myId, props()?.dockRegion)))
       .child(v_flex().id("spaces-list").flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         // herdr-dock: only a real resize: this also runs after redraws at the same size (hovering an agent row

@@ -3,14 +3,14 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, setShared, props, checking, home, appHome, readTextFile, watchFolder, exec, knownAgents, window } from "herdr";
-import { featureMode, iconRail, requestFocus } from "../_feature.js";
+import { exitTitle, featureMode, focusedNow, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline } from "../../shared/claude.js";
 import { mergeClaude, parseUsageOutput } from "../../shared/claude-usage.js";
 import { codexSessionDirs, parseCodexUsage, pickNewestUsage } from "../../shared/codex.js";
 import { AGY_MARK, WRITER_MARK, scriptPaths, statuslinePlan } from "../../shared/statusline.js";
 import { listDirCommand, listFilesByTimeCommand, parseFileListing, rateLimitLinesCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
-import { quotaGroups, iconBadge, barLevel, setupNotice, agySetupNotice, publishable } from "./view.js";
+import { quotaGroups, iconBadge, topQuota, barLevel, setupNotice, agySetupNotice, publishable } from "./view.js";
 import { AGY_CACHE_REL, parseAgyCache } from "../../shared/antigravity.js";
 import { WARN, HIGH, groupHeaderEl, quotaRowEl } from "./draw.js";
 
@@ -255,19 +255,20 @@ export default class Quotas extends View {
     });
   }
 
-  // The highest used % across Claude and Codex, for the bottom bar's warnings: shared dock.quotas.top =
-  // { p, stale, at } (at: when it was published), or null with no reading. Written when p or stale changes,
+  // The highest used % across Claude, Codex and Antigravity, for the bottom bar's warnings: shared dock.quotas.top =
+  // { p, stale, what, resetsMs, at } (what: "Antigravity 5-hour"; at: when it was published), or null with no reading.
+  // Written when any of p, stale, what or resetsMs changes,
   // and again once `at` is TOP_REFRESH_MS old (the 30 s timer calls this), so a reading that stops being
   // refreshed (this mod unmounted or stuck) ages out of the warnings after 120 s.
   publishTop() {
     this.publishReadings();
     const now = Date.now();
-    const b = iconBadge([this.claude(), this.codex, this.agy], now);
+    const top = topQuota({ claude: this.claude(), codex: this.codex, antigravity: this.agy }, now);
     const prev = shared(TOP_KEY) ?? null;
-    if (!b) { if (prev !== null) setShared(TOP_KEY, null); return; }
-    const p = parseInt(b.text, 10), stale = b.stale;
-    const same = prev && prev.p === p && prev.stale === stale && Number.isFinite(prev.at) && now - prev.at < TOP_REFRESH_MS;
-    if (!same) setShared(TOP_KEY, { p, stale, at: now });
+    if (!top) { if (prev !== null) setShared(TOP_KEY, null); return; }
+    const same = prev && prev.p === top.p && prev.stale === top.stale && prev.what === top.what && prev.resetsMs === top.resetsMs
+      && Number.isFinite(prev.at) && now - prev.at < TOP_REFRESH_MS;
+    if (!same) setShared(TOP_KEY, { ...top, at: now });
   }
 
   // Codex's latest rate limits: in each of the last 8 days' session folders (newest first), the most
@@ -307,12 +308,14 @@ export default class Quotas extends View {
   groupHeader(t, g, i) { return groupHeaderEl(t, g, i, this.icons); }
 
 
-  header(t, onTitle) {
+  // `onTitle` (collapsed): the title takes focus. `exit`: this is the focused feature, so the title brings the other
+  // sections back.
+  header(t, onTitle, exit = false) {
     const title = div().text_size(11.5).font_medium().text_color(t.dim).child("Quotas");
     return h_flex().px(16).h(onTitle ? 31 : 41).pt(onTitle ? 0 : 14).pb(onTitle ? 0 : 5).flex_none().items_center()
       .child(onTitle
         ? title.id("dock-quotas-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Quotas").on_click(() => onTitle())
-        : title);
+        : exit ? exitTitle(title.flex_1(), t, "dock-quotas-title") : title);
   }
 
   // One line per window (drawn by draw.js, shared with the bottom-bar strip's hover panel).
@@ -344,7 +347,7 @@ export default class Quotas extends View {
     const agySetup = this.setupRow(t, "agy");
     let n = 0;
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
-      .child(this.header(t, null))
+      .child(this.header(t, null, focusedNow(myId, props()?.dockRegion)))
       .child(v_flex().id("dock-quotas-list").flex_1().min_h(0).overflow_y_scrollbar()
       .when(Boolean(setup), (el) => el.child(setup))
       .when(Boolean(agySetup), (el) => el.child(agySetup))

@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { appHome, checking, props, readTextFile, setShared, shared, theme } from "herdr";
-import { featureMode, requestFocus } from "../_feature.js";
+import { featureMode, releaseFocus } from "../_feature.js";
 import { PAGE_KEY, pageActiveOf, pageClick } from "../../shared/panel.js";
 import { slashPath } from "../../shared/path.js";
 import { badgeOf, pageMeta } from "./view.js";
@@ -86,7 +86,9 @@ export default class DockPages extends View {
         }));
     }
     if (face === "collapsed") {
-      return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).child(this.header(t, () => requestFocus(myId)));
+      // Pages has no tall face (its full face is one row of tiles), so its title doesn't focus it: it brings every
+      // section back, Pages' tiles included.
+      return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).child(this.header(t, releaseFocus));
     }
     const tile = (id, on, tip, face, badge, onClick) => div().id(id).relative().size(30).flex_none().flex().items_center().justify_center()
       .rounded(7).cursor_pointer().tooltip(tip)

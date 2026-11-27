@@ -8,3 +8,9 @@ export function featureMode(sharedMode, focus, myId, region) {
   if (sharedMode === "expanded" && focus != null && focus !== myId) return "collapsed";
   return "full";
 }
+
+// Whether this left feature is the focused one (it fills the panel, the others show as title rows): its title then
+// ends the focus.
+export function isFocused(sharedMode, focus, myId, region) {
+  return region === "left" && sharedMode === "expanded" && focus != null && focus === myId;
+}

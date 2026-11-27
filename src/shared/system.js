@@ -1,3 +1,5 @@
+import { formatReset } from "./claude.js";
+
 // CPU / memory / disk sample (pure; the sampling itself runs in a `node -e` child) and the
 // warning rules the bottom bar shows.
 export const SAMPLE_KEY = "dock.system.sample";
@@ -89,7 +91,10 @@ export function warningsFor({ sample, gitState, quotaTop, now }) {
   if (running > 0) out.push({ key: "pipelines", text: `⟳ ${running}`, tip: `${running} pipeline${running === 1 ? "" : "s"} running`, worktrees });
   const fresh = Number.isFinite(quotaTop?.at) && now - quotaTop.at <= QUOTA_MAX_AGE_MS;
   if (quotaTop && fresh && !quotaTop.stale && quotaTop.p >= QUOTA_WARN_PERCENT) {
-    out.push({ key: "quota", text: `⚠ quota ${Math.round(quotaTop.p)}%`, tip: `Agent quota at ${Math.round(quotaTop.p)}%` });
+    const p = Math.round(quotaTop.p);
+    const reset = Number.isFinite(quotaTop.resetsMs) ? ` · ${formatReset(quotaTop.resetsMs, now)}` : "";
+    const tip = typeof quotaTop.what === "string" && quotaTop.what ? `${quotaTop.what} limit at ${p}%${reset}` : `Agent quota at ${p}%${reset}`;
+    out.push({ key: "quota", text: `⚠ quota ${p}%`, tip });
   }
   if (sample && typeof sample.diskFree === "number" && sample.diskFree < DISK_WARN_FREE_PERCENT
       && now - sample.at < SAMPLE_MAX_AGE_MS) {

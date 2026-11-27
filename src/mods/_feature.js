@@ -1,9 +1,10 @@
 // Shared pieces for left-panel feature mods (bundled into each mod).
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
+import { featureMode, isFocused } from "./_feature-mode.js";
 
-export { featureMode } from "./_feature-mode.js";
+export { featureMode };
 
 const RAIL_PX = 48;
 
@@ -23,4 +24,20 @@ export function iconRail(t, iconPath, title, onClick) {
 export function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
+}
+
+// Back to the normal panel: every feature at its own size. dock-core restores the sizes saved when the focus began.
+export function releaseFocus() {
+  setShared("dock.left.focus", null);
+}
+
+// Whether this block is the focused left feature (read from shared state and the block's props).
+export function focusedNow(myId, region) {
+  return isFocused(shared("dock.left.mode"), shared("dock.left.focus"), myId, region);
+}
+
+// The focused feature's title: a click brings the other sections back.
+export function exitTitle(el, t, id) {
+  return el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show all sections")
+    .on_click((_e, cx) => { cx.stop_propagation(); releaseFocus(); });
 }

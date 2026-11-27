@@ -1,12 +1,12 @@
 // src/mods/dock-spaces/main.js
 import { View, div as div3, svg as svg3 } from "gpui-kit";
 import { v_flex as v_flex2, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared as shared2, setShared as setShared3, watchFolder, window, layout, props, readTextFile, home, checking } from "herdr";
+import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared as shared3, setShared as setShared3, watchFolder, window, layout, props, readTextFile, home, checking } from "herdr";
 
 // src/mods/_feature.js
 import { div, svg } from "gpui-kit";
 import { v_flex } from "gpui-base";
-import { setShared } from "herdr";
+import { setShared, shared } from "herdr";
 
 // src/mods/_feature-mode.js
 function featureMode(sharedMode, focus, myId, region) {
@@ -14,6 +14,9 @@ function featureMode(sharedMode, focus, myId, region) {
   if (sharedMode === "icons") return "icon";
   if (sharedMode === "expanded" && focus != null && focus !== myId) return "collapsed";
   return "full";
+}
+function isFocused(sharedMode, focus, myId, region) {
+  return region === "left" && sharedMode === "expanded" && focus != null && focus === myId;
 }
 
 // src/mods/_feature.js
@@ -28,16 +31,28 @@ function requestFocus(myId) {
   setShared("dock.left.focus", myId);
   setShared("dock.left.mode", "expanded");
 }
+function releaseFocus() {
+  setShared("dock.left.focus", null);
+}
+function focusedNow(myId, region) {
+  return isFocused(shared("dock.left.mode"), shared("dock.left.focus"), myId, region);
+}
+function exitTitle(el, t, id) {
+  return el.id(id).cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show all sections").on_click((_e, cx) => {
+    cx.stop_propagation();
+    releaseFocus();
+  });
+}
 
 // src/mods/_page.js
-import { setShared as setShared2, shared } from "herdr";
+import { setShared as setShared2, shared as shared2 } from "herdr";
 
 // src/shared/panel.js
 var PAGE_KEY = "dock.page.active";
 
 // src/mods/_page.js
 function showTerminal() {
-  if ((shared(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
+  if ((shared2(PAGE_KEY) ?? null) !== null) setShared2(PAGE_KEY, null);
 }
 
 // src/mods/_agent.js
@@ -661,7 +676,7 @@ var Spaces = class extends View {
   row({ w, i, g, tree, children = 0, folded = false, hidden = 0, top = null, holdsActive = false }, t) {
     const on = w.active || holdsActive;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex((s) => s.id === this.pressed);
-    const colors = shared2("space.colors") ?? {};
+    const colors = shared3("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
     return v_flex2().relative().id(`space-${w.id}`).px(8).h(rowHeight({ tree })).flex_none().justify_center().rounded(8).when(on, (el) => el.bg(t.selected)).when(!on, (el) => el.hover((s) => s.bg(t.hover))).when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5)).when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
@@ -711,9 +726,10 @@ var Spaces = class extends View {
       run("space.select", { id: w.id });
     }).child(div3().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))).child(div3().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
-  // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus).
-  header(t, collapsed, onTitle) {
-    return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim).when(collapsed, (el) => el.pl(0).pr(0).justify_center()).when(!collapsed && !onTitle, (el) => el.child("Spaces")).when(!collapsed && Boolean(onTitle), (el) => el.child(div3().id("dock-spaces-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Spaces").on_click(() => onTitle()).child("Spaces"))).child(div3().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child(svg3("mods/workspace-chrome/plus.svg").size(14)));
+  // The header row (title and +). `onTitle`: what clicking the title does (collapsed: take focus). `exit`: this is the
+  // focused feature, so the title brings the other sections back.
+  header(t, collapsed, onTitle, exit = false) {
+    return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim).when(collapsed, (el) => el.pl(0).pr(0).justify_center()).when(!collapsed && !onTitle, (el) => el.child(exit ? exitTitle(div3().flex_1(), t, "dock-spaces-title").child("Spaces") : "Spaces")).when(!collapsed && Boolean(onTitle), (el) => el.child(div3().id("dock-spaces-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Spaces").on_click(() => onTitle()).child("Spaces"))).child(div3().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child(svg3("mods/workspace-chrome/plus.svg").size(14)));
   }
   render() {
     const t = theme();
@@ -721,8 +737,8 @@ var Spaces = class extends View {
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const ids = new Set(sp.map((p) => p.id));
-    const kept = Object.fromEntries(Object.entries(shared2("space.colors") ?? {}).filter(([id]) => ids.has(id)));
-    let changed = Object.keys(kept).length !== Object.keys(shared2("space.colors") ?? {}).length;
+    const kept = Object.fromEntries(Object.entries(shared3("space.colors") ?? {}).filter(([id]) => ids.has(id)));
+    let changed = Object.keys(kept).length !== Object.keys(shared3("space.colors") ?? {}).length;
     for (const p of sp) {
       if (kept[p.id] || p.name === "~") continue;
       const uses = (c) => Object.values(kept).filter((v) => v === c).length;
@@ -731,7 +747,7 @@ var Spaces = class extends View {
     }
     if (changed) setShared3("space.colors", kept);
     const myId = props()?.dockFeature ?? "dock-spaces";
-    const face = featureMode(shared2("dock.left.mode"), shared2("dock.left.focus"), myId, props()?.dockRegion);
+    const face = featureMode(shared3("dock.left.mode"), shared3("dock.left.focus"), myId, props()?.dockRegion);
     if (face !== "full") {
       this.drawsAgents = false;
       this.namesKey = null;
@@ -759,7 +775,7 @@ var Spaces = class extends View {
       this.revealedNarrow = collapsed;
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
-    return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, collapsed, null)).child(v_flex2().id("spaces-list").flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).on_size_change((size, cx) => {
+    return v_flex2().size_full().min_h(0).bg(t.chrome).text_size(13).child(this.header(t, collapsed, null, focusedNow(myId, props()?.dockRegion))).child(v_flex2().id("spaces-list").flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).on_size_change((size, cx) => {
       const height = size?.height ?? 0;
       if (Math.abs(height - (this.listHeight ?? -Infinity)) <= 2) return;
       this.listHeight = height;

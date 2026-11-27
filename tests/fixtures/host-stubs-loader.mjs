@@ -33,6 +33,7 @@ const STUBS = {
     const noop = () => {};
     export const focused = () => null; export const setAgentOrder = noop; export const openOverlay = noop;
     export const closeOverlay = (id) => d().closedOverlays.push(id);
+    export const pickFolder = async () => null; export const knownAgents = async () => [];
     export const notify = noop; export const playSound = noop; export const nextCommand = () => new Promise(() => {});`,
 };
 export async function resolve(specifier, context, next) {

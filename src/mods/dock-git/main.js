@@ -3,7 +3,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, shared, setShared, props, run, exec, pickFolder, window, openOverlay } from "herdr";
-import { featureMode, iconRail, requestFocus } from "../_feature.js";
+import { exitTitle, featureMode, focusedNow, iconRail, requestFocus } from "../_feature.js";
 import { gitCommand } from "../_git-command.js";
 import { openUrlCommand } from "../../shared/platform.js";
 import { slashPath } from "../../shared/path.js";
@@ -76,7 +76,9 @@ export default class Git extends View {
     exec(command, args).catch((e) => console.log(`dock-git: open failed: ${e?.message ?? e}`));
   }
 
-  header(t, onTitle, summary) {
+  // `onTitle` (collapsed): the title takes focus. `exit`: this is the focused feature, so the title brings the other
+  // sections back.
+  header(t, onTitle, summary, exit = false) {
     const title = div().text_size(11.5).font_medium().text_color(t.dim).child("Git projects");
     const button = (id, tip, child, action) => div().id(id).size(22).flex_none().flex().items_center().justify_center()
       .rounded(5).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -85,7 +87,7 @@ export default class Git extends View {
       .flex_none().items_center().gap(2)
       .child(onTitle
         ? title.id("dock-git-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Git projects").on_click(() => onTitle())
-        : title.flex_1())
+        : exit ? exitTitle(title.flex_1(), t, "dock-git-title") : title.flex_1())
       .when(Boolean(summary), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(summary)))
       .when(!onTitle, (el) => el
         .child(button("git-refresh", "Refresh repos and pipelines", div().text_size(15).child("⟳"), () => gitCommand("git.refresh")))
@@ -193,7 +195,7 @@ export default class Git extends View {
       }
     });
     return v_flex().size_full().min_h(0).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
-      .child(this.header(t, null, null))
+      .child(this.header(t, null, null, focusedNow(myId, props()?.dockRegion)))
       .child(v_flex().id("git-list").flex_1().min_h(0).pb(6).overflow_y_scrollbar().children(children));
   }
 }

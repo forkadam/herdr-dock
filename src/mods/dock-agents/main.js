@@ -8,7 +8,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, layout, checking, hc, home, readTextFile } from "herdr";
-import { featureMode, iconRail, requestFocus } from "../_feature.js";
+import { exitTitle, featureMode, focusedNow, iconRail, requestFocus } from "../_feature.js";
 import { parseStatusline, formatPercent, contextEntry, keepEntry, contextTooltip, isLocalClaude, sigOf, claudeKey } from "../../shared/claude.js";
 import { slashPath } from "../../shared/path.js";
 import { showTerminal } from "../_page.js";
@@ -280,8 +280,8 @@ export default class Agents extends View {
 
   // The "Agents" header with the sort button (the sort menu opens on this mod). `onTitle`
   // (collapsed): the title takes focus, and the row is 31 px instead of 41 so it fits the
-  // 32 px collapsed block.
-  header(t, sort, onTitle) {
+  // 32 px collapsed block. `exit`: this is the focused feature, so the title brings the other sections back.
+  header(t, sort, onTitle, exit = false) {
     const title = div().text_size(11.5).font_medium().text_color(t.dim).child("Agents");
     return h_flex()
       .px(16)
@@ -293,7 +293,7 @@ export default class Agents extends View {
       .justify_between()
       .child(onTitle
         ? title.id("dock-agents-title").flex_1().cursor_pointer().hover((s) => s.text_color(t.foreground)).tooltip("Show Agents").on_click(() => onTitle())
-        : title)
+        : exit ? exitTitle(title.flex_1(), t, "dock-agents-title") : title)
       .child(
         div()
           .id("ag-sort")
@@ -528,7 +528,7 @@ export default class Agents extends View {
       .border_t(1)
       .border_color(t.border)
       .text_size(13)
-      .when(!collapsed, (el) => el.child(this.header(t, sort, null)))
+      .when(!collapsed, (el) => el.child(this.header(t, sort, null, focusedNow(myId, props()?.dockRegion))))
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )

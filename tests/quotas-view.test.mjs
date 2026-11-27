@@ -160,3 +160,18 @@ test("Antigravity's group carries Herdr's shipped icon as a fallback (its agent 
   assert.equal(quotaGroups({ antigravity: agy }, now)[0].icon, "icons/antigravity.svg");
   assert.equal(quotaGroups({ claude: S() }, now)[0].icon, null);
 });
+
+import { topQuota } from "../src/mods/dock-quotas/view.js";
+
+test("topQuota: the highest window across providers, named, with its reset time", () => {
+  const now = 5_000_000;
+  const byId = {
+    claude: S({ windows: [{ kind: "weekly", usedPercent: 69, resetsMs: now + 1 }, { kind: "model", label: "Fable", usedPercent: 10 }] }),
+    codex: null,
+    antigravity: S({ stale: true, windows: [{ kind: "five_hour", usedPercent: 90.56, resetsMs: now + 60_000 }, { kind: "weekly", usedPercent: 99, resetsMs: now - 1 }] }),
+  };
+  assert.deepEqual(topQuota(byId, now), { p: 91, stale: true, what: "Antigravity 5-hour", resetsMs: now + 60_000 });
+  assert.deepEqual(topQuota({ claude: S({ windows: [{ kind: "model", label: "Fable", usedPercent: 12 }] }) }, now),
+    { p: 12, stale: false, what: "Claude weekly · Fable", resetsMs: null });
+  assert.equal(topQuota({}, now), null);
+});

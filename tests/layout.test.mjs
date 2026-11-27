@@ -155,12 +155,3 @@ test("the code default bottom bar matches the shipped one", async () => {
   assert.deepEqual(DEFAULT_CONFIG.regions.bottom.features, shipped);
   assert.deepEqual(shipped, [{ mod: "dock-where" }, { mod: "dock-limits" }, { mod: "dock-warnings", size: 210 }, { mod: "dock-system", size: 150 }, { mod: "dock-attention", size: 36 }]);
 });
-
-import { leftFeatureId } from "../src/shared/layout.js";
-
-test("leftFeatureId: a mod's block id in the applied left panel; null when it isn't there", () => {
-  const applied = { left: { features: [{ mod: "dock-header" }, { mod: "dock-spaces" }, { mod: "dock-quotas", size: 270 }] } };
-  assert.equal(leftFeatureId(applied, "dock-quotas"), "dock-left-2-dock-quotas");
-  assert.equal(leftFeatureId(applied, "dock-jira"), null);
-  assert.equal(leftFeatureId(null, "dock-quotas"), null);
-});
